@@ -13,43 +13,6 @@ Polyfill-rs provides a comprehensive trading infrastructure for algorithmic trad
 - **Trade execution simulation** with slippage protection
 - **Comprehensive error handling** with specific error types
 
-## Migration from polymarket-rs-client
-
-Polyfill-rs is designed as a drop-in replacement for the existing `polymarket-rs-client`. The API maintains full compatibility while adding advanced features:
-
-```rust
-// Before (polymarket-rs-client)
-use polymarket_rs_client::ClobClient;
-
-let mut client = ClobClient::with_l1_headers(
-    "https://clob.polymarket.com",
-    "your_private_key",
-    137,
-);
-
-// After (polyfill-rs) - Same API!
-use polyfill_rs::ClobClient;
-
-let mut client = ClobClient::with_l1_headers(
-    "https://clob.polymarket.com", 
-    "your_private_key",
-    137,
-);
-
-// All existing methods work identically
-let api_creds = client.create_or_derive_api_key(None).await?;
-client.set_api_creds(api_creds);
-
-let order_args = OrderArgs::new(
-    "token_id",
-    Decimal::from_str("0.75")?,
-    Decimal::from_str("100.0")?,
-    Side::BUY,
-);
-
-let result = client.create_and_post_order(&order_args).await?;
-```
-
 ## Architecture
 
 ### Core Components
