@@ -55,7 +55,7 @@ let result = client.create_and_post_order(&order_args).await?;
 ### Core Components
 
 **Order Book Management**
-- Real-time order book maintenance with O(log n) operations
+- Real-time order book maintenance with `O(log n)` operations
 - Thread-safe concurrent access patterns
 - Market impact calculation and liquidity analysis
 - Snapshot generation for strategy backtesting
@@ -351,35 +351,3 @@ match result {
     }
 }
 ```
-
-## Testing and Benchmarking
-
-### Unit Tests
-
-```bash
-cargo test
-```
-
-### Performance Benchmarks
-
-```bash
-cargo bench
-```
-
-### Example Execution
-
-```bash
-cargo run --example snipe
-```
-
-## API Reference
-
-Comprehensive API documentation is available at [docs.rs/polyfill-rs](https://docs.rs/polyfill-rs).
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contributing
-
-Contributions are welcome. Please ensure all code follows the established patterns and includes appropriate tests and benchmarks. 
