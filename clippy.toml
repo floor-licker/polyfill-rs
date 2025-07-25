@@ -1,0 +1,129 @@
+# Clippy configuration for polyfill-rs
+# Optimized for HFT and production code quality
+
+# Performance
+unsafe_code = "forbid"
+missing_safety_doc = "warn"
+undocumented_unsafe_blocks = "warn"
+
+# Correctness
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+unreachable = "warn"
+unimplemented = "warn"
+todo = "warn"
+
+# Complexity
+cognitive_complexity = "warn"
+too_many_arguments = "warn"
+too_many_lines = "warn"
+type_complexity = "warn"
+
+# Style
+doc_markdown = "warn"
+missing_docs = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+# Suspicious
+assign_op_pattern = "warn"
+erasing_op = "warn"
+eval_order_dependence = "warn"
+float_cmp = "warn"
+format_push_string = "warn"
+identity_op = "warn"
+ineffective_bit_mask = "warn"
+int_plus_one = "warn"
+large_enum_variant = "warn"
+len_without_is_empty = "warn"
+let_underscore_lock = "warn"
+linkedlist = "warn"
+map_entry = "warn"
+modulo_one = "warn"
+mut_mut = "warn"
+mutex_integer = "warn"
+needless_bitwise_bool = "warn"
+needless_continue = "warn"
+needless_for_each = "warn"
+needless_pass_by_ref_mut = "warn"
+needless_range_loop = "warn"
+needless_return = "warn"
+needless_update = "warn"
+nonminimal_bool = "warn"
+ok_expect = "warn"
+option_map_unit_fn = "warn"
+or_fun_call = "warn"
+path_buf_push_overwrite = "warn"
+precedence = "warn"
+ptr_as_ptr = "warn"
+redundant_clone = "warn"
+redundant_closure = "warn"
+redundant_closure_call = "warn"
+redundant_else = "warn"
+redundant_field_names = "warn"
+redundant_guards = "warn"
+redundant_pattern = "warn"
+redundant_slicing = "warn"
+same_item_push = "warn"
+search_is_some = "warn"
+self_named_constructors = "warn"
+semicolon_if_nothing_returned = "warn"
+single_char_pattern = "warn"
+string_lit_as_bytes = "warn"
+suboptimal_flops = "warn"
+temporary_cstring_as_ptr = "warn"
+toplevel_ref_arg = "warn"
+transmute_int_to_char = "warn"
+transmute_ptr_to_ptr = "warn"
+unnecessary_filter_map = "warn"
+unnecessary_fold = "warn"
+unnecessary_mut_passed = "warn"
+unnecessary_operation = "warn"
+unnecessary_self_imports = "warn"
+unneeded_field_pattern = "warn"
+unreachable = "warn"
+unreachable_pub = "warn"
+unsafe_removed_from_name = "warn"
+unused_async = "warn"
+unused_assignments = "warn"
+unused_attributes = "warn"
+unused_borrowed_ref = "warn"
+unused_collect = "warn"
+unused_comparisons = "warn"
+unused_doc_comments = "warn"
+unused_enumerate_index = "warn"
+unused_features = "warn"
+unused_imports = "warn"
+unused_labels = "warn"
+unused_macros = "warn"
+unused_parens = "warn"
+unused_qualifications = "warn"
+unused_unsafe = "warn"
+unused_variables = "warn"
+useless_attribute = "warn"
+useless_conversion = "warn"
+useless_format = "warn"
+useless_let_if_seq = "warn"
+useless_transmute = "warn"
+vec_init_then_push = "warn"
+verbose_file_reads = "warn"
+while_let_on_iterator = "warn"
+
+# HFT-specific
+# Allow some performance optimizations that might be considered "unsafe" in general code
+allow = [
+    "cast_possible_truncation",
+    "cast_possible_wrap",
+    "cast_precision_loss",
+    "cast_sign_loss",
+    "clippy::inline_always",
+    "clippy::module_name_repetitions",
+    "clippy::must_use_candidate",
+    "clippy::new_without_default",
+    "clippy::redundant_pub_crate",
+    "clippy::too_many_arguments",
+    "clippy::type_complexity",
+    "clippy::upper_case_acronyms",
+    "clippy::vec_init_then_push",
+] 
