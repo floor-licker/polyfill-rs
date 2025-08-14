@@ -1,7 +1,5 @@
 //! Polyfill-rs: High-performance Rust client for Polymarket
 //! 
-//! A production-ready Rust client for Polymarket optimized for high-frequency trading.
-//! 
 //! # Features
 //! 
 //! - **High-performance order book management** with optimized data structures

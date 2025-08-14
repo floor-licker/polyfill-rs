@@ -205,9 +205,9 @@ impl SnipeStrategy {
 
         // Determine side based on market conditions
         let side = if bid > ask {
-            Side::Sell // Crossed market, sell
+            Side::SELL // Crossed market, sell
         } else {
-            Side::Buy // Normal market, buy
+            Side::BUY // Normal market, buy
         };
 
         // Create market order request
@@ -228,7 +228,7 @@ impl SnipeStrategy {
             book_impl.apply_delta(OrderDelta {
                 token_id: self.token_id.clone(),
                 timestamp: chrono::Utc::now(),
-                side: Side::Buy,
+                side: Side::BUY,
                 price: level.price,
                 size: level.size,
                 sequence: 1,
@@ -239,7 +239,7 @@ impl SnipeStrategy {
             book_impl.apply_delta(OrderDelta {
                 token_id: self.token_id.clone(),
                 timestamp: chrono::Utc::now(),
-                side: Side::Sell,
+                side: Side::SELL,
                 price: level.price,
                 size: level.size,
                 sequence: 2,
@@ -327,7 +327,7 @@ impl MockMarketData {
         let new_price = self.base_price * (Decimal::from(1) + price_change);
 
         // Generate order book update
-        let side = if rand::random::<bool>() { Side::Buy } else { Side::Sell };
+        let side = if rand::random::<bool>() { Side::BUY } else { Side::SELL };
         let size = Decimal::from(rand::random::<u64>() % 1000 + 100);
 
         StreamMessage::BookUpdate {
