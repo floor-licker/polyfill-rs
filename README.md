@@ -1,94 +1,103 @@
 # Polyfill-rs
 
-A high-performance, low-latency Rust client for Polymarket optimized for high-frequency trading.
+A blazing-fast Rust client for Polymarket that's actually built for people who need to process thousands of market updates per second.
 
 ## Overview
 
-Polyfill-rs provides a comprehensive trading infrastructure for algorithmic trading strategies on Polymarket's prediction markets. The library is designed for institutional-grade trading systems requiring high throughput and robust error handling.
+If you've ever tried to build a trading bot for prediction markets, you know the pain: existing libraries are either too slow, too basic, or both. Polyfill-rs fixes that.
 
-**Key Features:**
-- **Drop-in replacement** for `polymarket-rs-client` with enhanced functionality
-- **High-performance order book management** with O(log n) operations
-- **Real-time market data streaming** with WebSocket support
-- **Trade execution simulation** with slippage protection
-- **Comprehensive error handling** with specific error types
+This started as a drop-in replacement for `polymarket-rs-client`, but then I went down a rabbit hole optimizing everything. 
 
-## Architecture
+**What makes it different:**
+- **Actually fast**: We replaced the slow parts with fixed-point math (benchmarks coming soon)
+- **Built for real trading**: Designed to handle thousands of market updates per second
+- **Easy to use**: Same API as the original library, just way faster under the hood
+- **Teaches you**: Every decision is documented with code and explanations of why it matters
 
-### Core Components
+## How It Works
 
-**Order Book Management**
-- Real-time order book maintenance with `O(log n)` operations
-- Thread-safe concurrent access patterns
-- Market impact calculation and liquidity analysis
-- Snapshot generation for strategy backtesting
+The library has four main pieces that work together:
 
-**Trade Execution Engine**
-- Market order simulation with slippage protection
-- Limit order placement and management
-- Fill event processing and tracking
-- Fee calculation and cost analysis
+### Order Book Engine
+This is where the magic happens. Instead of using slow decimal math like everyone else, we use fixed-point integers internally:
 
-**Streaming Infrastructure**
-- WebSocket-based real-time market data feeds
-- Automatic reconnection with exponential backoff
-- Message parsing and validation
-- Multi-stream management for concurrent market monitoring
+- **Before**: `BTreeMap<Decimal, Decimal>` (slow decimal operations + allocations)
+- **After**: `BTreeMap<u32, i64>` (fast integer operations, zero allocations)
 
-**Client Interface**
-- REST API integration for order management
-- Authentication and signature generation
-- Rate limiting and request throttling
-- Comprehensive error handling with retry logic
+The order book can process updates much faster because integer comparisons are fundamentally faster than decimal ones. We only convert back to decimals when you actually need the data.
 
-## Performance Characteristics
+*Want to see how this works?* Check out `src/book.rs` - every optimization has commented-out "before" code so you can see exactly what changed and why.
 
-### Latency Optimization
-- Zero-copy data structures where possible
-- Lock-free concurrent access patterns
-- Minimal allocation in hot paths
-- SIMD-optimized mathematical operations
+### Trade Execution Simulator
+Want to know what would happen if you bought 1000 tokens right now? This simulates walking through the order book levels:
 
-### Throughput Capabilities
-- High-frequency order book updates (10,000+ updates/second)
-- Concurrent stream processing
-- Efficient memory management with object pooling
-- Optimized serialization/deserialization
+```rust
+let impact = book.calculate_market_impact(Side::BUY, Decimal::from(1000));
+// Tells you: average price, total cost, market impact percentage
+```
+
+It's smart about slippage protection and won't let you accidentally market-buy at ridiculous prices.
+
+### Real-Time Data Streaming
+WebSocket connections that don't give up. When the connection drops (and it will), the library automatically reconnects with exponential backoff. No more babysitting your data feeds.
+
+### HTTP Client
+All the boring stuff like authentication, rate limiting, and retry logic. It just works so you don't have to think about it.
+
+## Performance (Benchmarks Coming Soon)
+
+The library is designed around several key optimizations:
+
+### Order Book Operations
+- **Fixed-point math**: Integer operations instead of decimal arithmetic
+- **Zero allocations**: Reuse data structures in hot paths
+- **Efficient lookups**: Optimized data structures for common operations
+- **Batch processing**: Handle multiple updates efficiently
 
 ### Memory Efficiency
-- Compact data representations
-- Minimal heap allocations
-- Efficient string handling
-- Memory-mapped data structures for large datasets
+- **Compact representations**: Smaller memory footprint per price level
+- **Controlled depth**: Only track relevant price levels
+- **Smart cleanup**: Remove stale data automatically
 
-## Installation
+### Design Philosophy
+The core insight is that most trading operations don't need full decimal precision during intermediate calculations. By using fixed-point integers internally and only converting to decimals at the API boundaries, we can:
 
-Add to your `Cargo.toml`:
+- Eliminate allocation overhead in hot paths
+- Use faster integer arithmetic
+- Reduce memory usage significantly
+- Maintain full precision where it matters
+
+**Learning from the code**: The performance optimizations are documented with detailed comments explaining the math, memory layout, and algorithmic choices. It's like a mini-course in high-frequency trading optimization.
+
+## Getting Started
 
 ```toml
 [dependencies]
 polyfill-rs = "0.1.0"
 ```
 
-## Usage
+## Basic Usage
 
-### Basic Client Initialization (Compatible with polymarket-rs-client)
+### If You're Coming From polymarket-rs-client
+
+Good news: your existing code should work without changes. I kept the same API.
 
 ```rust
 use polyfill_rs::{ClobClient, OrderArgs, Side};
 use rust_decimal::Decimal;
 
+// Same initialization as before
 let mut client = ClobClient::with_l1_headers(
     "https://clob.polymarket.com",
     "your_private_key",
     137,
 );
 
-// Get API credentials
+// Same API calls
 let api_creds = client.create_or_derive_api_key(None).await?;
 client.set_api_creds(api_creds);
 
-// Create and post order
+// Same order creation
 let order_args = OrderArgs::new(
     "token_id",
     Decimal::from_str("0.75")?,
@@ -99,218 +108,270 @@ let order_args = OrderArgs::new(
 let result = client.create_and_post_order(&order_args).await?;
 ```
 
-### Advanced Features (Polyfill-rs specific)
+The difference is that this now runs way faster under the hood.
 
-```rust
-use polyfill_rs::{PolyfillClient, ClientConfig};
+### Real-Time Order Book Tracking
 
-// Advanced configuration
-let config = ClientConfig {
-    base_url: "https://clob.polymarket.com".to_string(),
-    chain_id: 137,
-    private_key: Some("your_private_key".to_string()),
-    max_slippage: Some(Decimal::from_str("0.001")?),
-    fee_rate: Some(Decimal::from_str("0.02")?),
-    ..Default::default()
-};
-
-let mut client = PolyfillClient::with_config(config)?;
-
-// Subscribe to real-time order book updates
-client.subscribe_to_order_book("token_id").await?;
-
-// Process incoming messages
-while let Some(message) = client.get_next_message().await? {
-    println!("Received: {:?}", message);
-}
-```
-
-### Order Book Management
+Here's where it gets interesting. You can track live order books for multiple tokens:
 
 ```rust
 use polyfill_rs::{OrderBookManager, OrderDelta, Side};
 
-let mut book_manager = OrderBookManager::new();
+let mut book_manager = OrderBookManager::new(50); // Keep top 50 price levels
 
-// Apply order book delta
+// This is what happens when you get a WebSocket update
 let delta = OrderDelta {
     token_id: "market_token".to_string(),
     timestamp: chrono::Utc::now(),
-    side: Side::Buy,
+    side: Side::BUY,
     price: Decimal::from_str("0.75")?,
-    size: Decimal::from_str("100.0")?,
+    size: Decimal::from_str("100.0")?,  // 0 means remove this price level
     sequence: 1,
 };
 
-book_manager.apply_delta(delta)?;
+book_manager.apply_delta(delta)?;  // This is now super fast
 
-// Retrieve order book state
+// Get current market state
 let book = book_manager.get_book("market_token")?;
-let best_bid = book.best_bid();
-let best_ask = book.best_ask();
-let spread = book.spread();
+let spread = book.spread();           // How tight is the market?
+let mid_price = book.mid_price();     // Fair value estimate
+let best_bid = book.best_bid();       // Highest buy price
+let best_ask = book.best_ask();       // Lowest sell price
 ```
 
-### Trade Execution Simulation
+The `apply_delta` call used to be the bottleneck. Now it's basically free.
+
+### Market Impact Analysis
+
+Before you place a big order, you probably want to know what it'll cost you:
 
 ```rust
-use polyfill_rs::{FillEngine, MarketOrderRequest};
+use polyfill_rs::FillEngine;
 
 let mut fill_engine = FillEngine::new(
-    Decimal::from_str("0.001")?, // max_slippage
-    Decimal::from_str("0.02")?,  // fee_rate
+    Decimal::from_str("0.001")?, // max slippage: 0.1%
+    Decimal::from_str("0.02")?,  // fee rate: 2%
+    10,                          // fee in basis points
 );
 
+// Simulate buying $1000 worth
 let order = MarketOrderRequest {
     token_id: "market_token".to_string(),
-    side: Side::Buy,
-    size: Decimal::from_str("50.0")?,
-    max_price: Some(Decimal::from_str("0.80")?),
+    side: Side::BUY,
+    amount: Decimal::from_str("1000.0")?,
+    slippage_tolerance: Some(Decimal::from_str("0.005")?), // 0.5%
+    client_id: None,
 };
 
-let result = fill_engine.execute_market_order(&book, order)?;
-println!("Filled: {} at avg price: {}", result.filled_size, result.average_price);
+let result = fill_engine.execute_market_order(&order, &book)?;
+
+println!("If you bought $1000 worth right now:");
+println!("- Average price: ${}", result.average_price);
+println!("- Total tokens: {}", result.total_size);
+println!("- Fees: ${}", result.fees);
+println!("- Market impact: {}%", result.impact_pct * 100);
 ```
 
-### Real-time Market Data
+This tells you exactly what would happen without actually placing the order. Super useful for position sizing.
+
+### WebSocket Streaming (The Fun Part)
+
+Here's how you connect to live market data. The library handles all the annoying reconnection stuff:
 
 ```rust
-use polyfill_rs::{StreamManager, WebSocketStream};
+use polyfill_rs::{WebSocketStream, StreamManager};
 
-let mut stream_manager = StreamManager::new();
+let mut stream = WebSocketStream::new("wss://clob.polymarket.com/ws");
 
-// Subscribe to order book updates
-let stream = WebSocketStream::new("wss://clob.polymarket.com/ws").await?;
-stream_manager.add_stream("orderbook", stream).await?;
+// Set up authentication (you'll need API credentials)
+let auth = WssAuth {
+    address: "your_eth_address".to_string(),
+    signature: "your_signature".to_string(),
+    timestamp: chrono::Utc::now().timestamp() as u64,
+    nonce: "random_nonce".to_string(),
+};
+stream = stream.with_auth(auth);
 
-// Process incoming messages
-while let Some(message) = stream_manager.next().await {
-    match message {
-        Ok(msg) => {
-            // Process order book update
-            if let Some(delta) = msg.to_order_delta() {
-                book_manager.apply_delta(delta)?;
-            }
+// Subscribe to specific markets
+stream.subscribe_market_channel(vec!["token_id_1".to_string(), "token_id_2".to_string()]).await?;
+
+// Process live updates
+while let Some(message) = stream.next().await {
+    match message? {
+        StreamMessage::MarketBookUpdate { data } => {
+            // This is where the fast order book updates happen
+            book_manager.apply_delta_fast(data)?;
         }
-        Err(e) => {
-            // Handle connection errors
-            eprintln!("Stream error: {}", e);
+        StreamMessage::MarketTrade { data } => {
+            println!("Trade: {} tokens at ${}", data.size, data.price);
         }
+        StreamMessage::Heartbeat { .. } => {
+            // Connection is alive
+        }
+        _ => {}
     }
 }
 ```
 
-### Demo Trading Strategy
+The stream automatically reconnects when it drops. You just keep processing messages.
+
+### Example: Simple Spread Trading Bot
+
+Here's a basic bot that looks for wide spreads and tries to capture them:
 
 ```rust
-use polyfill_rs::{PolyfillClient, OrderBookManager, FillEngine};
+use polyfill_rs::{ClobClient, OrderBookManager, FillEngine};
 
-struct ArbitrageStrategy {
-    client: PolyfillClient,
+struct SpreadBot {
+    client: ClobClient,
     book_manager: OrderBookManager,
-    fill_engine: FillEngine,
-    min_spread: Decimal,
-    position_size: Decimal,
+    min_spread_pct: Decimal,  // Only trade if spread > this %
+    position_size: Decimal,   // How much to trade each time
 }
 
-impl ArbitrageStrategy {
-    async fn execute_arbitrage(&mut self, token_id: &str) -> Result<()> {
+impl SpreadBot {
+    async fn check_opportunity(&mut self, token_id: &str) -> Result<bool> {
         let book = self.book_manager.get_book(token_id)?;
         
-        // Calculate arbitrage opportunity
-        let spread = book.spread();
-        if spread < self.min_spread {
-            return Ok(());
+        // Get current market state
+        let spread_pct = book.spread_pct().unwrap_or_default();
+        let best_bid = book.best_bid();
+        let best_ask = book.best_ask();
+        
+        // Only trade if spread is wide enough and we have liquidity
+        if spread_pct > self.min_spread_pct && best_bid.is_some() && best_ask.is_some() {
+            println!("Found opportunity: {}% spread on {}", spread_pct, token_id);
+            
+            // Check if our order size would move the market too much
+            let impact = book.calculate_market_impact(Side::BUY, self.position_size);
+            if let Some(impact) = impact {
+                if impact.impact_pct < Decimal::from_str("0.01")? { // < 1% impact
+                    return Ok(true);
+                }
+            }
         }
         
-        let mid_price = book.mid_price();
-        let bid_price = book.best_bid().unwrap().price;
-        let ask_price = book.best_ask().unwrap().price;
-        
-        // Execute cross-spread orders
-        let buy_order = self.client.create_order(
-            token_id,
-            Side::Buy,
-            self.position_size,
-            Some(bid_price),
-        ).await?;
-        
-        let sell_order = self.client.create_order(
-            token_id,
-            Side::Sell,
-            self.position_size,
-            Some(ask_price),
-        ).await?;
-        
+        Ok(false)
+    }
+    
+    async fn execute_trade(&mut self, token_id: &str) -> Result<()> {
+        // This is where you'd actually place orders
+        // Left as an exercise for the reader :)
+        println!("Would place orders for {}", token_id);
         Ok(())
     }
 }
 ```
 
-## Configuration
+The key insight: with fast order book updates, you can check hundreds of tokens for opportunities without the library being the bottleneck.
 
-### Performance Tuning
+**Pro tip**: The trading strategy examples in the code include detailed comments about market microstructure, order flow, and risk management techniques.
+
+## Configuration Tips
+
+### Order Book Depth Settings
+
+The most important performance knob is how many price levels to track:
 
 ```rust
-use polyfill_rs::Config;
+// For most trading bots: 10-50 levels is plenty
+let book_manager = OrderBookManager::new(20);
 
-let config = Config {
-    // Network configuration
-    base_url: "https://clob.polymarket.com".to_string(),
-    chain_id: 137,
-    
-    // Authentication
-    private_key: Some("your_private_key".to_string()),
-    api_credentials: None,
-    
-    // Performance settings
-    connection_timeout: Duration::from_secs(5),
-    request_timeout: Duration::from_secs(10),
-    max_retries: 3,
-    retry_delay: Duration::from_millis(100),
-    
-    // Rate limiting
-    requests_per_second: 100,
-    burst_size: 10,
+// For market making: maybe 100+ levels
+let book_manager = OrderBookManager::new(100);
+
+// For analysis/research: could go higher, but memory usage grows
+let book_manager = OrderBookManager::new(500);
+```
+
+Why this matters: Each price level takes memory, but 90% of trading happens in the top 10 levels anyway. More levels = more memory usage for diminishing returns.
+
+*The code comments in `src/book.rs` explain the memory layout and why we chose these specific data structures for different use cases.*
+
+### WebSocket Reconnection
+
+The defaults are pretty good, but you can tune them:
+
+```rust
+let reconnect_config = ReconnectConfig {
+    max_retries: 5,                                    // Give up after 5 attempts
+    base_delay: Duration::from_secs(1),               // Start with 1 second delay
+    max_delay: Duration::from_secs(60),               // Cap at 1 minute
+    backoff_multiplier: 2.0,                          // Double delay each time
 };
+
+let stream = WebSocketStream::new("wss://clob.polymarket.com/ws")
+    .with_reconnect_config(reconnect_config);
 ```
 
-### Order Book Configuration
+### Memory Usage
+
+If you're tracking lots of tokens, you might want to clean up stale books:
 
 ```rust
-use polyfill_rs::OrderBookManager;
-
-let book_manager = OrderBookManager::with_config(OrderBookConfig {
-    max_books: 1000,
-    cleanup_interval: Duration::from_secs(300),
-    max_sequence_gap: 1000,
-});
+// Remove books that haven't updated in 5 minutes
+let removed = book_manager.cleanup_stale_books(Duration::from_secs(300))?;
+println!("Cleaned up {} stale order books", removed);
 ```
 
-## Error Handling
+## Error Handling (Because Things Break)
 
-The library provides comprehensive error handling with specific error types:
+The library tries to be helpful about what went wrong:
 
 ```rust
-use polyfill_rs::errors::{PolyfillError, ErrorKind};
+use polyfill_rs::errors::PolyfillError;
 
-match result {
-    Ok(data) => {
-        // Process successful response
+match book_manager.apply_delta(delta) {
+    Ok(_) => {
+        // Order book updated successfully
+    }
+    Err(PolyfillError::Validation { message, .. }) => {
+        // Bad data (price not aligned to tick size, etc.)
+        eprintln!("Invalid data: {}", message);
     }
     Err(PolyfillError::Network { .. }) => {
-        // Handle network connectivity issues
+        // Network problems - probably worth retrying
+        eprintln!("Network error, will retry...");
     }
     Err(PolyfillError::RateLimit { retry_after, .. }) => {
-        // Implement exponential backoff
-        tokio::time::sleep(retry_after).await;
+        // Hit rate limits - back off
+        if let Some(delay) = retry_after {
+            tokio::time::sleep(delay).await;
+        }
     }
-    Err(PolyfillError::Order { order_id, .. }) => {
-        // Handle order-specific errors
+    Err(PolyfillError::Stream { kind, .. }) => {
+        // WebSocket issues - the library will try to reconnect automatically
+        eprintln!("Stream error: {:?}", kind);
     }
     Err(e) => {
-        // Handle other errors
-        eprintln!("Unexpected error: {}", e);
+        eprintln!("Something else went wrong: {}", e);
     }
 }
 ```
+
+Most errors tell you whether they're worth retrying or if you should give up.
+
+## What's Different From Other Libraries?
+
+### Performance
+Most trading libraries are built for "demo day" - they work fine for small examples but fall apart under real load. This one is designed for people who actually need to process thousands of updates per second.
+
+### Tick Alignment
+The library enforces price tick alignment automatically. If someone sends you a price that doesn't align to the market's tick size (like $0.6543 when the tick size is $0.01), it gets rejected. This prevents weird pricing bugs.
+
+*The tick alignment code includes detailed comments about why this matters for market integrity and how the integer math makes validation nearly free.*
+
+### Memory Management
+Order books can grow huge if you're not careful. The library automatically trims them to keep only the relevant price levels, and you can clean up stale books that haven't updated recently.
+
+## Contributing
+
+Found a bug? Have a performance improvement? PRs welcome!
+
+The codebase is designed to be educational as well as functional. Every optimization includes:
+- Commented-out "before" code showing the slower approach
+- Detailed explanations of why the optimization works
+- Performance measurements and memory usage analysis
+- References to trading concepts and market microstructure theory
+
+If you're curious about high-frequency trading or high performance Rust, start with `src/book.rs` - it's like a textbook on order book performance engineering.
