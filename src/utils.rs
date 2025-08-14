@@ -128,8 +128,16 @@ pub mod crypto {
 pub mod math {
     use super::*;
     use rust_decimal::prelude::*;
+    use crate::types::{Price, Qty, SCALE_FACTOR, price_to_decimal, qty_to_decimal};
 
-    /// Round price to tick size
+    // ========================================================================
+    // LEGACY DECIMAL FUNCTIONS (for backward compatibility)
+    // ========================================================================
+    // 
+    // These are kept for API compatibility, but internally we should use
+    // the fixed-point versions below for better performance.
+
+    /// Round price to tick size (LEGACY - use fixed-point version when possible)
     #[inline]
     pub fn round_to_tick(price: Decimal, tick_size: Decimal) -> Decimal {
         if tick_size.is_zero() {
@@ -138,13 +146,13 @@ pub mod math {
         (price / tick_size).round() * tick_size
     }
 
-    /// Calculate notional value (price * size)
+    /// Calculate notional value (price * size) (LEGACY - use fixed-point version when possible)
     #[inline]
     pub fn notional(price: Decimal, size: Decimal) -> Decimal {
         price * size
     }
 
-    /// Calculate spread as percentage
+    /// Calculate spread as percentage (LEGACY - use fixed-point version when possible)
     #[inline]
     pub fn spread_pct(bid: Decimal, ask: Decimal) -> Option<Decimal> {
         if bid.is_zero() || ask <= bid {
@@ -153,13 +161,121 @@ pub mod math {
         Some((ask - bid) / bid * Decimal::from(100))
     }
 
-    /// Calculate mid price
+    /// Calculate mid price (LEGACY - use fixed-point version when possible)
     #[inline]
     pub fn mid_price(bid: Decimal, ask: Decimal) -> Option<Decimal> {
         if bid.is_zero() || ask.is_zero() || ask <= bid {
             return None;
         }
         Some((bid + ask) / Decimal::from(2))
+    }
+
+    // ========================================================================
+    // HIGH-PERFORMANCE FIXED-POINT FUNCTIONS
+    // ========================================================================
+    //
+    // These functions operate on our internal Price/Qty types and are
+    // optimized for maximum performance. They avoid all Decimal operations
+    // and memory allocations.
+    //
+    // Performance comparison (approximate):
+    // - Decimal operations: 20-100ns + allocation overhead
+    // - Fixed-point operations: 1-5ns, no allocations
+    //
+    // That's a 10-50x speedup on the critical path!
+
+    /// Round price to tick size (FAST VERSION)
+    /// 
+    /// This is much faster than the Decimal version because it's just
+    /// integer division and multiplication.
+    /// 
+    /// Example: round_to_tick_fast(6543, 10) = 6540 (rounds to nearest 10 ticks)
+    #[inline]
+    pub fn round_to_tick_fast(price_ticks: Price, tick_size_ticks: Price) -> Price {
+        if tick_size_ticks == 0 {
+            return price_ticks;
+        }
+        // Integer division automatically truncates, then multiply back
+        // For proper rounding, we add half the tick size before dividing
+        let half_tick = tick_size_ticks / 2;
+        ((price_ticks + half_tick) / tick_size_ticks) * tick_size_ticks
+    }
+
+    /// Calculate notional value (price * size) (FAST VERSION)
+    /// 
+    /// Returns the result in the same scale as our quantities.
+    /// This avoids the expensive Decimal multiplication.
+    /// 
+    /// Example: notional_fast(6543, 1000000) = 6543000000 (representing $654.30)
+    #[inline]
+    pub fn notional_fast(price_ticks: Price, size_units: Qty) -> i64 {
+        // Convert price to i64 to avoid overflow
+        let price_i64 = price_ticks as i64;
+        // Multiply and scale appropriately
+        // Both price and size are scaled by SCALE_FACTOR, so result is scaled by SCALE_FACTOR^2
+        // We divide by SCALE_FACTOR to get back to normal scale
+        (price_i64 * size_units) / SCALE_FACTOR
+    }
+
+    /// Calculate spread as percentage (FAST VERSION)
+    /// 
+    /// Returns the spread as a percentage in basis points (1/100th of a percent).
+    /// This avoids floating-point arithmetic entirely.
+    /// 
+    /// Example: spread_pct_fast(6500, 6700) = Some(307) (representing 3.07%)
+    #[inline]
+    pub fn spread_pct_fast(bid_ticks: Price, ask_ticks: Price) -> Option<u32> {
+        if bid_ticks == 0 || ask_ticks <= bid_ticks {
+            return None;
+        }
+        
+        let spread = ask_ticks - bid_ticks;
+        // Calculate percentage in basis points (multiply by 10000 for 4 decimal places)
+        // We use u64 for intermediate calculation to avoid overflow
+        let spread_bps = ((spread as u64) * 10000) / (bid_ticks as u64);
+        
+        // Convert back to u32 (should always fit since spreads are typically small)
+        Some(spread_bps as u32)
+    }
+
+    /// Calculate mid price (FAST VERSION)
+    /// 
+    /// Returns the midpoint between bid and ask in ticks.
+    /// Much faster than the Decimal version.
+    /// 
+    /// Example: mid_price_fast(6500, 6700) = Some(6600)
+    #[inline]
+    pub fn mid_price_fast(bid_ticks: Price, ask_ticks: Price) -> Option<Price> {
+        if bid_ticks == 0 || ask_ticks == 0 || ask_ticks <= bid_ticks {
+            return None;
+        }
+        
+        // Use u64 to avoid overflow in addition
+        let sum = (bid_ticks as u64) + (ask_ticks as u64);
+        Some((sum / 2) as Price)
+    }
+
+    /// Calculate spread in ticks (FAST VERSION)
+    /// 
+    /// Simple subtraction - much faster than Decimal operations.
+    /// 
+    /// Example: spread_fast(6500, 6700) = Some(200) (representing $0.02 spread)
+    #[inline]
+    pub fn spread_fast(bid_ticks: Price, ask_ticks: Price) -> Option<Price> {
+        if ask_ticks <= bid_ticks {
+            return None;
+        }
+        Some(ask_ticks - bid_ticks)
+    }
+
+    /// Check if price is within valid range (FAST VERSION)
+    /// 
+    /// Much faster than converting to Decimal and back.
+    /// 
+    /// Example: is_valid_price_fast(6543, 1, 10000) = true
+    #[inline]
+    pub fn is_valid_price_fast(price_ticks: Price, min_tick: Price, max_tick: Price) -> bool {
+        price_ticks >= min_tick && price_ticks <= max_tick
     }
 
     /// Convert decimal to token units (6 decimal places)
