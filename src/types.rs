@@ -6,6 +6,7 @@
 use alloy_primitives::{Address, U256};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -90,7 +91,7 @@ pub const MAX_QTY: Qty = Qty::MAX / 2; // Leave room for intermediate calculatio
 /// - decimal_to_price(Decimal::from_str("0.6543")) = Ok(6543)
 /// - decimal_to_price(Decimal::from_str("1.0000")) = Ok(10000)
 /// - decimal_to_price(Decimal::from_str("0.00005")) = Ok(1) // Rounds up to min tick
-pub fn decimal_to_price(decimal: Decimal) -> Result<Price, &'static str> {
+pub fn decimal_to_price(decimal: Decimal) -> std::result::Result<Price, &'static str> {
     // Convert to fixed-point by multiplying by scale factor
     let scaled = decimal * Decimal::from(SCALE_FACTOR);
     
@@ -131,7 +132,7 @@ pub fn price_to_decimal(ticks: Price) -> Decimal {
 /// Examples:
 /// - decimal_to_qty(Decimal::from_str("100.0")) = Ok(1000000)
 /// - decimal_to_qty(Decimal::from_str("-50.5")) = Ok(-505000)
-pub fn decimal_to_qty(decimal: Decimal) -> Result<Qty, &'static str> {
+pub fn decimal_to_qty(decimal: Decimal) -> std::result::Result<Qty, &'static str> {
     let scaled = decimal * Decimal::from(SCALE_FACTOR);
     let rounded = scaled.round();
     
@@ -299,7 +300,7 @@ impl FastBookLevel {
     
     /// Create from external BookLevel (with validation)
     /// This is called when we receive data from the API
-    pub fn from_book_level(level: &BookLevel) -> Result<Self, &'static str> {
+    pub fn from_book_level(level: &BookLevel) -> std::result::Result<Self, &'static str> {
         let price = decimal_to_price(level.price)?;
         let size = decimal_to_qty(level.size)?;
         Ok(Self::new(price, size))
@@ -374,7 +375,7 @@ impl FastOrderDelta {
     /// This is where we enforce tick alignment - if the incoming price
     /// doesn't align to valid ticks, we either reject it or round it.
     /// This prevents bad data from corrupting our order book.
-    pub fn from_order_delta(delta: &OrderDelta, tick_size: Option<Decimal>) -> Result<Self, &'static str> {
+    pub fn from_order_delta(delta: &OrderDelta, tick_size: Option<Decimal>) -> std::result::Result<Self, &'static str> {
         // Validate tick alignment if we have a tick size
         if let Some(tick_size) = tick_size {
             if !is_price_tick_aligned(delta.price, tick_size) {

@@ -567,21 +567,26 @@ impl OrderBook {
     /// Get the total liquidity at a given price level
     /// Tells you how much you can buy/sell at exactly this price
     pub fn liquidity_at_price(&self, price: Decimal, side: Side) -> Decimal {
+        let price_u32 = decimal_to_price(price).unwrap_or(0);
         match side {
-            Side::BUY => self.asks.get(&price).copied().unwrap_or_default(), // How much we can buy at this price
-            Side::SELL => self.bids.get(&price).copied().unwrap_or_default(), // How much we can sell at this price
+            Side::BUY => Decimal::from(self.asks.get(&price_u32).copied().unwrap_or_default()), // How much we can buy at this price
+            Side::SELL => Decimal::from(self.bids.get(&price_u32).copied().unwrap_or_default()), // How much we can sell at this price
         }
     }
 
     /// Get the total liquidity within a price range
     /// Useful for understanding how much depth exists in a certain price band
     pub fn liquidity_in_range(&self, min_price: Decimal, max_price: Decimal, side: Side) -> Decimal {
+        let min_price_u32 = decimal_to_price(min_price).unwrap_or(0);
+        let max_price_u32 = decimal_to_price(max_price).unwrap_or(0);
+        
         let levels: Vec<_> = match side {
-            Side::BUY => self.asks.range(min_price..=max_price).collect(),
-            Side::SELL => self.bids.range(min_price..=max_price).rev().collect(),
+            Side::BUY => self.asks.range(min_price_u32..=max_price_u32).collect(),
+            Side::SELL => self.bids.range(min_price_u32..=max_price_u32).rev().collect(),
         };
 
-        levels.into_iter().map(|(_, &size)| size).sum()
+        let total: i64 = levels.into_iter().map(|(_, &size)| size).sum();
+        Decimal::from(total)
     }
 
     /// Validate that prices are properly ordered
@@ -738,8 +743,8 @@ impl OrderBook {
     pub fn analytics(&self) -> BookAnalytics {
         let bid_count = self.bids.len();
         let ask_count = self.asks.len();
-        let total_bid_size: Decimal = self.bids.values().sum(); // Add up all bid sizes
-        let total_ask_size: Decimal = self.asks.values().sum(); // Add up all ask sizes
+        let total_bid_size: Decimal = Decimal::from(self.bids.values().sum::<i64>()); // Add up all bid sizes
+        let total_ask_size: Decimal = Decimal::from(self.asks.values().sum::<i64>()); // Add up all ask sizes
 
         BookAnalytics {
             token_id: self.token_id.clone(),
