@@ -62,7 +62,7 @@ cargo test --test integration_tests -- --nocapture
 
 ## Test Categories
 
-### ✅ Always Run (No Auth Required)
+### Always Run (No Auth Required)
 - **API Connectivity**: Basic connection to Polymarket API
 - **Market Data Endpoints**: Order book, prices, spreads, etc.
 - **Error Handling**: Invalid requests and error responses
@@ -70,24 +70,24 @@ cargo test --test integration_tests -- --nocapture
 - **API Compatibility**: Verify our API matches polymarket-rs-client
 - **Performance**: Response time measurements
 
-### 🔐 Authentication Required
+### Authentication Required
 - **Authentication**: API key creation and validation
 - **Advanced Client Features**: Full client configuration
 - **WebSocket Connectivity**: Real-time data streaming
 
-### 💰 API Credentials Required
+### API Credentials Required
 - **Order Management**: Order creation and management (read-only tests)
 
 ## Test Results
 
 ### Success Indicators
 ```
-✅ API connectivity test passed
-✅ Market data endpoints test passed
-✅ Error handling test passed
-✅ Rate limiting test passed
-✅ API compatibility test passed
-✅ Performance test passed
+API connectivity test passed
+Market data endpoints test passed
+Error handling test passed
+Rate limiting test passed
+API compatibility test passed
+Performance test passed
   Server time: 234ms
   Markets request: 1.2s
   Markets returned: 50
@@ -95,14 +95,14 @@ cargo test --test integration_tests -- --nocapture
 
 ### Skip Indicators
 ```
-⚠️  Skipping authentication test - no private key provided
-⚠️  Skipping order management test - missing auth credentials
+Skipping authentication test - no private key provided
+Skipping order management test - missing auth credentials
 ```
 
 ### Failure Indicators
 ```
-❌ API connectivity test failed: Network error: connection refused
-❌ Market data endpoints test failed: API error (404): Token not found
+API connectivity test failed: Network error: connection refused
+Market data endpoints test failed: API error (404): Token not found
 ```
 
 ## Performance Benchmarks
@@ -188,12 +188,12 @@ cargo nextest run --test integration_tests
 
 Our integration tests cover:
 
-- ✅ **API Endpoints**: All major REST endpoints
-- ✅ **Authentication**: EIP-712 signing and API key management
-- ✅ **Error Handling**: Network errors, API errors, validation errors
-- ✅ **Performance**: Response time and throughput measurements
-- ✅ **WebSocket**: Real-time data streaming (when available)
-- ✅ **Compatibility**: API compatibility with polymarket-rs-client
+- **API Endpoints**: All major REST endpoints
+- **Authentication**: EIP-712 signing and API key management
+- **Error Handling**: Network errors, API errors, validation errors
+- **Performance**: Response time and throughput measurements
+- **WebSocket**: Real-time data streaming (when available)
+- **Compatibility**: API compatibility with polymarket-rs-client
 
 ## Adding New Tests
 

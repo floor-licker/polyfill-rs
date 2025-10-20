@@ -146,21 +146,21 @@ pub struct TestReporter;
 impl TestReporter {
     /// Report test success
     pub fn success(test_name: &str) {
-        println!("✅ {} passed", test_name);
+        println!("{} passed", test_name);
     }
 
     /// Report test failure
     pub fn failure(test_name: &str, error: &dyn std::error::Error) {
-        println!("❌ {} failed: {}", test_name, error);
+        println!("{} failed: {}", test_name, error);
     }
 
     /// Report test skip
     pub fn skip(test_name: &str, reason: &str) {
-        println!("⚠️  {} skipped: {}", test_name, reason);
+        println!("{} skipped: {}", test_name, reason);
     }
 
     /// Report test performance
     pub fn performance(test_name: &str, duration: Duration) {
-        println!("⚡ {} completed in {:?}", test_name, duration);
+        println!("{} completed in {:?}", test_name, duration);
     }
 } 
