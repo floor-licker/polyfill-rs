@@ -233,10 +233,17 @@ impl PolyfillError {
         }
     }
 
-    pub fn auth(message: impl Into<String>, kind: AuthErrorKind) -> Self {
+    pub fn auth(message: impl Into<String>) -> Self {
         Self::Auth {
             message: message.into(),
-            kind,
+            kind: AuthErrorKind::SignatureError,
+        }
+    }
+
+    pub fn crypto(message: impl Into<String>) -> Self {
+        Self::Auth {
+            message: message.into(),
+            kind: AuthErrorKind::SignatureError,
         }
     }
 

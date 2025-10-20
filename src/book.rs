@@ -8,7 +8,6 @@ use std::collections::BTreeMap; // BTreeMap keeps prices sorted automatically - 
 use std::sync::{Arc, RwLock}; // For thread-safe access across multiple tasks
 use tracing::{debug, trace, warn}; // Logging for debugging and monitoring
 use chrono::Utc;
-use std::collections::HashMap;
 
 /// High-performance order book implementation
 /// 
@@ -567,26 +566,47 @@ impl OrderBook {
     /// Get the total liquidity at a given price level
     /// Tells you how much you can buy/sell at exactly this price
     pub fn liquidity_at_price(&self, price: Decimal, side: Side) -> Decimal {
-        let price_u32 = decimal_to_price(price).unwrap_or(0);
+        // Convert decimal price to our internal fixed-point representation
+        let price_ticks = match decimal_to_price(price) {
+            Ok(ticks) => ticks,
+            Err(_) => return Decimal::ZERO, // Invalid price
+        };
+        
         match side {
-            Side::BUY => Decimal::from(self.asks.get(&price_u32).copied().unwrap_or_default()), // How much we can buy at this price
-            Side::SELL => Decimal::from(self.bids.get(&price_u32).copied().unwrap_or_default()), // How much we can sell at this price
+            Side::BUY => {
+                // How much we can buy at this price (look at asks)
+                let size_units = self.asks.get(&price_ticks).copied().unwrap_or_default();
+                qty_to_decimal(size_units)
+            },
+            Side::SELL => {
+                // How much we can sell at this price (look at bids)
+                let size_units = self.bids.get(&price_ticks).copied().unwrap_or_default();
+                qty_to_decimal(size_units)
+            }
         }
     }
 
     /// Get the total liquidity within a price range
     /// Useful for understanding how much depth exists in a certain price band
     pub fn liquidity_in_range(&self, min_price: Decimal, max_price: Decimal, side: Side) -> Decimal {
-        let min_price_u32 = decimal_to_price(min_price).unwrap_or(0);
-        let max_price_u32 = decimal_to_price(max_price).unwrap_or(0);
+        // Convert decimal prices to our internal fixed-point representation
+        let min_price_ticks = match decimal_to_price(min_price) {
+            Ok(ticks) => ticks,
+            Err(_) => return Decimal::ZERO, // Invalid price
+        };
+        let max_price_ticks = match decimal_to_price(max_price) {
+            Ok(ticks) => ticks,
+            Err(_) => return Decimal::ZERO, // Invalid price
+        };
         
         let levels: Vec<_> = match side {
-            Side::BUY => self.asks.range(min_price_u32..=max_price_u32).collect(),
-            Side::SELL => self.bids.range(min_price_u32..=max_price_u32).rev().collect(),
+            Side::BUY => self.asks.range(min_price_ticks..=max_price_ticks).collect(),
+            Side::SELL => self.bids.range(min_price_ticks..=max_price_ticks).rev().collect(),
         };
 
-        let total: i64 = levels.into_iter().map(|(_, &size)| size).sum();
-        Decimal::from(total)
+        // Sum up the sizes, converting from fixed-point back to Decimal
+        let total_size_units: i64 = levels.into_iter().map(|(_, &size)| size).sum();
+        qty_to_decimal(total_size_units)
     }
 
     /// Validate that prices are properly ordered
@@ -743,8 +763,11 @@ impl OrderBook {
     pub fn analytics(&self) -> BookAnalytics {
         let bid_count = self.bids.len();
         let ask_count = self.asks.len();
-        let total_bid_size: Decimal = Decimal::from(self.bids.values().sum::<i64>()); // Add up all bid sizes
-        let total_ask_size: Decimal = Decimal::from(self.asks.values().sum::<i64>()); // Add up all ask sizes
+        // Sum up all bid/ask sizes, converting from fixed-point back to Decimal
+        let total_bid_size_units: i64 = self.bids.values().sum();
+        let total_ask_size_units: i64 = self.asks.values().sum();
+        let total_bid_size = qty_to_decimal(total_bid_size_units);
+        let total_ask_size = qty_to_decimal(total_ask_size_units);
 
         BookAnalytics {
             token_id: self.token_id.clone(),

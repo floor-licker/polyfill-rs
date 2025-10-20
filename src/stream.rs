@@ -5,14 +5,13 @@
 
 use crate::errors::{PolyfillError, Result};
 use crate::types::*;
-use futures::{Sink, Stream, SinkExt, StreamExt};
+use futures::{Stream, SinkExt, StreamExt};
 use serde_json::Value;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use chrono::Utc;
-use alloy_primitives::U256;
 
 /// Trait for market data streams
 pub trait MarketStream: Stream<Item = Result<StreamMessage>> + Send + Sync {
@@ -162,7 +161,7 @@ impl WebSocketStream {
     /// Subscribe to user channel (orders and trades)
     pub async fn subscribe_user_channel(&mut self, markets: Vec<String>) -> Result<()> {
         let auth = self.auth.as_ref()
-            .ok_or_else(|| PolyfillError::auth("No authentication provided for WebSocket", crate::errors::AuthErrorKind::InvalidCredentials))?
+            .ok_or_else(|| PolyfillError::auth("No authentication provided for WebSocket"))?
             .clone();
 
         let subscription = WssSubscription {
@@ -178,7 +177,7 @@ impl WebSocketStream {
     /// Subscribe to market channel (order book and trades)
     pub async fn subscribe_market_channel(&mut self, asset_ids: Vec<String>) -> Result<()> {
         let auth = self.auth.as_ref()
-            .ok_or_else(|| PolyfillError::auth("No authentication provided for WebSocket", crate::errors::AuthErrorKind::InvalidCredentials))?
+            .ok_or_else(|| PolyfillError::auth("No authentication provided for WebSocket"))?
             .clone();
 
         let subscription = WssSubscription {
@@ -380,7 +379,7 @@ impl Stream for WebSocketStream {
         // Then check WebSocket connection
         if let Some(connection) = &mut self.connection {
             match connection.poll_next_unpin(cx) {
-                Poll::Ready(Some(Ok(message))) => {
+                Poll::Ready(Some(Ok(_message))) => {
                     // Simplified message handling
                     Poll::Ready(Some(Ok(StreamMessage::Heartbeat { timestamp: Utc::now() })))
                 }

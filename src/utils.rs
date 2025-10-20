@@ -128,7 +128,7 @@ pub mod crypto {
 pub mod math {
     use super::*;
     use rust_decimal::prelude::*;
-    use crate::types::{Price, Qty, SCALE_FACTOR, price_to_decimal, qty_to_decimal};
+    use crate::types::{Price, Qty, SCALE_FACTOR};
 
     // ========================================================================
     // LEGACY DECIMAL FUNCTIONS (for backward compatibility)
@@ -457,7 +457,6 @@ pub mod url {
 /// Rate limiting utilities
 pub mod rate_limit {
     use super::*;
-    use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
     /// Simple token bucket rate limiter

@@ -8,8 +8,6 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use uuid::Uuid;
 
 // ============================================================================
 // FIXED-POINT OPTIMIZATION FOR HOT PATH PERFORMANCE
@@ -484,9 +482,20 @@ pub struct Order {
 /// API credentials for authentication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiCredentials {
+    #[serde(rename = "apiKey")]
     pub api_key: String,
     pub secret: String,
     pub passphrase: String,
+}
+
+impl Default for ApiCredentials {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            secret: String::new(),
+            passphrase: String::new(),
+        }
+    }
 }
 
 /// Configuration for order creation
@@ -495,6 +504,69 @@ pub struct OrderOptions {
     pub tick_size: Option<Decimal>,
     pub neg_risk: Option<bool>,
     pub fee_rate_bps: Option<u32>,
+}
+
+/// Extra arguments for order creation
+#[derive(Debug, Clone)]
+pub struct ExtraOrderArgs {
+    pub fee_rate_bps: u32,
+    pub nonce: U256,
+    pub taker: String,
+}
+
+impl Default for ExtraOrderArgs {
+    fn default() -> Self {
+        Self {
+            fee_rate_bps: 0,
+            nonce: U256::ZERO,
+            taker: "0x0000000000000000000000000000000000000000".to_string(),
+        }
+    }
+}
+
+/// Market order arguments
+#[derive(Debug, Clone)]
+pub struct MarketOrderArgs {
+    pub token_id: String,
+    pub amount: Decimal,
+}
+
+/// Signed order request ready for submission
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignedOrderRequest {
+    pub salt: u64,
+    pub maker: String,
+    pub signer: String,
+    pub taker: String,
+    pub token_id: String,
+    pub maker_amount: String,
+    pub taker_amount: String,
+    pub expiration: String,
+    pub nonce: String,
+    pub fee_rate_bps: String,
+    pub side: String,
+    pub signature_type: u8,
+    pub signature: String,
+}
+
+/// Post order wrapper
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostOrder {
+    pub order: SignedOrderRequest,
+    pub owner: String,
+    pub order_type: OrderType,
+}
+
+impl PostOrder {
+    pub fn new(order: SignedOrderRequest, owner: String, order_type: OrderType) -> Self {
+        Self {
+            order,
+            owner,
+            order_type,
+        }
+    }
 }
 
 /// Market information
@@ -680,6 +752,157 @@ pub type TokenId = String;
 pub type OrderId = String;
 pub type MarketId = String;
 pub type ClientId = String;
+
+
+/// Parameters for querying open orders
+#[derive(Debug, Clone)]
+pub struct OpenOrderParams {
+    pub id: Option<String>,
+    pub asset_id: Option<String>,
+    pub market: Option<String>,
+}
+
+impl OpenOrderParams {
+    pub fn to_query_params(&self) -> Vec<(&str, &String)> {
+        let mut params = Vec::with_capacity(3);
+
+        if let Some(x) = &self.id {
+            params.push(("id", x));
+        }
+
+        if let Some(x) = &self.asset_id {
+            params.push(("asset_id", x));
+        }
+
+        if let Some(x) = &self.market {
+            params.push(("market", x));
+        }
+        params
+    }
+}
+
+/// Parameters for querying trades
+#[derive(Debug, Clone)]
+pub struct TradeParams {
+    pub id: Option<String>,
+    pub maker_address: Option<String>,
+    pub market: Option<String>,
+    pub asset_id: Option<String>,
+    pub before: Option<u64>,
+    pub after: Option<u64>,
+}
+
+impl TradeParams {
+    pub fn to_query_params(&self) -> Vec<(&str, String)> {
+        let mut params = Vec::with_capacity(6);
+
+        if let Some(x) = &self.id {
+            params.push(("id", x.clone()));
+        }
+
+        if let Some(x) = &self.asset_id {
+            params.push(("asset_id", x.clone()));
+        }
+
+        if let Some(x) = &self.market {
+            params.push(("market", x.clone()));
+        }
+        
+        if let Some(x) = &self.maker_address {
+            params.push(("maker_address", x.clone()));
+        }
+        
+        if let Some(x) = &self.before {
+            params.push(("before", x.to_string()));
+        }
+        
+        if let Some(x) = &self.after {
+            params.push(("after", x.to_string()));
+        }
+        
+        params
+    }
+}
+
+/// Open order information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenOrder {
+    pub associate_trades: Vec<String>,
+    pub id: String,
+    pub status: String,
+    pub market: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub original_size: Decimal,
+    pub outcome: String,
+    pub maker_address: String,
+    pub owner: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price: Decimal,
+    pub side: Side,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub size_matched: Decimal,
+    pub asset_id: String,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub expiration: u64,
+    #[serde(rename = "type")]
+    pub order_type: OrderType,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub created_at: u64,
+}
+
+
+/// Balance allowance information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BalanceAllowance {
+    pub asset_id: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub balance: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub allowance: Decimal,
+}
+
+/// Notification preferences
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationParams {
+    pub signature: String,
+    pub timestamp: u64,
+}
+
+/// Batch midpoint request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchMidpointRequest {
+    pub token_ids: Vec<String>,
+}
+
+/// Batch midpoint response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchMidpointResponse {
+    pub midpoints: std::collections::HashMap<String, Option<Decimal>>,
+}
+
+/// Batch price request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchPriceRequest {
+    pub token_ids: Vec<String>,
+}
+
+/// Price information for a token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenPrice {
+    pub token_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bid: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ask: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mid: Option<Decimal>,
+}
+
+/// Batch price response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchPriceResponse {
+    pub prices: Vec<TokenPrice>,
+}
 
 /// Result type used throughout the client
 pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>; 

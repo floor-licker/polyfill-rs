@@ -10,7 +10,6 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::str::FromStr;
 
 /// Fast string to number deserializers

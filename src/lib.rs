@@ -93,9 +93,11 @@ pub fn init() {
 
 // Re-export main types
 pub use crate::types::{
-    ApiCredentials, Balance, ClientConfig, FillEvent, MarketSnapshot, Order, OrderBook,
-    OrderDelta, OrderRequest, OrderStatus, OrderType, Side, StreamMessage, WssAuth, 
-    WssSubscription, WssChannelType,
+    ApiCredentials, Balance, BalanceAllowance, BatchMidpointRequest, BatchMidpointResponse,
+    BatchPriceRequest, BatchPriceResponse, ClientConfig, FillEvent, MarketSnapshot, 
+    NotificationParams, OpenOrder, OpenOrderParams, Order, OrderBook, OrderDelta, 
+    OrderRequest, OrderStatus, OrderType, Side, StreamMessage, TokenPrice, TradeParams,
+    WssAuth, WssSubscription, WssChannelType,
 };
 
 // Re-export client
@@ -121,11 +123,13 @@ pub use crate::utils::{
 };
 
 // Module declarations
+pub mod auth;
 pub mod book;
 pub mod client;
 pub mod decode;
 pub mod errors;
 pub mod fill;
+pub mod orders;
 pub mod stream;
 pub mod types;
 pub mod utils;
