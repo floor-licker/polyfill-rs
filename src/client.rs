@@ -285,6 +285,52 @@ impl ClobClient {
         }
     }
 
+    /// Get all API keys for the authenticated user
+    pub async fn get_api_keys(&self) -> Result<Vec<String>> {
+        let signer = self.signer.as_ref()
+            .ok_or_else(|| PolyfillError::config("Signer not configured"))?;
+        let api_creds = self.api_creds.as_ref()
+            .ok_or_else(|| PolyfillError::config("API credentials not configured"))?;
+
+        let method = Method::GET;
+        let endpoint = "/auth/api-keys";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        let api_keys_response: crate::types::ApiKeysResponse = response.json().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
+
+        Ok(api_keys_response.api_keys)
+    }
+
+    /// Delete the current API key
+    pub async fn delete_api_key(&self) -> Result<String> {
+        let signer = self.signer.as_ref()
+            .ok_or_else(|| PolyfillError::config("Signer not configured"))?;
+        let api_creds = self.api_creds.as_ref()
+            .ok_or_else(|| PolyfillError::config("API credentials not configured"))?;
+
+        let method = Method::DELETE;
+        let endpoint = "/auth/api-key";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.text().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
     /// Helper to create request with headers
     fn create_request_with_headers(
         &self,
