@@ -98,6 +98,10 @@ pub use crate::types::{
     NotificationParams, OpenOrder, OpenOrderParams, Order, OrderBook, OrderDelta, 
     OrderRequest, OrderStatus, OrderType, Side, StreamMessage, TokenPrice, TradeParams,
     WssAuth, WssSubscription, WssChannelType,
+    // Additional compatibility types
+    ApiKeysResponse, MidpointResponse, PriceResponse, SpreadResponse, TickSizeResponse,
+    NegRiskResponse, BookParams, MarketsResponse, SimplifiedMarketsResponse, Market,
+    SimplifiedMarket, Token, Rewards, ClientResult,
 };
 
 // Re-export client

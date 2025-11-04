@@ -92,6 +92,23 @@ impl ClobClient {
         }
     }
 
+    /// Create a client with L2 headers (for API key authentication)
+    pub fn with_l2_headers(host: &str, private_key: &str, chain_id: u64, api_creds: ApiCreds) -> Self {
+        let signer = private_key.parse::<PrivateKeySigner>()
+            .expect("Invalid private key");
+        
+        let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
+        
+        Self {
+            http_client: Client::new(),
+            base_url: host.to_string(),
+            chain_id,
+            signer: Some(signer),
+            api_creds: Some(api_creds),
+            order_builder: Some(order_builder),
+        }
+    }
+
     /// Set API credentials
     pub fn set_api_creds(&mut self, api_creds: ApiCreds) {
         self.api_creds = Some(api_creds);
