@@ -363,15 +363,3 @@ The library enforces price tick alignment automatically. If someone sends you a 
 
 ### Memory Management
 Order books can grow huge if you're not careful. The library automatically trims them to keep only the relevant price levels, and you can clean up stale books that haven't updated recently.
-
-## Contributing
-
-Found a bug? Have a performance improvement? PRs welcome!
-
-The codebase is designed to be educational as well as functional. Every optimization includes:
-- Commented-out "before" code showing the slower approach
-- Detailed explanations of why the optimization works
-- Performance measurements and memory usage analysis
-- References to trading concepts and market microstructure theory
-
-If you're curious about high-frequency trading or high performance Rust, start with `src/book.rs` - it's like a textbook on order book performance engineering.

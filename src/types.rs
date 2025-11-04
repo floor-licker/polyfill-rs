@@ -904,5 +904,128 @@ pub struct BatchPriceResponse {
     pub prices: Vec<TokenPrice>,
 }
 
+// Additional types for API compatibility with reference implementation
+#[derive(Debug, Deserialize)]
+pub struct ApiKeysResponse {
+    #[serde(rename = "apiKeys")]
+    pub api_keys: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MidpointResponse {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub mid: Decimal,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PriceResponse {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price: Decimal,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpreadResponse {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub spread: Decimal,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TickSizeResponse {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub minimum_tick_size: Decimal,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NegRiskResponse {
+    pub neg_risk: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BookParams {
+    pub token_id: String,
+    pub side: Side,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MarketsResponse {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub limit: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub count: Decimal,
+    pub next_cursor: Option<String>,
+    pub data: Vec<Market>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SimplifiedMarketsResponse {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub limit: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub count: Decimal,
+    pub next_cursor: Option<String>,
+    pub data: Vec<SimplifiedMarket>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Market {
+    pub condition_id: String,
+    pub tokens: [Token; 2],
+    pub rewards: Rewards,
+    pub min_incentive_size: Option<String>,
+    pub max_incentive_spread: Option<String>,
+    pub active: bool,
+    pub closed: bool,
+    pub question_id: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub minimum_order_size: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub minimum_tick_size: Decimal,
+    pub description: String,
+    pub category: Option<String>,
+    pub end_date_iso: Option<String>,
+    pub game_start_time: Option<String>,
+    pub question: String,
+    pub market_slug: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub seconds_delay: Decimal,
+    pub icon: String,
+    pub fpmm: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SimplifiedMarket {
+    pub condition_id: String,
+    pub tokens: [Token; 2],
+    pub rewards: Rewards,
+    pub min_incentive_size: Option<String>,
+    pub max_incentive_spread: Option<String>,
+    pub active: bool,
+    pub closed: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Token {
+    pub token_id: String,
+    pub outcome: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Rewards {
+    pub rates: Option<serde_json::Value>,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_size: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_spread: Decimal,
+    pub event_start_date: Option<String>,
+    pub event_end_date: Option<String>,
+    #[serde(with = "rust_decimal::serde::str", skip_serializing_if = "Option::is_none")]
+    pub in_game_multiplier: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str", skip_serializing_if = "Option::is_none")]
+    pub reward_epoch: Option<Decimal>,
+}
+
+// For compatibility with reference implementation
+pub type ClientResult<T> = anyhow::Result<T>;
+
 /// Result type used throughout the client
 pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>; 
