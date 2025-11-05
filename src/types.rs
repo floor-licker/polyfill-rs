@@ -1031,8 +1031,33 @@ pub struct SimplifiedMarketsResponse {
     pub data: Vec<SimplifiedMarket>,
 }
 
-// Note: Market, Token, Rewards, and SimplifiedMarket are already defined above in this file
-// These duplicate definitions have been removed to avoid conflicts
+/// Simplified market structure for batch operations
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SimplifiedMarket {
+    pub condition_id: String,
+    pub tokens: [Token; 2],
+    pub rewards: Rewards,
+    pub min_incentive_size: Option<String>,
+    pub max_incentive_spread: Option<String>,
+    pub active: bool,
+    pub closed: bool,
+}
+
+/// Rewards structure for markets
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Rewards {
+    pub rates: Option<serde_json::Value>,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_size: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_spread: Decimal,
+    pub event_start_date: Option<String>,
+    pub event_end_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_game_multiplier: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reward_epoch: Option<Decimal>,
+}
 
 // For compatibility with reference implementation
 pub type ClientResult<T> = anyhow::Result<T>;

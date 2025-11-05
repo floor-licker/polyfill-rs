@@ -141,20 +141,6 @@ impl ClobClient {
         Ok(timestamp)
     }
 
-    /// Get sampling markets
-    pub async fn get_sampling_markets(&self, _limit: Option<u32>) -> Result<MarketsResponse> {
-        let response = self.http_client
-            .get(&format!("{}/sampling-markets", self.base_url))
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Err(PolyfillError::api(response.status().as_u16(), "Failed to get sampling markets"));
-        }
-
-        let markets_response: MarketsResponse = response.json().await?;
-        Ok(markets_response)
-    }
 
     /// Get order book for a token
     pub async fn get_order_book(&self, token_id: &str) -> Result<OrderBookSummary> {
@@ -301,7 +287,7 @@ impl ClobClient {
             .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         let api_keys_response: crate::types::ApiKeysResponse = response.json().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
@@ -325,7 +311,7 @@ impl ClobClient {
             .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.text().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -635,7 +621,7 @@ impl ClobClient {
                 .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
 
             let resp = r.send().await
-                .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?
+                .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?
                 .json::<Value>().await
                 .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
 
@@ -695,7 +681,7 @@ impl ClobClient {
                 .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
 
             let resp = r.send().await
-                .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?
+                .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?
                 .json::<Value>().await
                 .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
 
@@ -748,7 +734,7 @@ impl ClobClient {
             .query(&query_params)
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Value>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -785,7 +771,7 @@ impl ClobClient {
             )])
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Value>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -870,7 +856,7 @@ impl ClobClient {
             .json(&request_data)
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Vec<OrderBookSummary>>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -892,7 +878,7 @@ impl ClobClient {
             .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<crate::types::OpenOrder>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -905,7 +891,7 @@ impl ClobClient {
             .query(&[("token_id", token_id)])
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Value>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -927,7 +913,7 @@ impl ClobClient {
             .json(&request_data)
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Value>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -955,7 +941,7 @@ impl ClobClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Value>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -978,7 +964,7 @@ impl ClobClient {
             .query(&[("ids", ids.join(","))])
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Value>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -1013,7 +999,7 @@ impl ClobClient {
             .query(&query_params)
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Value>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -1036,7 +1022,7 @@ impl ClobClient {
             .query(&[("order_id", order_id)])
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         let result: Value = response.json().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
@@ -1061,7 +1047,7 @@ impl ClobClient {
             .json(order_ids)
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<std::collections::HashMap<String, bool>>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -1076,7 +1062,7 @@ impl ClobClient {
             .query(&[("next_cursor", next_cursor)])
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<crate::types::MarketsResponse>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -1091,7 +1077,7 @@ impl ClobClient {
             .query(&[("next_cursor", next_cursor)])
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<crate::types::SimplifiedMarketsResponse>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -1106,7 +1092,7 @@ impl ClobClient {
             .query(&[("next_cursor", next_cursor)])
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<crate::types::MarketsResponse>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -1121,7 +1107,7 @@ impl ClobClient {
             .query(&[("next_cursor", next_cursor)])
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<crate::types::SimplifiedMarketsResponse>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -1133,7 +1119,7 @@ impl ClobClient {
             .get(&format!("{}/markets/{}", self.base_url, condition_id))
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<crate::types::Market>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
@@ -1145,7 +1131,7 @@ impl ClobClient {
             .get(&format!("{}/live-activity/events/{}", self.base_url, condition_id))
             .send()
             .await
-            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response.json::<Value>().await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))

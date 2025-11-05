@@ -102,6 +102,7 @@ pub use crate::types::{
     ApiKeysResponse, MidpointResponse, PriceResponse, SpreadResponse, TickSizeResponse,
     NegRiskResponse, BookParams, MarketsResponse, SimplifiedMarketsResponse, Market,
     SimplifiedMarket, Token, Rewards, ClientResult, OrderBookSummary, OrderSummary,
+    BalanceAllowanceParams, AssetType,
 };
 
 // Re-export client
@@ -109,7 +110,7 @@ pub use crate::client::{ClobClient, PolyfillClient};
 
 // Re-export compatibility types (for easy migration from polymarket-rs-client)
 pub use crate::client::{
-    OrderArgs, OrderBookSummary,
+    OrderArgs,
 };
 
 // Re-export error types
