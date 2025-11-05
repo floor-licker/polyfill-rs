@@ -190,6 +190,31 @@ impl ClobClient {
         Ok(spread)
     }
 
+    /// Get spreads for multiple tokens (batch)
+    pub async fn get_spreads(&self, token_ids: &[String]) -> Result<std::collections::HashMap<String, Decimal>> {
+        let request_data: Vec<std::collections::HashMap<&str, String>> = token_ids
+            .iter()
+            .map(|id| {
+                let mut map = std::collections::HashMap::new();
+                map.insert("token_id", id.clone());
+                map
+            })
+            .collect();
+
+        let response = self.http_client
+            .post(&format!("{}/spreads", self.base_url))
+            .json(&request_data)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(response.status().as_u16(), "Failed to get batch spreads"));
+        }
+
+        response.json::<std::collections::HashMap<String, Decimal>>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
     /// Get price for a token and side
     pub async fn get_price(&self, token_id: &str, side: Side) -> Result<PriceResponse> {
         let response = self.http_client
