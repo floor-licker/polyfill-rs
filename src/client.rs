@@ -605,28 +605,54 @@ impl ClobClient {
     /// - Market ID (all orders for a specific market)
     /// 
     /// The response includes order status, fill information, and timestamps.
-    pub async fn get_orders(&self, params: Option<crate::types::OpenOrderParams>) -> Result<Vec<crate::types::OpenOrder>> {
+    pub async fn get_orders(&self, params: Option<&crate::types::OpenOrderParams>, next_cursor: Option<&str>) -> Result<Vec<crate::types::OpenOrder>> {
         let signer = self.signer.as_ref()
             .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
         let api_creds = self.api_creds.as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
-        let headers = create_l2_headers::<Value>(signer, api_creds, "GET", "/orders", None)?;
-        let mut req = self.create_request_with_headers(Method::GET, "/orders", headers.into_iter());
+        let method = Method::GET;
+        let endpoint = "/data/orders";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
 
-        // Add query parameters if provided
-        if let Some(params) = params {
-            let query_params = params.to_query_params();
-            req = req.query(&query_params);
+        let query_params = match params {
+            None => Vec::new(),
+            Some(p) => p.to_query_params(),
+        };
+
+        let mut next_cursor = next_cursor.unwrap_or("MA==").to_string(); // INITIAL_CURSOR
+        let mut output = Vec::new();
+        
+        while next_cursor != "LTE=" { // END_CURSOR
+            let req = self.http_client
+                .request(method.clone(), format!("{}{}", self.base_url, endpoint))
+                .query(&query_params)
+                .query(&[("next_cursor", &next_cursor)]);
+
+            let r = headers
+                .clone()
+                .into_iter()
+                .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
+
+            let resp = r.send().await
+                .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?
+                .json::<Value>().await
+                .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
+
+            let new_cursor = resp["next_cursor"]
+                .as_str()
+                .ok_or_else(|| PolyfillError::parse("Failed to parse next cursor".to_string(), None))?
+                .to_owned();
+
+            next_cursor = new_cursor;
+
+            let results = resp["data"].clone();
+            let orders = serde_json::from_value::<Vec<crate::types::OpenOrder>>(results)
+                .map_err(|e| PolyfillError::parse(format!("Failed to parse data from order response: {}", e), None))?;
+            output.extend(orders);
         }
-
-        let response = req.send().await?;
-        if !response.status().is_success() {
-            return Err(PolyfillError::api(response.status().as_u16(), "Failed to get orders"));
-        }
-
-        let orders: Vec<crate::types::OpenOrder> = response.json().await?;
-        Ok(orders)
+        
+        Ok(output)
     }
 
     /// Get trade history with optional filtering
@@ -639,28 +665,52 @@ impl ClobClient {
     /// - Time range (before/after timestamps)
     /// 
     /// Trades are returned in reverse chronological order (newest first).
-    pub async fn get_trades(&self, params: Option<crate::types::TradeParams>) -> Result<Vec<crate::types::FillEvent>> {
+    pub async fn get_trades(&self, trade_params: Option<&crate::types::TradeParams>, next_cursor: Option<&str>) -> Result<Vec<Value>> {
         let signer = self.signer.as_ref()
             .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
         let api_creds = self.api_creds.as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
-        let headers = create_l2_headers::<Value>(signer, api_creds, "GET", "/trades", None)?;
-        let mut req = self.create_request_with_headers(Method::GET, "/trades", headers.into_iter());
+        let method = Method::GET;
+        let endpoint = "/data/trades";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
 
-        // Add query parameters if provided
-        if let Some(params) = params {
-            let query_params = params.to_query_params();
-            req = req.query(&query_params);
+        let query_params = match trade_params {
+            None => Vec::new(),
+            Some(p) => p.to_query_params(),
+        };
+
+        let mut next_cursor = next_cursor.unwrap_or("MA==").to_string(); // INITIAL_CURSOR
+        let mut output = Vec::new();
+        
+        while next_cursor != "LTE=" { // END_CURSOR
+            let req = self.http_client
+                .request(method.clone(), format!("{}{}", self.base_url, endpoint))
+                .query(&query_params)
+                .query(&[("next_cursor", &next_cursor)]);
+
+            let r = headers
+                .clone()
+                .into_iter()
+                .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
+
+            let resp = r.send().await
+                .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?
+                .json::<Value>().await
+                .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
+
+            let new_cursor = resp["next_cursor"]
+                .as_str()
+                .ok_or_else(|| PolyfillError::parse("Failed to parse next cursor".to_string(), None))?
+                .to_owned();
+
+            next_cursor = new_cursor;
+
+            let results = resp["data"].clone();
+            output.push(results);
         }
-
-        let response = req.send().await?;
-        if !response.status().is_success() {
-            return Err(PolyfillError::api(response.status().as_u16(), "Failed to get trades"));
-        }
-
-        let trades: Vec<crate::types::FillEvent> = response.json().await?;
-        Ok(trades)
+        
+        Ok(output)
     }
 
     /// Get balance and allowance information for all assets
@@ -670,22 +720,38 @@ impl ClobClient {
     /// 
     /// You need both balance and allowance to place orders - the exchange needs permission
     /// to move your tokens when orders are filled.
-    pub async fn balance_allowance(&self) -> Result<Vec<crate::types::BalanceAllowance>> {
+    pub async fn get_balance_allowance(&self, params: Option<crate::types::BalanceAllowanceParams>) -> Result<Value> {
         let signer = self.signer.as_ref()
             .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
         let api_creds = self.api_creds.as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
-        let headers = create_l2_headers::<Value>(signer, api_creds, "GET", "/balance-allowance", None)?;
-        let req = self.create_request_with_headers(Method::GET, "/balance-allowance", headers.into_iter());
-
-        let response = req.send().await?;
-        if !response.status().is_success() {
-            return Err(PolyfillError::api(response.status().as_u16(), "Failed to get balance allowance"));
+        let mut params = params.unwrap_or_default();
+        if params.signature_type.is_none() {
+            params.set_signature_type(
+                self.order_builder
+                    .as_ref()
+                    .expect("OrderBuilder not set")
+                    .get_sig_type(),
+            );
         }
 
-        let balances: Vec<crate::types::BalanceAllowance> = response.json().await?;
-        Ok(balances)
+        let query_params = params.to_query_params();
+
+        let method = Method::GET;
+        let endpoint = "/balance-allowance";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .query(&query_params)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<Value>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
     }
 
     /// Set up notifications for order fills and other events
@@ -696,21 +762,33 @@ impl ClobClient {
     /// - Market conditions change significantly
     /// 
     /// The signature proves you own the account and want to receive notifications.
-    pub async fn notifications(&self, params: crate::types::NotificationParams) -> Result<Value> {
+    pub async fn get_notifications(&self) -> Result<Value> {
         let signer = self.signer.as_ref()
             .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
         let api_creds = self.api_creds.as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
-        let headers = create_l2_headers(signer, api_creds, "POST", "/notifications", Some(&params))?;
-        let req = self.create_request_with_headers(Method::POST, "/notifications", headers.into_iter());
+        let method = Method::GET;
+        let endpoint = "/notifications";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
 
-        let response = req.json(&params).send().await?;
-        if !response.status().is_success() {
-            return Err(PolyfillError::api(response.status().as_u16(), "Failed to set up notifications"));
-        }
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .query(&[(
+                "signature_type",
+                &self
+                    .order_builder
+                    .as_ref()
+                    .expect("OrderBuilder not set")
+                    .get_sig_type().to_string(),
+            )])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
 
-        Ok(response.json::<Value>().await?)
+        response.json::<Value>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
     }
 
     /// Get midpoints for multiple tokens in a single request
@@ -720,12 +798,19 @@ impl ClobClient {
     /// 
     /// Midpoints are returned as a HashMap where the key is the token_id and the value
     /// is the midpoint price (or None if there's no valid midpoint).
-    pub async fn get_midpoints(&self, token_ids: Vec<String>) -> Result<crate::types::BatchMidpointResponse> {
-        let request = crate::types::BatchMidpointRequest { token_ids };
+    pub async fn get_midpoints(&self, token_ids: &[String]) -> Result<std::collections::HashMap<String, Decimal>> {
+        let request_data: Vec<std::collections::HashMap<&str, String>> = token_ids
+            .iter()
+            .map(|id| {
+                let mut map = std::collections::HashMap::new();
+                map.insert("token_id", id.clone());
+                map
+            })
+            .collect();
         
         let response = self.http_client
             .post(&format!("{}/midpoints", self.base_url))
-            .json(&request)
+            .json(&request_data)
             .send()
             .await?;
 
@@ -733,7 +818,7 @@ impl ClobClient {
             return Err(PolyfillError::api(response.status().as_u16(), "Failed to get batch midpoints"));
         }
 
-        let midpoints: crate::types::BatchMidpointResponse = response.json().await?;
+        let midpoints: std::collections::HashMap<String, Decimal> = response.json().await?;
         Ok(midpoints)
     }
 
@@ -744,12 +829,20 @@ impl ClobClient {
     /// a portfolio or comparing multiple markets.
     /// 
     /// Returns bid (best buy price), ask (best sell price), and mid (average) for each token.
-    pub async fn get_prices(&self, token_ids: Vec<String>) -> Result<crate::types::BatchPriceResponse> {
-        let request = crate::types::BatchPriceRequest { token_ids };
+    pub async fn get_prices(&self, book_params: &[crate::types::BookParams]) -> Result<std::collections::HashMap<String, std::collections::HashMap<Side, Decimal>>> {
+        let request_data: Vec<std::collections::HashMap<&str, String>> = book_params
+            .iter()
+            .map(|params| {
+                let mut map = std::collections::HashMap::new();
+                map.insert("token_id", params.token_id.clone());
+                map.insert("side", params.side.as_str().to_string());
+                map
+            })
+            .collect();
         
         let response = self.http_client
             .post(&format!("{}/prices", self.base_url))
-            .json(&request)
+            .json(&request_data)
             .send()
             .await?;
 
@@ -757,8 +850,305 @@ impl ClobClient {
             return Err(PolyfillError::api(response.status().as_u16(), "Failed to get batch prices"));
         }
 
-        let prices: crate::types::BatchPriceResponse = response.json().await?;
+        let prices: std::collections::HashMap<String, std::collections::HashMap<Side, Decimal>> = response.json().await?;
         Ok(prices)
+    }
+
+    /// Get order book for multiple tokens (batch) - reference implementation compatible
+    pub async fn get_order_books(&self, token_ids: &[String]) -> Result<Vec<OrderBookSummary>> {
+        let request_data: Vec<std::collections::HashMap<&str, String>> = token_ids
+            .iter()
+            .map(|id| {
+                let mut map = std::collections::HashMap::new();
+                map.insert("token_id", id.clone());
+                map
+            })
+            .collect();
+
+        let response = self.http_client
+            .post(&format!("{}/books", self.base_url))
+            .json(&request_data)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<Vec<OrderBookSummary>>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get single order by ID
+    pub async fn get_order(&self, order_id: &str) -> Result<crate::types::OpenOrder> {
+        let signer = self.signer.as_ref()
+            .ok_or_else(|| PolyfillError::config("Signer not configured"))?;
+        let api_creds = self.api_creds.as_ref()
+            .ok_or_else(|| PolyfillError::config("API credentials not configured"))?;
+
+        let method = Method::GET;
+        let endpoint = &format!("/data/order/{}", order_id);
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<crate::types::OpenOrder>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get last trade price for a token
+    pub async fn get_last_trade_price(&self, token_id: &str) -> Result<Value> {
+        let response = self.http_client
+            .get(&format!("{}/last-trade-price", self.base_url))
+            .query(&[("token_id", token_id)])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<Value>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get last trade prices for multiple tokens
+    pub async fn get_last_trade_prices(&self, token_ids: &[String]) -> Result<Value> {
+        let request_data: Vec<std::collections::HashMap<&str, String>> = token_ids
+            .iter()
+            .map(|id| {
+                let mut map = std::collections::HashMap::new();
+                map.insert("token_id", id.clone());
+                map
+            })
+            .collect();
+
+        let response = self.http_client
+            .post(&format!("{}/last-trades-prices", self.base_url))
+            .json(&request_data)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<Value>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Cancel market orders with optional filters
+    pub async fn cancel_market_orders(&self, market: Option<&str>, asset_id: Option<&str>) -> Result<Value> {
+        let signer = self.signer.as_ref()
+            .ok_or_else(|| PolyfillError::config("Signer not configured"))?;
+        let api_creds = self.api_creds.as_ref()
+            .ok_or_else(|| PolyfillError::config("API credentials not configured"))?;
+
+        let method = Method::DELETE;
+        let endpoint = "/cancel-market-orders";
+        let body = std::collections::HashMap::from([
+            ("market", market.unwrap_or("")),
+            ("asset_id", asset_id.unwrap_or("")),
+        ]);
+
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<Value>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Drop (delete) notifications by IDs
+    pub async fn drop_notifications(&self, ids: &[String]) -> Result<Value> {
+        let signer = self.signer.as_ref()
+            .ok_or_else(|| PolyfillError::config("Signer not configured"))?;
+        let api_creds = self.api_creds.as_ref()
+            .ok_or_else(|| PolyfillError::config("API credentials not configured"))?;
+
+        let method = Method::DELETE;
+        let endpoint = "/notifications";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .query(&[("ids", ids.join(","))])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<Value>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Update balance allowance
+    pub async fn update_balance_allowance(&self, params: Option<crate::types::BalanceAllowanceParams>) -> Result<Value> {
+        let signer = self.signer.as_ref()
+            .ok_or_else(|| PolyfillError::config("Signer not configured"))?;
+        let api_creds = self.api_creds.as_ref()
+            .ok_or_else(|| PolyfillError::config("API credentials not configured"))?;
+
+        let mut params = params.unwrap_or_default();
+        if params.signature_type.is_none() {
+            params.set_signature_type(
+                self.order_builder
+                    .as_ref()
+                    .expect("OrderBuilder not set")
+                    .get_sig_type(),
+            );
+        }
+
+        let query_params = params.to_query_params();
+
+        let method = Method::GET;
+        let endpoint = "/balance-allowance/update";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .query(&query_params)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<Value>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Check if an order is scoring
+    pub async fn is_order_scoring(&self, order_id: &str) -> Result<bool> {
+        let signer = self.signer.as_ref()
+            .ok_or_else(|| PolyfillError::config("Signer not configured"))?;
+        let api_creds = self.api_creds.as_ref()
+            .ok_or_else(|| PolyfillError::config("API credentials not configured"))?;
+
+        let method = Method::GET;
+        let endpoint = "/order-scoring";
+        let headers = create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .query(&[("order_id", order_id)])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        let result: Value = response.json().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
+
+        Ok(result["scoring"].as_bool().unwrap_or(false))
+    }
+
+    /// Check if multiple orders are scoring
+    pub async fn are_orders_scoring(&self, order_ids: &[&str]) -> Result<std::collections::HashMap<String, bool>> {
+        let signer = self.signer.as_ref()
+            .ok_or_else(|| PolyfillError::config("Signer not configured"))?;
+        let api_creds = self.api_creds.as_ref()
+            .ok_or_else(|| PolyfillError::config("API credentials not configured"))?;
+
+        let method = Method::POST;
+        let endpoint = "/orders-scoring";
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(order_ids))?;
+
+        let response = self.http_client
+            .request(method, format!("{}{}", self.base_url, endpoint))
+            .headers(headers.into_iter().map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap())).collect())
+            .json(order_ids)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<std::collections::HashMap<String, bool>>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get sampling markets with pagination
+    pub async fn get_sampling_markets(&self, next_cursor: Option<&str>) -> Result<crate::types::MarketsResponse> {
+        let next_cursor = next_cursor.unwrap_or("MA=="); // INITIAL_CURSOR
+
+        let response = self.http_client
+            .get(&format!("{}/sampling-markets", self.base_url))
+            .query(&[("next_cursor", next_cursor)])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<crate::types::MarketsResponse>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get sampling simplified markets with pagination
+    pub async fn get_sampling_simplified_markets(&self, next_cursor: Option<&str>) -> Result<crate::types::SimplifiedMarketsResponse> {
+        let next_cursor = next_cursor.unwrap_or("MA=="); // INITIAL_CURSOR
+
+        let response = self.http_client
+            .get(&format!("{}/sampling-simplified-markets", self.base_url))
+            .query(&[("next_cursor", next_cursor)])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<crate::types::SimplifiedMarketsResponse>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get markets with pagination
+    pub async fn get_markets(&self, next_cursor: Option<&str>) -> Result<crate::types::MarketsResponse> {
+        let next_cursor = next_cursor.unwrap_or("MA=="); // INITIAL_CURSOR
+
+        let response = self.http_client
+            .get(&format!("{}/markets", self.base_url))
+            .query(&[("next_cursor", next_cursor)])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<crate::types::MarketsResponse>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get simplified markets with pagination
+    pub async fn get_simplified_markets(&self, next_cursor: Option<&str>) -> Result<crate::types::SimplifiedMarketsResponse> {
+        let next_cursor = next_cursor.unwrap_or("MA=="); // INITIAL_CURSOR
+
+        let response = self.http_client
+            .get(&format!("{}/simplified-markets", self.base_url))
+            .query(&[("next_cursor", next_cursor)])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<crate::types::SimplifiedMarketsResponse>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get single market by condition ID
+    pub async fn get_market(&self, condition_id: &str) -> Result<crate::types::Market> {
+        let response = self.http_client
+            .get(&format!("{}/markets/{}", self.base_url, condition_id))
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<crate::types::Market>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get market trades events
+    pub async fn get_market_trades_events(&self, condition_id: &str) -> Result<Value> {
+        let response = self.http_client
+            .get(&format!("{}/live-activity/events/{}", self.base_url, condition_id))
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e)))?;
+
+        response.json::<Value>().await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
     }
 }
 
