@@ -12,9 +12,10 @@
 //! 
 //! # Quick Start
 //! 
-//! ```rust
+//! ```rust,no_run
 //! use polyfill_rs::{ClobClient, OrderArgs, Side};
 //! use rust_decimal::Decimal;
+//! use std::str::FromStr;
 //! 
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,18 +27,18 @@
 //!     );
 //! 
 //!     // Get API credentials
-//!     let api_creds = client.create_or_derive_api_key(None).await?;
+//!     let api_creds = client.create_or_derive_api_key(None).await.unwrap();
 //!     client.set_api_creds(api_creds);
 //! 
 //!     // Create and post order
 //!     let order_args = OrderArgs::new(
 //!         "token_id",
-//!         Decimal::from_str("0.75")?,
-//!         Decimal::from_str("100.0")?,
+//!         Decimal::from_str("0.75").unwrap(),
+//!         Decimal::from_str("100.0").unwrap(),
 //!         Side::BUY,
 //!     );
 //! 
-//!     let result = client.create_and_post_order(&order_args).await?;
+//!     let result = client.create_and_post_order(&order_args).await.unwrap();
 //!     println!("Order posted: {:?}", result);
 //! 
 //!     Ok(())
@@ -46,30 +47,22 @@
 //! 
 //! # Advanced Usage
 //! 
-//! ```rust
-//! use polyfill_rs::{PolyfillClient, ClientConfig};
+//! ```rust,no_run
+//! use polyfill_rs::{ClobClient, OrderBookImpl};
+//! use rust_decimal::Decimal;
 //! 
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Advanced configuration
-//!     let config = ClientConfig {
-//!         base_url: "https://clob.polymarket.com".to_string(),
-//!         chain_id: 137,
-//!         private_key: Some("your_private_key".to_string()),
-//!         max_slippage: Some(Decimal::from_str("0.001")?),
-//!         fee_rate: Some(Decimal::from_str("0.02")?),
-//!         ..Default::default()
-//!     };
+//!     // Create a basic client
+//!     let client = ClobClient::new("https://clob.polymarket.com");
 //! 
-//!     let mut client = PolyfillClient::with_config(config)?;
+//!     // Get market data
+//!     let markets = client.get_sampling_markets(None).await.unwrap();
+//!     println!("Found {} markets", markets.data.len());
 //! 
-//!     // Subscribe to real-time order book updates
-//!     client.subscribe_to_order_book("token_id").await?;
-//! 
-//!     // Process incoming messages
-//!     while let Some(message) = client.get_next_message().await? {
-//!         println!("Received: {:?}", message);
-//!     }
+//!     // Create an order book for high-performance operations
+//!     let mut book = OrderBookImpl::new("token_id".to_string(), 100); // 100 levels depth
+//!     println!("Order book created for token: {}", book.token_id);
 //! 
 //!     Ok(())
 //! }
