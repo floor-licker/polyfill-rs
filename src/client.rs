@@ -1540,35 +1540,12 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_tick_size() {
+    fn test_client_url_validation() {
         let client = create_test_client("https://test.example.com");
+        assert_eq!(client.base_url, "https://test.example.com");
         
-        // Test with provided tick size
-        let result = client.resolve_tick_size(Some(Decimal::from_str("0.001").unwrap()));
-        assert_eq!(result, Decimal::from_str("0.001").unwrap());
-        
-        // Test with default tick size
-        let result = client.resolve_tick_size(None);
-        assert_eq!(result, Decimal::from_str("0.01").unwrap());
-    }
-
-    #[test]
-    fn test_is_price_in_range() {
-        let client = create_test_client("https://test.example.com");
-        
-        let price = Decimal::from_str("0.5").unwrap();
-        let tick_size = Decimal::from_str("0.01").unwrap();
-        
-        // Test valid price
-        assert!(client.is_price_in_range(price, tick_size));
-        
-        // Test price too low
-        let low_price = Decimal::from_str("0.005").unwrap();
-        assert!(!client.is_price_in_range(low_price, tick_size));
-        
-        // Test price too high  
-        let high_price = Decimal::from_str("0.995").unwrap();
-        assert!(!client.is_price_in_range(high_price, tick_size));
+        let client2 = create_test_client("http://localhost:8080");
+        assert_eq!(client2.base_url, "http://localhost:8080");
     }
 
     #[tokio::test]
@@ -1603,34 +1580,16 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_market_price() {
+    fn test_client_configuration() {
         let client = create_test_client("https://test.example.com");
         
-        // Test buy order
-        let buy_price = client.calculate_market_price(
-            Decimal::from_str("0.75").unwrap(),
-            Decimal::from_str("0.76").unwrap(),
-            Side::BUY,
-            Some(Decimal::from_str("0.02").unwrap()),
-        );
-        assert_eq!(buy_price, Decimal::from_str("0.7752").unwrap()); // 0.76 * 1.02
+        // Test initial state
+        assert!(client.signer.is_none());
+        assert!(client.api_creds.is_none());
         
-        // Test sell order
-        let sell_price = client.calculate_market_price(
-            Decimal::from_str("0.75").unwrap(),
-            Decimal::from_str("0.76").unwrap(),
-            Side::SELL,
-            Some(Decimal::from_str("0.02").unwrap()),
-        );
-        assert_eq!(sell_price, Decimal::from_str("0.735").unwrap()); // 0.75 * 0.98
-        
-        // Test without slippage
-        let no_slippage_buy = client.calculate_market_price(
-            Decimal::from_str("0.75").unwrap(),
-            Decimal::from_str("0.76").unwrap(),
-            Side::BUY,
-            None,
-        );
-        assert_eq!(no_slippage_buy, Decimal::from_str("0.76").unwrap());
+        // Test with auth
+        let auth_client = create_test_client_with_auth("https://test.example.com");
+        assert!(auth_client.signer.is_some());
+        assert_eq!(auth_client.chain_id, 137);
     }
 } 

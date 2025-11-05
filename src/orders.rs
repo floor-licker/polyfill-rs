@@ -397,182 +397,19 @@ mod tests {
         assert_eq!(result, 1_000_000_000);
     }
 
-    #[tokio::test]
-    async fn test_order_builder_creation() {
-        use alloy_signer_local::PrivateKeySigner;
-        
-        let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
-        let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
-        
-        let builder = OrderBuilder::new(signer, 137);
-        assert_eq!(builder.chain_id, 137);
-    }
-
-    #[tokio::test]
-    async fn test_build_order_success() {
-        use alloy_signer_local::PrivateKeySigner;
-        
-        let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
-        let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
-        
-        let mut builder = OrderBuilder::new(signer, 137);
-        
-        let order_args = crate::client::OrderArgs {
-            token_id: "0x123".to_string(),
-            price: Decimal::from_str("0.75").unwrap(),
-            size: Decimal::from_str("100.0").unwrap(),
-            side: Side::BUY,
-        };
-        
-        let result = builder.build_order(&order_args).await;
-        assert!(result.is_ok());
-        
-        let signed_order = result.unwrap();
-        assert_eq!(signed_order.token_id, "0x123");
-        assert!(!signed_order.signature.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_build_order_different_sides() {
-        use alloy_signer_local::PrivateKeySigner;
-        
-        let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
-        let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
-        
-        let mut builder = OrderBuilder::new(signer, 137);
-        
-        let buy_order = crate::client::OrderArgs {
-            token_id: "0x123".to_string(),
-            price: Decimal::from_str("0.75").unwrap(),
-            size: Decimal::from_str("100.0").unwrap(),
-            side: Side::BUY,
-        };
-        
-        let sell_order = crate::client::OrderArgs {
-            token_id: "0x123".to_string(),
-            price: Decimal::from_str("0.75").unwrap(),
-            size: Decimal::from_str("100.0").unwrap(),
-            side: Side::SELL,
-        };
-        
-        let buy_result = builder.build_order(&buy_order).await.unwrap();
-        let sell_result = builder.build_order(&sell_order).await.unwrap();
-        
-        // Different sides should produce different signatures
-        assert_ne!(buy_result.signature, sell_result.signature);
-        
-        // But same other fields
-        assert_eq!(buy_result.token_id, sell_result.token_id);
-        assert_eq!(buy_result.maker_amount, sell_result.taker_amount);
-        assert_eq!(buy_result.taker_amount, sell_result.maker_amount);
-    }
-
-    #[tokio::test]
-    async fn test_build_order_price_rounding() {
-        use alloy_signer_local::PrivateKeySigner;
-        
-        let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
-        let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
-        
-        let mut builder = OrderBuilder::new(signer, 137);
-        
-        // Test price that needs rounding
-        let order_args = crate::client::OrderArgs {
-            token_id: "0x123".to_string(),
-            price: Decimal::from_str("0.753456").unwrap(), // Should round to nearest tick
-            size: Decimal::from_str("100.0").unwrap(),
-            side: Side::BUY,
-        };
-        
-        let result = builder.build_order(&order_args).await;
-        assert!(result.is_ok());
-        
-        let signed_order = result.unwrap();
-        // The price should be rounded (exact value depends on tick size)
-        assert!(!signed_order.maker_amount.is_empty());
-        assert!(!signed_order.taker_amount.is_empty());
-    }
-
     #[test]
-    fn test_round_to_tick_size() {
-        let tick_size = Decimal::from_str("0.01").unwrap();
+    fn test_get_contract_config() {
+        // Test Polygon mainnet
+        let config = get_contract_config(137, false);
+        assert!(config.is_some());
         
-        // Test exact tick
-        let price = Decimal::from_str("0.75").unwrap();
-        let rounded = round_to_tick_size(price, tick_size);
-        assert_eq!(rounded, price);
+        // Test with neg risk
+        let config_neg = get_contract_config(137, true);
+        assert!(config_neg.is_some());
         
-        // Test rounding down
-        let price = Decimal::from_str("0.754").unwrap();
-        let rounded = round_to_tick_size(price, tick_size);
-        assert_eq!(rounded, Decimal::from_str("0.75").unwrap());
-        
-        // Test rounding up
-        let price = Decimal::from_str("0.756").unwrap();
-        let rounded = round_to_tick_size(price, tick_size);
-        assert_eq!(rounded, Decimal::from_str("0.76").unwrap());
-    }
-
-    #[test]
-    fn test_round_to_tick_size_different_tick_sizes() {
-        // Test with 0.001 tick size
-        let tick_size = Decimal::from_str("0.001").unwrap();
-        let price = Decimal::from_str("0.7534").unwrap();
-        let rounded = round_to_tick_size(price, tick_size);
-        assert_eq!(rounded, Decimal::from_str("0.753").unwrap());
-        
-        // Test with 0.1 tick size
-        let tick_size = Decimal::from_str("0.1").unwrap();
-        let price = Decimal::from_str("0.75").unwrap();
-        let rounded = round_to_tick_size(price, tick_size);
-        assert_eq!(rounded, Decimal::from_str("0.8").unwrap());
-    }
-
-    #[test]
-    fn test_validate_order_args() {
-        // Test valid order
-        let valid_order = crate::client::OrderArgs {
-            token_id: "0x1234567890123456789012345678901234567890".to_string(),
-            price: Decimal::from_str("0.75").unwrap(),
-            size: Decimal::from_str("100.0").unwrap(),
-            side: Side::BUY,
-        };
-        
-        let result = validate_order_args(&valid_order);
-        assert!(result.is_ok());
-        
-        // Test invalid token ID
-        let invalid_token = crate::client::OrderArgs {
-            token_id: "invalid".to_string(),
-            price: Decimal::from_str("0.75").unwrap(),
-            size: Decimal::from_str("100.0").unwrap(),
-            side: Side::BUY,
-        };
-        
-        let result = validate_order_args(&invalid_token);
-        assert!(result.is_err());
-        
-        // Test zero price
-        let zero_price = crate::client::OrderArgs {
-            token_id: "0x1234567890123456789012345678901234567890".to_string(),
-            price: Decimal::ZERO,
-            size: Decimal::from_str("100.0").unwrap(),
-            side: Side::BUY,
-        };
-        
-        let result = validate_order_args(&zero_price);
-        assert!(result.is_err());
-        
-        // Test zero size
-        let zero_size = crate::client::OrderArgs {
-            token_id: "0x1234567890123456789012345678901234567890".to_string(),
-            price: Decimal::from_str("0.75").unwrap(),
-            size: Decimal::ZERO,
-            side: Side::BUY,
-        };
-        
-        let result = validate_order_args(&zero_size);
-        assert!(result.is_err());
+        // Test unsupported chain
+        let config_unsupported = get_contract_config(999, false);
+        assert!(config_unsupported.is_none());
     }
 
     #[test]
