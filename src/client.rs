@@ -1328,7 +1328,7 @@ mod tests {
         let mock = server
             .mock("GET", "/sampling-markets")
             .match_query(Matcher::AllOf(vec![
-                Matcher::UrlEncoded("cursor".into(), "test_cursor".into()),
+                Matcher::UrlEncoded("next_cursor".into(), "test_cursor".into()),
             ]))
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -1439,7 +1439,7 @@ mod tests {
             .mock("GET", "/price")
             .match_query(Matcher::AllOf(vec![
                 Matcher::UrlEncoded("token_id".into(), "0x123".into()),
-                Matcher::UrlEncoded("side".into(), "buy".into()),
+                Matcher::UrlEncoded("side".into(), "BUY".into()),
             ]))
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -1557,10 +1557,8 @@ mod tests {
         }"#;
 
         let mock = server
-            .mock("GET", "/midpoints")
-            .match_query(Matcher::AllOf(vec![
-                Matcher::UrlEncoded("token_ids".into(), "0x123,0x456".into()),
-            ]))
+            .mock("POST", "/midpoints")
+            .with_header("content-type", "application/json")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(mock_response)

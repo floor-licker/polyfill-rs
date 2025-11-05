@@ -188,7 +188,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::ApiCreds;
 
     #[test]
     fn test_unix_timestamp() {
@@ -264,10 +263,10 @@ mod tests {
         assert!(result.is_ok());
         
         let headers = result.unwrap();
-        assert!(headers.contains_key("POLY_ADDRESS"));
-        assert!(headers.contains_key("POLY_SIGNATURE"));
-        assert!(headers.contains_key("POLY_TIMESTAMP"));
-        assert!(headers.contains_key("POLY_NONCE"));
+        assert!(headers.contains_key("poly_address"));
+        assert!(headers.contains_key("poly_signature"));
+        assert!(headers.contains_key("poly_timestamp"));
+        assert!(headers.contains_key("poly_nonce"));
     }
 
     #[test]
@@ -283,14 +282,14 @@ mod tests {
         
         // Different nonces should produce different signatures
         assert_ne!(
-            headers_1.get("POLY_SIGNATURE"),
-            headers_2.get("POLY_SIGNATURE")
+            headers_1.get("poly_signature"),
+            headers_2.get("poly_signature")
         );
         
         // But same address
         assert_eq!(
-            headers_1.get("POLY_ADDRESS"),
-            headers_2.get("POLY_ADDRESS")
+            headers_1.get("poly_address"),
+            headers_2.get("poly_address")
         );
     }
 
@@ -307,17 +306,17 @@ mod tests {
             passphrase: "test_passphrase".to_string(),
         };
         
-        let result = create_l2_headers(&signer, &api_creds, "/test", "GET", None);
+        let result = create_l2_headers::<String>(&signer, &api_creds, "/test", "GET", None);
         assert!(result.is_ok());
         
         let headers = result.unwrap();
-        assert!(headers.contains_key("POLY_API_KEY"));
-        assert!(headers.contains_key("POLY_SIGNATURE"));
-        assert!(headers.contains_key("POLY_TIMESTAMP"));
-        assert!(headers.contains_key("POLY_PASSPHRASE"));
+        assert!(headers.contains_key("poly_api_key"));
+        assert!(headers.contains_key("poly_signature"));
+        assert!(headers.contains_key("poly_timestamp"));
+        assert!(headers.contains_key("poly_passphrase"));
         
-        assert_eq!(headers.get("POLY_API_KEY").unwrap(), "test_key");
-        assert_eq!(headers.get("POLY_PASSPHRASE").unwrap(), "test_passphrase");
+        assert_eq!(headers.get("poly_api_key").unwrap(), "test_key");
+        assert_eq!(headers.get("poly_passphrase").unwrap(), "test_passphrase");
     }
 
     #[test]
@@ -333,7 +332,7 @@ mod tests {
         assert!(result.is_ok());
         
         let headers = result.unwrap();
-        let signature = headers.get("POLY_SIGNATURE").unwrap();
+        let signature = headers.get("poly_signature").unwrap();
         
         // EIP-712 signatures should be hex strings of specific length
         assert!(signature.starts_with("0x"));

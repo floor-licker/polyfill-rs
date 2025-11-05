@@ -169,7 +169,6 @@ mod tests {
     use super::*;
     use rust_decimal::Decimal;
     use std::str::FromStr;
-    use alloy_primitives::U256;
 
     #[test]
     fn test_client_creation() {
