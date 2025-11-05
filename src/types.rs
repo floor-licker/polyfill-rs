@@ -574,14 +574,26 @@ impl PostOrder {
 pub struct Market {
     pub condition_id: String,
     pub tokens: [Token; 2],
+    pub rewards: Rewards,
+    pub min_incentive_size: Option<String>,
+    pub max_incentive_spread: Option<String>,
     pub active: bool,
     pub closed: bool,
-    pub question: String,
+    pub question_id: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub minimum_order_size: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub minimum_tick_size: Decimal,
     pub description: String,
     pub category: Option<String>,
     pub end_date_iso: Option<String>,
-    pub minimum_order_size: Decimal,
-    pub minimum_tick_size: Decimal,
+    pub game_start_time: Option<String>,
+    pub question: String,
+    pub market_slug: String,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub seconds_delay: Decimal,
+    pub icon: String,
+    pub fpmm: String,
 }
 
 /// Token information within a market
@@ -1044,7 +1056,7 @@ pub struct SimplifiedMarket {
 }
 
 /// Rewards structure for markets
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rewards {
     pub rates: Option<serde_json::Value>,
     #[serde(with = "rust_decimal::serde::str")]

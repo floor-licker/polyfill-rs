@@ -312,14 +312,31 @@ impl Decoder<Market> for RawMarketResponse {
         Ok(Market {
             condition_id: self.condition_id.clone(),
             tokens,
+            rewards: crate::types::Rewards {
+                rates: None,
+                min_size: Decimal::ZERO,
+                max_spread: Decimal::ONE,
+                event_start_date: None,
+                event_end_date: None,
+                in_game_multiplier: None,
+                reward_epoch: None,
+            },
+            min_incentive_size: None,
+            max_incentive_spread: None,
             active: self.active,
             closed: self.closed,
-            question: self.question.clone(),
+            question_id: self.condition_id.clone(), // Use condition_id as fallback
+            minimum_order_size: self.minimum_order_size,
+            minimum_tick_size: self.minimum_tick_size,
             description: self.description.clone(),
             category: self.category.clone(),
             end_date_iso: self.end_date_iso.clone(),
-            minimum_order_size: self.minimum_order_size,
-            minimum_tick_size: self.minimum_tick_size,
+            game_start_time: None,
+            question: self.question.clone(),
+            market_slug: format!("market-{}", self.condition_id), // Generate a slug
+            seconds_delay: Decimal::ZERO,
+            icon: String::new(),
+            fpmm: String::new(),
         })
     }
 }

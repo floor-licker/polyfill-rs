@@ -212,7 +212,7 @@ async fn test_all_market_data_endpoints() -> Result<()> {
     let client = ClobClient::new(POLYMARKET_HOST);
     
     // Get a valid token ID first
-    let markets_response = client.get_sampling_markets(Some(5)).await?;
+    let markets_response = client.get_sampling_markets(None).await?;
     assert!(!markets_response.data.is_empty(), "No markets returned");
     
     let first_market = &markets_response.data[0];
@@ -273,7 +273,7 @@ async fn test_data_consistency() -> Result<()> {
     let client = ClobClient::new(POLYMARKET_HOST);
     
     // Get a valid token ID
-    let markets_response = client.get_sampling_markets(Some(5)).await?;
+    let markets_response = client.get_sampling_markets(None).await?;
     let first_market = &markets_response.data[0];
     let token_id = &first_market.tokens[0].token_id;
     
@@ -433,7 +433,7 @@ async fn test_concurrent_requests() -> Result<()> {
     println!("Testing concurrent requests...");
     
     // Get a valid token ID
-    let markets_response = client.get_sampling_markets(Some(5)).await?;
+    let markets_response = client.get_sampling_markets(None).await?;
     let token_id = &markets_response.data[0].tokens[0].token_id;
     
     // Make concurrent requests

@@ -98,7 +98,7 @@ async fn test_connectivity(client: &ClobClient) -> Result<()> {
 
 /// Get a valid token ID from the markets endpoint
 async fn get_valid_token_id(client: &ClobClient) -> Result<String> {
-    let markets = client.get_sampling_markets(Some(10)).await?;
+    let markets = client.get_sampling_markets(None).await?;
     
     if markets.data.is_empty() {
         return Err(PolyfillError::api(404, "No markets found"));

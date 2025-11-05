@@ -158,7 +158,7 @@ impl PolyfillDemo {
         }
         
         // Get sampling markets
-        match self.client.get_sampling_markets(Some(5)).await {
+        match self.client.get_sampling_markets(None).await {
             Ok(markets) => {
                 info!("Found {} markets", markets.data.len());
                 for market in &markets.data[..std::cmp::min(3, markets.data.len())] {
