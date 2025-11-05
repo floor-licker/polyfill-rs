@@ -1219,8 +1219,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_with_l2_headers() {
-        let api_creds = ApiCreds {
-            key: "test_key".to_string(),
+        let api_creds = ApiCredentials {
+            api_key: "test_key".to_string(),
             secret: "test_secret".to_string(),
             passphrase: "test_passphrase".to_string(),
         };
@@ -1243,15 +1243,15 @@ mod tests {
         let mut client = create_test_client("https://test.example.com");
         assert!(client.api_creds.is_none());
 
-        let api_creds = ApiCreds {
-            key: "test_key".to_string(),
+        let api_creds = ApiCredentials {
+            api_key: "test_key".to_string(),
             secret: "test_secret".to_string(),
             passphrase: "test_passphrase".to_string(),
         };
 
         client.set_api_creds(api_creds.clone());
         assert!(client.api_creds.is_some());
-        assert_eq!(client.api_creds.unwrap().key, "test_key");
+        assert_eq!(client.api_creds.unwrap().api_key, "test_key");
     }
 
     #[tokio::test]
