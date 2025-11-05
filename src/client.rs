@@ -1178,4 +1178,459 @@ pub struct CreateOrderOptions {
 }
 
 // Re-export for compatibility
-pub type PolyfillClient = ClobClient; 
+pub type PolyfillClient = ClobClient;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::*;
+    use mockito::{Matcher, Server};
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+    use tokio;
+
+    fn create_test_client(base_url: &str) -> ClobClient {
+        ClobClient::new(base_url)
+    }
+
+    fn create_test_client_with_auth(base_url: &str) -> ClobClient {
+        ClobClient::with_l1_headers(
+            base_url,
+            "0x1234567890123456789012345678901234567890123456789012345678901234",
+            137,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_client_creation() {
+        let client = create_test_client("https://test.example.com");
+        assert_eq!(client.base_url, "https://test.example.com");
+        assert!(client.signer.is_none());
+        assert!(client.api_creds.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_client_with_l1_headers() {
+        let client = create_test_client_with_auth("https://test.example.com");
+        assert_eq!(client.base_url, "https://test.example.com");
+        assert!(client.signer.is_some());
+        assert_eq!(client.chain_id, 137);
+    }
+
+    #[tokio::test]
+    async fn test_client_with_l2_headers() {
+        let api_creds = ApiCreds {
+            key: "test_key".to_string(),
+            secret: "test_secret".to_string(),
+            passphrase: "test_passphrase".to_string(),
+        };
+        
+        let client = ClobClient::with_l2_headers(
+            "https://test.example.com",
+            "0x1234567890123456789012345678901234567890123456789012345678901234",
+            137,
+            api_creds.clone(),
+        );
+        
+        assert_eq!(client.base_url, "https://test.example.com");
+        assert!(client.signer.is_some());
+        assert!(client.api_creds.is_some());
+        assert_eq!(client.chain_id, 137);
+    }
+
+    #[tokio::test]
+    async fn test_set_api_creds() {
+        let mut client = create_test_client("https://test.example.com");
+        assert!(client.api_creds.is_none());
+
+        let api_creds = ApiCreds {
+            key: "test_key".to_string(),
+            secret: "test_secret".to_string(),
+            passphrase: "test_passphrase".to_string(),
+        };
+
+        client.set_api_creds(api_creds.clone());
+        assert!(client.api_creds.is_some());
+        assert_eq!(client.api_creds.unwrap().key, "test_key");
+    }
+
+    #[tokio::test]
+    async fn test_get_sampling_markets_success() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "limit": "10",
+            "count": "2", 
+            "next_cursor": null,
+            "data": [
+                {
+                    "condition_id": "0x123",
+                    "tokens": [
+                        {"token_id": "0x456", "outcome": "Yes"},
+                        {"token_id": "0x789", "outcome": "No"}
+                    ],
+                    "rewards": {
+                        "rates": null,
+                        "min_size": "1.0",
+                        "max_spread": "0.1",
+                        "event_start_date": null,
+                        "event_end_date": null,
+                        "in_game_multiplier": null,
+                        "reward_epoch": null
+                    },
+                    "min_incentive_size": null,
+                    "max_incentive_spread": null,
+                    "active": true,
+                    "closed": false,
+                    "question_id": "0x123",
+                    "minimum_order_size": "1.0",
+                    "minimum_tick_size": "0.01",
+                    "description": "Test market",
+                    "category": "test",
+                    "end_date_iso": null,
+                    "game_start_time": null,
+                    "question": "Will this test pass?",
+                    "market_slug": "test-market",
+                    "seconds_delay": "0",
+                    "icon": "",
+                    "fpmm": ""
+                }
+            ]
+        }"#;
+
+        let mock = server
+            .mock("GET", "/sampling-markets")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_sampling_markets(None).await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let markets = result.unwrap();
+        assert_eq!(markets.data.len(), 1);
+        assert_eq!(markets.data[0].question, "Will this test pass?");
+    }
+
+    #[tokio::test]
+    async fn test_get_sampling_markets_with_cursor() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "limit": "5",
+            "count": "0",
+            "next_cursor": null,
+            "data": []
+        }"#;
+
+        let mock = server
+            .mock("GET", "/sampling-markets")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("cursor".into(), "test_cursor".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_sampling_markets(Some("test_cursor")).await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let markets = result.unwrap();
+        assert_eq!(markets.data.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_order_book_success() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "market": "0x123",
+            "bids": [
+                {"price": "0.75", "size": "100.0"}
+            ],
+            "asks": [
+                {"price": "0.76", "size": "50.0"}
+            ]
+        }"#;
+
+        let mock = server
+            .mock("GET", "/book")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "0x123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_order_book("0x123").await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let book = result.unwrap();
+        assert_eq!(book.market, "0x123");
+        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.asks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_midpoint_success() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "mid": "0.755"
+        }"#;
+
+        let mock = server
+            .mock("GET", "/midpoint")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "0x123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_midpoint("0x123").await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.mid, Decimal::from_str("0.755").unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_get_spread_success() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "spread": "0.01"
+        }"#;
+
+        let mock = server
+            .mock("GET", "/spread")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "0x123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_spread("0x123").await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.spread, Decimal::from_str("0.01").unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_get_price_success() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "price": "0.76"
+        }"#;
+
+        let mock = server
+            .mock("GET", "/price")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("token_id".into(), "0x123".into()),
+                Matcher::UrlEncoded("side".into(), "buy".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_price("0x123", Side::BUY).await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.price, Decimal::from_str("0.76").unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_get_tick_size_success() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "minimum_tick_size": "0.01"
+        }"#;
+
+        let mock = server
+            .mock("GET", "/tick-size")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "0x123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_tick_size("0x123").await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let tick_size = result.unwrap();
+        assert_eq!(tick_size, Decimal::from_str("0.01").unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_get_neg_risk_success() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "neg_risk": false
+        }"#;
+
+        let mock = server
+            .mock("GET", "/neg-risk")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "0x123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_neg_risk("0x123").await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let neg_risk = result.unwrap();
+        assert!(!neg_risk);
+    }
+
+    #[tokio::test]
+    async fn test_api_error_handling() {
+        let mut server = Server::new_async().await;
+        
+        let mock = server
+            .mock("GET", "/book")
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"error": "Market not found"}"#)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_order_book("invalid_token").await;
+        
+        mock.assert_async().await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        assert!(matches!(error, PolyfillError::Network { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_network_error_handling() {
+        // Test with invalid URL to simulate network error
+        let client = create_test_client("http://invalid-host-that-does-not-exist.com");
+        let result = client.get_order_book("0x123").await;
+        
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(matches!(error, PolyfillError::Network { .. }));
+    }
+
+    #[test]
+    fn test_resolve_tick_size() {
+        let client = create_test_client("https://test.example.com");
+        
+        // Test with provided tick size
+        let result = client.resolve_tick_size(Some(Decimal::from_str("0.001").unwrap()));
+        assert_eq!(result, Decimal::from_str("0.001").unwrap());
+        
+        // Test with default tick size
+        let result = client.resolve_tick_size(None);
+        assert_eq!(result, Decimal::from_str("0.01").unwrap());
+    }
+
+    #[test]
+    fn test_is_price_in_range() {
+        let client = create_test_client("https://test.example.com");
+        
+        let price = Decimal::from_str("0.5").unwrap();
+        let tick_size = Decimal::from_str("0.01").unwrap();
+        
+        // Test valid price
+        assert!(client.is_price_in_range(price, tick_size));
+        
+        // Test price too low
+        let low_price = Decimal::from_str("0.005").unwrap();
+        assert!(!client.is_price_in_range(low_price, tick_size));
+        
+        // Test price too high  
+        let high_price = Decimal::from_str("0.995").unwrap();
+        assert!(!client.is_price_in_range(high_price, tick_size));
+    }
+
+    #[tokio::test]
+    async fn test_get_midpoints_batch() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "0x123": "0.755",
+            "0x456": "0.623"
+        }"#;
+
+        let mock = server
+            .mock("GET", "/midpoints")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("token_ids".into(), "0x123,0x456".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let token_ids = vec!["0x123".to_string(), "0x456".to_string()];
+        let result = client.get_midpoints(&token_ids).await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let midpoints = result.unwrap();
+        assert_eq!(midpoints.len(), 2);
+        assert_eq!(midpoints.get("0x123").unwrap(), &Decimal::from_str("0.755").unwrap());
+        assert_eq!(midpoints.get("0x456").unwrap(), &Decimal::from_str("0.623").unwrap());
+    }
+
+    #[test]
+    fn test_calculate_market_price() {
+        let client = create_test_client("https://test.example.com");
+        
+        // Test buy order
+        let buy_price = client.calculate_market_price(
+            Decimal::from_str("0.75").unwrap(),
+            Decimal::from_str("0.76").unwrap(),
+            Side::BUY,
+            Some(Decimal::from_str("0.02").unwrap()),
+        );
+        assert_eq!(buy_price, Decimal::from_str("0.7752").unwrap()); // 0.76 * 1.02
+        
+        // Test sell order
+        let sell_price = client.calculate_market_price(
+            Decimal::from_str("0.75").unwrap(),
+            Decimal::from_str("0.76").unwrap(),
+            Side::SELL,
+            Some(Decimal::from_str("0.02").unwrap()),
+        );
+        assert_eq!(sell_price, Decimal::from_str("0.735").unwrap()); // 0.75 * 0.98
+        
+        // Test without slippage
+        let no_slippage_buy = client.calculate_market_price(
+            Decimal::from_str("0.75").unwrap(),
+            Decimal::from_str("0.76").unwrap(),
+            Side::BUY,
+            None,
+        );
+        assert_eq!(no_slippage_buy, Decimal::from_str("0.76").unwrap());
+    }
+} 
