@@ -101,7 +101,7 @@ pub use crate::types::{
     // Additional compatibility types
     ApiKeysResponse, MidpointResponse, PriceResponse, SpreadResponse, TickSizeResponse,
     NegRiskResponse, BookParams, MarketsResponse, SimplifiedMarketsResponse, Market,
-    SimplifiedMarket, Token, Rewards, ClientResult,
+    SimplifiedMarket, Token, Rewards, ClientResult, OrderBookSummary, OrderSummary,
 };
 
 // Re-export client

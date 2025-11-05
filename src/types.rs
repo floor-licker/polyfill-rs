@@ -861,6 +861,52 @@ pub struct BalanceAllowance {
     pub allowance: Decimal,
 }
 
+/// Parameters for balance allowance queries (from reference implementation)
+#[derive(Default)]
+pub struct BalanceAllowanceParams {
+    pub asset_type: Option<AssetType>,
+    pub token_id: Option<String>,
+    pub signature_type: Option<u8>,
+}
+
+impl BalanceAllowanceParams {
+    pub fn to_query_params(&self) -> Vec<(&str, String)> {
+        let mut params = Vec::with_capacity(3);
+
+        if let Some(x) = &self.asset_type {
+            params.push(("asset_type", x.to_string()));
+        }
+
+        if let Some(x) = &self.token_id {
+            params.push(("token_id", x.to_string()));
+        }
+
+        if let Some(x) = &self.signature_type {
+            params.push(("signature_type", x.to_string()));
+        }
+        params
+    }
+
+    pub fn set_signature_type(&mut self, s: u8) {
+        self.signature_type = Some(s);
+    }
+}
+
+/// Asset type enum for balance allowance queries
+pub enum AssetType {
+    COLLATERAL,
+    CONDITIONAL,
+}
+
+impl ToString for AssetType {
+    fn to_string(&self) -> String {
+        match self {
+            AssetType::COLLATERAL => "COLLATERAL".to_string(),
+            AssetType::CONDITIONAL => "CONDITIONAL".to_string(),
+        }
+    }
+}
+
 /// Notification preferences
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationParams {
@@ -946,6 +992,25 @@ pub struct BookParams {
     pub side: Side,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OrderBookSummary {
+    pub market: String,
+    pub asset_id: String,
+    pub hash: String,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub timestamp: u64,
+    pub bids: Vec<OrderSummary>,
+    pub asks: Vec<OrderSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OrderSummary {
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub size: Decimal,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MarketsResponse {
     #[serde(with = "rust_decimal::serde::str")]
@@ -966,63 +1031,8 @@ pub struct SimplifiedMarketsResponse {
     pub data: Vec<SimplifiedMarket>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Market {
-    pub condition_id: String,
-    pub tokens: [Token; 2],
-    pub rewards: Rewards,
-    pub min_incentive_size: Option<String>,
-    pub max_incentive_spread: Option<String>,
-    pub active: bool,
-    pub closed: bool,
-    pub question_id: String,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub minimum_order_size: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub minimum_tick_size: Decimal,
-    pub description: String,
-    pub category: Option<String>,
-    pub end_date_iso: Option<String>,
-    pub game_start_time: Option<String>,
-    pub question: String,
-    pub market_slug: String,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub seconds_delay: Decimal,
-    pub icon: String,
-    pub fpmm: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SimplifiedMarket {
-    pub condition_id: String,
-    pub tokens: [Token; 2],
-    pub rewards: Rewards,
-    pub min_incentive_size: Option<String>,
-    pub max_incentive_spread: Option<String>,
-    pub active: bool,
-    pub closed: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Token {
-    pub token_id: String,
-    pub outcome: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Rewards {
-    pub rates: Option<serde_json::Value>,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub min_size: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub max_spread: Decimal,
-    pub event_start_date: Option<String>,
-    pub event_end_date: Option<String>,
-    #[serde(with = "rust_decimal::serde::str", skip_serializing_if = "Option::is_none")]
-    pub in_game_multiplier: Option<Decimal>,
-    #[serde(with = "rust_decimal::serde::str", skip_serializing_if = "Option::is_none")]
-    pub reward_epoch: Option<Decimal>,
-}
+// Note: Market, Token, Rewards, and SimplifiedMarket are already defined above in this file
+// These duplicate definitions have been removed to avoid conflicts
 
 // For compatibility with reference implementation
 pub type ClientResult<T> = anyhow::Result<T>;

@@ -1152,106 +1152,18 @@ impl ClobClient {
     }
 }
 
-// Response types for API calls
-#[derive(Debug, serde::Deserialize)]
-pub struct MarketsResponse {
-    pub limit: Decimal,
-    pub count: Decimal,
-    pub next_cursor: Option<String>,
-    pub data: Vec<Market>,
-}
+// Re-export types from the canonical location in types.rs
+pub use crate::types::{
+    ExtraOrderArgs, MarketOrderArgs, OrderBookSummary, OrderSummary, 
+    MidpointResponse, SpreadResponse, PriceResponse, TickSizeResponse, 
+    NegRiskResponse, MarketsResponse, Market, Token, Rewards,
+};
 
-#[derive(Debug, serde::Deserialize)]
-pub struct Market {
-    pub condition_id: String,
-    pub tokens: [Token; 2],
-    pub rewards: Rewards,
-    pub min_incentive_size: Option<String>,
-    pub max_incentive_spread: Option<String>,
-    pub active: bool,
-    pub closed: bool,
-    pub question_id: String,
-    pub minimum_order_size: Decimal,
-    pub minimum_tick_size: Decimal,
-    pub description: String,
-    pub category: Option<String>,
-    pub end_date_iso: Option<String>,
-    pub game_start_time: Option<String>,
-    pub question: String,
-    pub market_slug: String,
-    pub seconds_delay: Decimal,
-    pub icon: String,
-    pub fpmm: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct Token {
-    pub token_id: String,
-    pub outcome: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct Rewards {
-    pub rates: Option<serde_json::Value>,
-    pub min_size: Decimal,
-    pub max_spread: Decimal,
-    pub event_start_date: Option<String>,
-    pub event_end_date: Option<String>,
-    pub in_game_multiplier: Option<Decimal>,
-    pub reward_epoch: Option<Decimal>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct OrderBookSummary {
-    pub market: String,
-    pub asset_id: String,
-    pub hash: String,
-    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
-    pub timestamp: u64,
-    pub bids: Vec<OrderSummary>,
-    pub asks: Vec<OrderSummary>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct OrderSummary {
-    #[serde(with = "rust_decimal::serde::str")]
-    pub price: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub size: Decimal,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct MidpointResponse {
-    pub mid: Decimal,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SpreadResponse {
-    pub spread: Decimal,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct PriceResponse {
-    pub price: Decimal,
-}
-
-// Additional types for full compatibility with polymarket-rs-client
-pub use crate::types::{ExtraOrderArgs, MarketOrderArgs};
-
+// Compatibility types that need to stay in client.rs
 #[derive(Debug, Default)]
 pub struct CreateOrderOptions {
     pub tick_size: Option<Decimal>,
     pub neg_risk: Option<bool>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct TickSizeResponse {
-    pub minimum_tick_size: Decimal,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct NegRiskResponse {
-    pub neg_risk: bool,
 }
 
 // Re-export for compatibility
