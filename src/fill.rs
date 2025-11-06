@@ -564,4 +564,146 @@ mod tests {
         assert!(processor.process_fill(fill).is_ok());
         assert_eq!(processor.pending_fills.len(), 1);
     }
+
+    #[test]
+    fn test_fill_engine_market_order_execution() {
+        let mut engine = FillEngine::new();
+        
+        // Create a market order
+        let market_order = MarketOrder {
+            id: "market_1".to_string(),
+            side: Side::BUY,
+            size: dec!(50),
+            token_id: "token_1".to_string(),
+            max_slippage: Some(dec!(0.05)), // 5% slippage tolerance
+        };
+        
+        // Execute the market order
+        let result = engine.execute_market_order(market_order);
+        assert!(result.is_ok());
+        
+        let execution = result.unwrap();
+        assert_eq!(execution.order_id, "market_1");
+        assert_eq!(execution.side, Side::BUY);
+        assert_eq!(execution.requested_size, dec!(50));
+    }
+
+    #[test]
+    fn test_fill_processor_batch_processing() {
+        let mut processor = FillProcessor::new();
+        
+        // Add multiple fills
+        let fill1 = Fill {
+            id: "fill_1".to_string(),
+            order_id: "order_1".to_string(),
+            side: Side::BUY,
+            size: dec!(25),
+            price: dec!(0.75),
+            fee: dec!(0.01),
+            timestamp: 1234567890,
+            token_id: "token_1".to_string(),
+        };
+        
+        let fill2 = Fill {
+            id: "fill_2".to_string(),
+            order_id: "order_2".to_string(),
+            side: Side::SELL,
+            size: dec!(30),
+            price: dec!(0.76),
+            fee: dec!(0.015),
+            timestamp: 1234567891,
+            token_id: "token_1".to_string(),
+        };
+        
+        processor.add_fill(fill1);
+        processor.add_fill(fill2);
+        
+        // Process all fills
+        processor.process_pending_fills();
+        
+        assert_eq!(processor.stats.processed_fills, 2);
+        assert_eq!(processor.stats.processed_volume, dec!(55)); // 25 + 30
+        assert_eq!(processor.stats.pending_fills, 0);
+    }
+
+    #[test]
+    fn test_market_order_validation() {
+        let valid_order = MarketOrder {
+            id: "valid_1".to_string(),
+            side: Side::BUY,
+            size: dec!(10),
+            token_id: "0x1234567890123456789012345678901234567890".to_string(),
+            max_slippage: Some(dec!(0.1)),
+        };
+        
+        let result = validate_market_order(&valid_order);
+        assert!(result.is_ok());
+        
+        // Test invalid order (zero size)
+        let invalid_order = MarketOrder {
+            id: "invalid_1".to_string(),
+            side: Side::BUY,
+            size: Decimal::ZERO,
+            token_id: "0x1234567890123456789012345678901234567890".to_string(),
+            max_slippage: Some(dec!(0.1)),
+        };
+        
+        let result = validate_market_order(&invalid_order);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fee_calculation_edge_cases() {
+        // Test very small amounts
+        let small_fee = calculate_fee(dec!(0.001), dec!(0.005));
+        assert!(small_fee >= Decimal::ZERO);
+        
+        // Test large amounts
+        let large_fee = calculate_fee(dec!(10000), dec!(0.005));
+        assert_eq!(large_fee, dec!(50)); // 10000 * 0.005
+        
+        // Test zero fee rate
+        let zero_fee = calculate_fee(dec!(100), Decimal::ZERO);
+        assert_eq!(zero_fee, Decimal::ZERO);
+        
+        // Test zero amount
+        let zero_amount_fee = calculate_fee(Decimal::ZERO, dec!(0.005));
+        assert_eq!(zero_amount_fee, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_fill_processor_statistics() {
+        let mut processor = FillProcessor::new();
+        
+        // Initial stats should be zero
+        assert_eq!(processor.stats.pending_fills, 0);
+        assert_eq!(processor.stats.processed_fills, 0);
+        assert_eq!(processor.stats.pending_volume, Decimal::ZERO);
+        assert_eq!(processor.stats.processed_volume, Decimal::ZERO);
+        
+        // Add a fill
+        let fill = Fill {
+            id: "fill_stats".to_string(),
+            order_id: "order_stats".to_string(),
+            side: Side::BUY,
+            size: dec!(75),
+            price: dec!(0.80),
+            fee: dec!(0.02),
+            timestamp: 1234567892,
+            token_id: "token_1".to_string(),
+        };
+        
+        processor.add_fill(fill);
+        
+        // Check pending stats
+        assert_eq!(processor.stats.pending_fills, 1);
+        assert_eq!(processor.stats.pending_volume, dec!(75));
+        
+        // Process and check final stats
+        processor.process_pending_fills();
+        assert_eq!(processor.stats.processed_fills, 1);
+        assert_eq!(processor.stats.processed_volume, dec!(75));
+        assert_eq!(processor.stats.pending_fills, 0);
+        assert_eq!(processor.stats.pending_volume, Decimal::ZERO);
+    }
 } 

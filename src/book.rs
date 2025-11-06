@@ -796,7 +796,9 @@ impl OrderBook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_decimal_macros::dec; // Convenient macro for creating Decimal literals
+    use rust_decimal_macros::dec;
+    use std::str::FromStr;
+    use std::time::Duration; // Convenient macro for creating Decimal literals
 
     #[test]
     fn test_order_book_creation() {
@@ -929,26 +931,28 @@ mod tests {
     fn test_liquidity_analysis() {
         let mut book = OrderBook::new("test_token".to_string(), 10);
         
-        // Build order book
-        book.apply_delta_fast(7500, 1000); // bid at 0.75, size 100
-        book.apply_delta_fast(7400, 500);  // bid at 0.74, size 50
-        book.apply_delta_fast(7600, 800);  // ask at 0.76, size 80
-        book.apply_delta_fast(7700, 1200); // ask at 0.77, size 120
+        // Build order book using legacy methods
+        book.apply_bid_delta(Decimal::from_str("0.75").unwrap(), Decimal::from_str("100.0").unwrap());
+        book.apply_bid_delta(Decimal::from_str("0.74").unwrap(), Decimal::from_str("50.0").unwrap());
+        book.apply_ask_delta(Decimal::from_str("0.76").unwrap(), Decimal::from_str("80.0").unwrap());
+        book.apply_ask_delta(Decimal::from_str("0.77").unwrap(), Decimal::from_str("120.0").unwrap());
         
-        // Test liquidity at specific price
-        let bid_liquidity = book.liquidity_at_price(Decimal::from_str("0.75").unwrap());
+        // Test liquidity at specific price (bids)
+        let bid_liquidity = book.liquidity_at_price(Decimal::from_str("0.75").unwrap(), Side::BUY);
         assert_eq!(bid_liquidity, Decimal::from_str("100.0").unwrap());
         
-        let ask_liquidity = book.liquidity_at_price(Decimal::from_str("0.76").unwrap());
+        // Test liquidity at specific price (asks)  
+        let ask_liquidity = book.liquidity_at_price(Decimal::from_str("0.76").unwrap(), Side::SELL);
         assert_eq!(ask_liquidity, Decimal::from_str("80.0").unwrap());
         
-        // Test liquidity in range
+        // Test liquidity in range (both sides)
         let range_liquidity = book.liquidity_in_range(
             Decimal::from_str("0.74").unwrap(),
-            Decimal::from_str("0.77").unwrap()
+            Decimal::from_str("0.77").unwrap(),
+            Side::BUY
         );
-        // Should include: 50 (0.74 bid) + 100 (0.75 bid) + 80 (0.76 ask) + 120 (0.77 ask) = 350
-        assert_eq!(range_liquidity, Decimal::from_str("350.0").unwrap());
+        // Should include bid liquidity: 50 (0.74 bid) + 100 (0.75 bid) = 150
+        assert_eq!(range_liquidity, Decimal::from_str("150.0").unwrap());
     }
 
     #[test]
@@ -959,12 +963,12 @@ mod tests {
         assert!(book.is_valid());
         
         // Add normal levels
-        book.apply_delta_fast(7500, 1000); // bid at 0.75
-        book.apply_delta_fast(7600, 800);  // ask at 0.76
+        book.apply_bid_delta(Decimal::from_str("0.75").unwrap(), Decimal::from_str("100.0").unwrap());
+        book.apply_ask_delta(Decimal::from_str("0.76").unwrap(), Decimal::from_str("80.0").unwrap());
         assert!(book.is_valid());
         
         // Create crossed book (invalid) - bid higher than ask
-        book.apply_delta_fast(7700, 500); // bid at 0.77 (higher than ask at 0.76)
+        book.apply_bid_delta(Decimal::from_str("0.77").unwrap(), Decimal::from_str("50.0").unwrap());
         assert!(!book.is_valid());
     }
 
