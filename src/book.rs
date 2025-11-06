@@ -880,4 +880,162 @@ mod tests {
         assert!(impact.average_price > dec!(0.50)); // Should be worse than best price
         assert!(impact.average_price < dec!(0.51)); // But not as bad as second level
     }
+
+    #[test]
+    fn test_apply_bid_delta_legacy() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        
+        // Test adding a bid
+        book.apply_bid_delta(Decimal::from_str("0.75").unwrap(), Decimal::from_str("100.0").unwrap());
+        
+        let best_bid = book.best_bid();
+        assert!(best_bid.is_some());
+        assert_eq!(best_bid.unwrap().price, Decimal::from_str("0.75").unwrap());
+        assert_eq!(best_bid.unwrap().size, Decimal::from_str("100.0").unwrap());
+        
+        // Test updating the bid
+        book.apply_bid_delta(Decimal::from_str("0.75").unwrap(), Decimal::from_str("150.0").unwrap());
+        let updated_bid = book.best_bid().unwrap();
+        assert_eq!(updated_bid.size, Decimal::from_str("150.0").unwrap());
+        
+        // Test removing the bid
+        book.apply_bid_delta(Decimal::from_str("0.75").unwrap(), Decimal::ZERO);
+        assert!(book.best_bid().is_none());
+    }
+
+    #[test]
+    fn test_apply_ask_delta_legacy() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        
+        // Test adding an ask
+        book.apply_ask_delta(Decimal::from_str("0.76").unwrap(), Decimal::from_str("50.0").unwrap());
+        
+        let best_ask = book.best_ask();
+        assert!(best_ask.is_some());
+        assert_eq!(best_ask.unwrap().price, Decimal::from_str("0.76").unwrap());
+        assert_eq!(best_ask.unwrap().size, Decimal::from_str("50.0").unwrap());
+        
+        // Test updating the ask
+        book.apply_ask_delta(Decimal::from_str("0.76").unwrap(), Decimal::from_str("75.0").unwrap());
+        let updated_ask = book.best_ask().unwrap();
+        assert_eq!(updated_ask.size, Decimal::from_str("75.0").unwrap());
+        
+        // Test removing the ask
+        book.apply_ask_delta(Decimal::from_str("0.76").unwrap(), Decimal::ZERO);
+        assert!(book.best_ask().is_none());
+    }
+
+    #[test]
+    fn test_liquidity_analysis() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        
+        // Build order book
+        book.apply_delta_fast(7500, 1000); // bid at 0.75, size 100
+        book.apply_delta_fast(7400, 500);  // bid at 0.74, size 50
+        book.apply_delta_fast(7600, 800);  // ask at 0.76, size 80
+        book.apply_delta_fast(7700, 1200); // ask at 0.77, size 120
+        
+        // Test liquidity at specific price
+        let bid_liquidity = book.liquidity_at_price(Decimal::from_str("0.75").unwrap());
+        assert_eq!(bid_liquidity, Decimal::from_str("100.0").unwrap());
+        
+        let ask_liquidity = book.liquidity_at_price(Decimal::from_str("0.76").unwrap());
+        assert_eq!(ask_liquidity, Decimal::from_str("80.0").unwrap());
+        
+        // Test liquidity in range
+        let range_liquidity = book.liquidity_in_range(
+            Decimal::from_str("0.74").unwrap(),
+            Decimal::from_str("0.77").unwrap()
+        );
+        // Should include: 50 (0.74 bid) + 100 (0.75 bid) + 80 (0.76 ask) + 120 (0.77 ask) = 350
+        assert_eq!(range_liquidity, Decimal::from_str("350.0").unwrap());
+    }
+
+    #[test]
+    fn test_book_validation() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        
+        // Empty book should be valid
+        assert!(book.is_valid());
+        
+        // Add normal levels
+        book.apply_delta_fast(7500, 1000); // bid at 0.75
+        book.apply_delta_fast(7600, 800);  // ask at 0.76
+        assert!(book.is_valid());
+        
+        // Create crossed book (invalid) - bid higher than ask
+        book.apply_delta_fast(7700, 500); // bid at 0.77 (higher than ask at 0.76)
+        assert!(!book.is_valid());
+    }
+
+    #[test]
+    fn test_book_staleness() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        
+        // Fresh book should not be stale
+        assert!(!book.is_stale(60)); // 60 second threshold
+        
+        // Add some data
+        book.apply_delta_fast(7500, 1000);
+        assert!(!book.is_stale(60));
+        
+        // Note: We can't easily test actual staleness without manipulating time,
+        // but we can test the method exists and works with fresh data
+    }
+
+    #[test]
+    fn test_depth_trimming() {
+        let mut book = OrderBook::new("test_token".to_string(), 3); // Only 3 levels
+        
+        // Add more levels than the limit
+        book.apply_delta_fast(7500, 1000); // bid 1
+        book.apply_delta_fast(7400, 500);  // bid 2
+        book.apply_delta_fast(7300, 200);  // bid 3
+        book.apply_delta_fast(7200, 100);  // bid 4 (should be trimmed)
+        book.apply_delta_fast(7100, 50);   // bid 5 (should be trimmed)
+        
+        book.apply_delta_fast(7600, 800);  // ask 1
+        book.apply_delta_fast(7700, 400);  // ask 2
+        book.apply_delta_fast(7800, 300);  // ask 3
+        book.apply_delta_fast(7900, 200);  // ask 4 (should be trimmed)
+        
+        // Manually trigger trim (normally done automatically)
+        book.trim_depth();
+        
+        // Should only have 3 levels on each side
+        let bids = book.bids();
+        let asks = book.asks();
+        
+        assert!(bids.len() <= 3);
+        assert!(asks.len() <= 3);
+        
+        // Best levels should still be there
+        assert_eq!(book.best_bid().unwrap().price, Decimal::from_str("0.75").unwrap());
+        assert_eq!(book.best_ask().unwrap().price, Decimal::from_str("0.76").unwrap());
+    }
+
+    #[test]
+    fn test_fast_operations() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        
+        // Test fast bid/ask operations
+        book.apply_bid_delta_fast(7500, 1000);
+        book.apply_ask_delta_fast(7600, 800);
+        
+        let best_bid_fast = book.best_bid_fast();
+        let best_ask_fast = book.best_ask_fast();
+        
+        assert!(best_bid_fast.is_some());
+        assert!(best_ask_fast.is_some());
+        
+        assert_eq!(best_bid_fast.unwrap().price_ticks, 7500);
+        assert_eq!(best_ask_fast.unwrap().price_ticks, 7600);
+        
+        // Test fast spread and mid price
+        let spread_fast = book.spread_fast();
+        let mid_fast = book.mid_price_fast();
+        
+        assert_eq!(spread_fast, 100); // 7600 - 7500
+        assert_eq!(mid_fast, 7550);   // (7500 + 7600) / 2
+    }
 } 

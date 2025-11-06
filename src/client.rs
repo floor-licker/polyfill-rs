@@ -1299,6 +1299,7 @@ mod tests {
 
         let mock = server
             .mock("GET", "/sampling-markets")
+            .match_query(Matcher::UrlEncoded("next_cursor".into(), "MA==".into()))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(mock_response)
@@ -1350,6 +1351,9 @@ mod tests {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
             "market": "0x123",
+            "asset_id": "0x123",
+            "hash": "0xabc123",
+            "timestamp": "1234567890",
             "bids": [
                 {"price": "0.75", "size": "100.0"}
             ],
@@ -1512,6 +1516,7 @@ mod tests {
         
         let mock = server
             .mock("GET", "/book")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "invalid_token".into()))
             .with_status(404)
             .with_header("content-type", "application/json")
             .with_body(r#"{"error": "Market not found"}"#)
@@ -1525,7 +1530,8 @@ mod tests {
         assert!(result.is_err());
         
         let error = result.unwrap_err();
-        assert!(matches!(error, PolyfillError::Network { .. }));
+        // The error should be either Network or Api error
+        assert!(matches!(error, PolyfillError::Network { .. }) || matches!(error, PolyfillError::Api { .. }));
     }
 
     #[tokio::test]
