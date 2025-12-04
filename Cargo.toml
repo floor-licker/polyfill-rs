@@ -1,16 +1,16 @@
 [package]
 name = "polyfill-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Julius Tranquilli <julius@example.com>"]
 description = "High-performance drop-in replacement for polymarket-rs-client with HFT optimizations"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/juliustranquilli/polyfill-rs"
+repository = "https://github.com/floor-licker/polyfill-rs"
 readme = "README.md"
 keywords = ["polymarket", "trading", "hft", "crypto", "prediction-markets"]
 categories = ["api-bindings", "network-programming", "finance"]
 documentation = "https://docs.rs/polyfill-rs"
-homepage = "https://github.com/juliustranquilli/polyfill-rs"
+homepage = "https://github.com/floor-licker/polyfill-rs"
 
 [dependencies]
 # Async runtime and futures
