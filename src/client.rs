@@ -1596,4 +1596,173 @@ mod tests {
         assert!(auth_client.signer.is_some());
         assert_eq!(auth_client.chain_id, 137);
     }
+
+    #[tokio::test]
+    async fn test_get_ok() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{"status": "ok"}"#;
+
+        let mock = server
+            .mock("GET", "/ok")
+            .with_header("content-type", "application/json")
+            .with_status(200)
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_ok().await;
+        
+        mock.assert_async().await;
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn test_get_prices_batch() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "0x123": {
+                "BUY": "0.755",
+                "SELL": "0.745"
+            },
+            "0x456": {
+                "BUY": "0.623",
+                "SELL": "0.613"
+            }
+        }"#;
+
+        let mock = server
+            .mock("POST", "/prices")
+            .with_header("content-type", "application/json")
+            .with_status(200)
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let book_params = vec![
+            crate::types::BookParams {
+                token_id: "0x123".to_string(),
+                side: Side::BUY,
+            },
+            crate::types::BookParams {
+                token_id: "0x456".to_string(),
+                side: Side::SELL,
+            },
+        ];
+        let result = client.get_prices(&book_params).await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let prices = result.unwrap();
+        assert_eq!(prices.len(), 2);
+        assert!(prices.contains_key("0x123"));
+        assert!(prices.contains_key("0x456"));
+    }
+
+    #[tokio::test]
+    async fn test_get_server_time() {
+        let mut server = Server::new_async().await;
+        let mock_response = "1234567890"; // Plain text response
+
+        let mock = server
+            .mock("GET", "/time")
+            .with_status(200)
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_server_time().await;
+        
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let timestamp = result.unwrap();
+        assert_eq!(timestamp, 1234567890);
+    }
+
+    #[tokio::test]
+    async fn test_create_or_derive_api_key() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{
+            "apiKey": "test-api-key-123",
+            "secret": "test-secret-456",
+            "passphrase": "test-passphrase"
+        }"#;
+
+        // Mock both create and derive endpoints since the method tries both
+        let create_mock = server
+            .mock("POST", "/auth/api-key")
+            .with_header("content-type", "application/json")
+            .with_status(200)
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_auth(&server.url());
+        let result = client.create_or_derive_api_key(None).await;
+        
+        create_mock.assert_async().await;
+        assert!(result.is_ok());
+        let api_creds = result.unwrap();
+        assert_eq!(api_creds.api_key, "test-api-key-123");
+    }
+
+    #[tokio::test]
+    async fn test_get_order_books_batch() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"[
+            {
+                "market": "0x123",
+                "asset_id": "0x123",
+                "hash": "test-hash",
+                "timestamp": "1234567890",
+                "bids": [{"price": "0.75", "size": "100.0"}],
+                "asks": [{"price": "0.76", "size": "50.0"}]
+            }
+        ]"#;
+
+        let mock = server
+            .mock("POST", "/books")
+            .with_header("content-type", "application/json")
+            .with_status(200)
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let token_ids = vec!["0x123".to_string()];
+        let result = client.get_order_books(&token_ids).await;
+        
+        mock.assert_async().await;
+        if let Err(e) = &result {
+            println!("Error: {:?}", e);
+        }
+        assert!(result.is_ok());
+        let books = result.unwrap();
+        assert_eq!(books.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_order_args_creation() {
+        // Test OrderArgs creation and default values
+        let order_args = OrderArgs::new(
+            "0x123",
+            Decimal::from_str("0.75").unwrap(),
+            Decimal::from_str("100.0").unwrap(),
+            Side::BUY,
+        );
+        
+        assert_eq!(order_args.token_id, "0x123");
+        assert_eq!(order_args.price, Decimal::from_str("0.75").unwrap());
+        assert_eq!(order_args.size, Decimal::from_str("100.0").unwrap());
+        assert_eq!(order_args.side, Side::BUY);
+        
+        // Test default
+        let default_args = OrderArgs::default();
+        assert_eq!(default_args.token_id, "");
+        assert_eq!(default_args.price, Decimal::ZERO);
+        assert_eq!(default_args.size, Decimal::ZERO);
+        assert_eq!(default_args.side, Side::BUY);
+    }
 } 

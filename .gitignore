@@ -1,3 +1,8 @@
 /external
 /target
 
+# Coverage reports
+tarpaulin-report.html
+*.profraw
+/target/tarpaulin/
+
