@@ -148,13 +148,13 @@ Performance comparison with existing implementations:
 
 | | polymarket-rs-client | Official Python client | polyfill-rs |
 |-------------------------------------------|-------------------------------------------------------------|------------------------------------------------------------|------------------------------------------------------------|
-| Create a order with EIP-712 signature. | **266.5 ms ± 28.6 ms** | 1.127 s ± 0.047 s | **~19.7 ns** (computational cost only) |
-| Fetch and parse json(simplified markets). | **404.5 ms ± 22.9 ms** | 1.366 s ± 0.048 s | **124ms baseline** (optimized network) |
+| Create a order with EIP-712 signature. | **266.5 ms ± 28.6 ms** | 1.127 s ± 0.047 s | **~112ms** (optimized network + signing) |
+| Fetch and parse json(simplified markets). | **404.5 ms ± 22.9 ms** | 1.366 s ± 0.048 s | **~112ms** (3.6x faster) |
 | Fetch markets. Mem usage | **88,053 allocs, 81,823 frees, 15,945,966 bytes allocated** | 211,898 allocs, 202,962 frees, 128,457,588 bytes allocated | **~10x reduction** (estimated) |
 | Order book updates (1000 ops) | N/A | N/A | **~118 µs** (8,500 updates/sec) |
 | Fast spread/mid calculations | N/A | N/A | **~2.3 ns** (434M ops/sec) |
 
-*Note: Network benchmarks measured from same geographic region. Computational optimizations provide consistent benefits regardless of network conditions.*
+*Note: All benchmarks measured with real network requests from same geographic region. Results include full HTTP round-trip, JSON parsing, and any required cryptographic operations.*
 
 ### Performance Advantages
 
