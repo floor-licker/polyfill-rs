@@ -7,6 +7,8 @@ set -e
 
 echo "🌐 Network Latency Benchmark for polyfill-rs"
 echo "============================================="
+echo "📝 Note: API credentials loaded from .env file"
+echo ""
 
 # Colors for output
 RED='\033[0;31m'

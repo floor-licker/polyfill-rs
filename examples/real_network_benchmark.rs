@@ -5,21 +5,24 @@ use std::time::Instant;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load environment variables from .env file
+    dotenv::dotenv().ok();
+    
     println!("🚀 Real Network Benchmark - polyfill-rs vs polymarket-rs-client");
     println!("================================================================");
-    println!("To run with real credentials, set environment variables:");
-    println!("  export POLYMARKET_API_KEY=your-api-key");
-    println!("  export POLYMARKET_SECRET=your-secret");
-    println!("  export POLYMARKET_PASSPHRASE=your-passphrase");
-    println!("");
     
     // Set up client with credentials
     let client = ClobClient::new("https://clob.polymarket.com");
     
-    // API credentials from environment variables
-    let _api_key = std::env::var("POLYMARKET_API_KEY").unwrap_or_else(|_| "your-api-key".to_string());
-    let _secret = std::env::var("POLYMARKET_SECRET").unwrap_or_else(|_| "your-secret".to_string());
-    let _passphrase = std::env::var("POLYMARKET_PASSPHRASE").unwrap_or_else(|_| "your-passphrase".to_string());
+    // API credentials from .env file
+    let _api_key = std::env::var("POLYMARKET_API_KEY")
+        .map_err(|_| "POLYMARKET_API_KEY not found in .env file")?;
+    let _secret = std::env::var("POLYMARKET_SECRET")
+        .map_err(|_| "POLYMARKET_SECRET not found in .env file")?;
+    let _passphrase = std::env::var("POLYMARKET_PASSPHRASE")
+        .map_err(|_| "POLYMARKET_PASSPHRASE not found in .env file")?;
+    
+    println!("✅ Loaded API credentials from .env file");
     
     println!("🔑 Using API credentials for authenticated requests");
     
