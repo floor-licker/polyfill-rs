@@ -114,6 +114,30 @@ impl ClobClient {
         self.api_creds = Some(api_creds);
     }
 
+    /// Get the wallet address
+    pub fn get_address(&self) -> Option<String> {
+        use alloy_primitives::hex;
+        self.signer.as_ref().map(|s| hex::encode_prefixed(s.address().as_slice()))
+    }
+
+    /// Get the collateral token address for the current chain
+    pub fn get_collateral_address(&self) -> Option<String> {
+        let config = crate::orders::get_contract_config(self.chain_id, false)?;
+        Some(config.collateral)
+    }
+
+    /// Get the conditional tokens contract address for the current chain
+    pub fn get_conditional_address(&self) -> Option<String> {
+        let config = crate::orders::get_contract_config(self.chain_id, false)?;
+        Some(config.conditional_tokens)
+    }
+
+    /// Get the exchange contract address for the current chain
+    pub fn get_exchange_address(&self) -> Option<String> {
+        let config = crate::orders::get_contract_config(self.chain_id, false)?;
+        Some(config.exchange)
+    }
+
     /// Test basic connectivity
     pub async fn get_ok(&self) -> bool {
         match self.http_client.get(&format!("{}/ok", self.base_url)).send().await {

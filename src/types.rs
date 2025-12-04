@@ -1075,4 +1075,9 @@ pub struct Rewards {
 pub type ClientResult<T> = anyhow::Result<T>;
 
 /// Result type used throughout the client
-pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>; 
+pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>;
+
+// Type aliases for 100% compatibility with baseline implementation
+pub type ApiCreds = ApiCredentials;
+pub type CreateOrderOptions = OrderOptions;
+pub type OrderArgs = OrderRequest; 
