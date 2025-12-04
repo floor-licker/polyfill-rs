@@ -7,14 +7,19 @@ use std::time::Instant;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 Real Network Benchmark - polyfill-rs vs polymarket-rs-client");
     println!("================================================================");
+    println!("To run with real credentials, set environment variables:");
+    println!("  export POLYMARKET_API_KEY=your-api-key");
+    println!("  export POLYMARKET_SECRET=your-secret");
+    println!("  export POLYMARKET_PASSPHRASE=your-passphrase");
+    println!("");
     
     // Set up client with credentials
     let client = ClobClient::new("https://clob.polymarket.com");
     
-    // API credentials
-    let api_key = "019ae914-0595-7d62-874a-8fb92d6edd2e";
-    let secret = "zqADlM8WaCuJaUcLXqGQDKpoAZUvsqKmC0Qe3L2ibjM=";
-    let passphrase = "4bfbd579bd1a9c3ef8cbdeb9916c69dc1bc120c838deddd4725da2287ab04d06";
+    // API credentials from environment variables
+    let _api_key = std::env::var("POLYMARKET_API_KEY").unwrap_or_else(|_| "your-api-key".to_string());
+    let _secret = std::env::var("POLYMARKET_SECRET").unwrap_or_else(|_| "your-secret".to_string());
+    let _passphrase = std::env::var("POLYMARKET_PASSPHRASE").unwrap_or_else(|_| "your-passphrase".to_string());
     
     println!("🔑 Using API credentials for authenticated requests");
     
