@@ -1239,8 +1239,9 @@ pub type PolyfillClient = ClobClient;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::*;
+    use super::{ClobClient, OrderArgs as ClientOrderArgs};
+    use crate::types::Side;
+    use crate::{ApiCredentials, PolyfillError};
     use mockito::{Matcher, Server};
     use rust_decimal::Decimal;
     use std::str::FromStr;
@@ -1803,7 +1804,7 @@ mod tests {
     #[tokio::test]
     async fn test_order_args_creation() {
         // Test OrderArgs creation and default values
-        let order_args = OrderArgs::new(
+        let order_args = ClientOrderArgs::new(
             "0x123",
             Decimal::from_str("0.75").unwrap(),
             Decimal::from_str("100.0").unwrap(),
@@ -1816,7 +1817,7 @@ mod tests {
         assert_eq!(order_args.side, Side::BUY);
         
         // Test default
-        let default_args = OrderArgs::default();
+        let default_args = ClientOrderArgs::default();
         assert_eq!(default_args.token_id, "");
         assert_eq!(default_args.price, Decimal::ZERO);
         assert_eq!(default_args.size, Decimal::ZERO);
