@@ -98,7 +98,7 @@ impl OrderBook {
         }
     }
 
-    /// Set the tick size for this book 
+    /// Set the tick size for this book
     /// This tells us the minimum price increment allowed
     /// We store it in ticks for fast validation without conversion overhead
     pub fn set_tick_size(&mut self, tick_size: Decimal) -> Result<()> {
@@ -151,7 +151,7 @@ impl OrderBook {
             }
         })
     }
-    
+
     /// Get the current best bid in fast internal format 
     /// Use this for internal calculations to avoid conversion overhead
     pub fn best_bid_fast(&self) -> Option<FastBookLevel> {
@@ -337,7 +337,7 @@ impl OrderBook {
             trace!("Ignoring stale delta: {} <= {}", delta.sequence, self.sequence);
             return Ok(());
         }
-        
+
         // Validate token ID hash matches (fast string comparison avoidance)
         if delta.token_id_hash != self.token_id_hash {
             return Err(PolyfillError::validation("Token ID mismatch"));

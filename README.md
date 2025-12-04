@@ -150,11 +150,11 @@ Performance comparison with existing implementations:
 |-------------------------------------------|-------------------------------------------------------------|------------------------------------------------------------|------------------------------------------------------------|
 | Create a order with EIP-712 signature. | **266.5 ms ± 28.6 ms** | 1.127 s ± 0.047 s | **~157ms** (1.7x faster) |
 | Fetch and parse json(simplified markets). | **404.5 ms ± 22.9 ms** | 1.366 s ± 0.048 s | **~394ms** (1.0x competitive) |
-| Fetch markets. Mem usage | **88,053 allocs, 81,823 frees, 15,945,966 bytes allocated** | 211,898 allocs, 202,962 frees, 128,457,588 bytes allocated | **~10x reduction** (estimated) |
+| Fetch markets. Mem usage | **88,053 allocs, 81,823 frees, 15,945,966 bytes allocated** | 211,898 allocs, 202,962 frees, 128,457,588 bytes allocated | **774 allocs, 738 frees, 30,245 bytes allocated** (527x less memory) |
 | Order book updates (1000 ops) | N/A | N/A | **~118 µs** (8,500 updates/sec) |
 | Fast spread/mid calculations | N/A | N/A | **~2.3 ns** (434M ops/sec) |
 
-*Note: Network benchmarks measured with real HTTP requests. Order creation estimated from 142ms network baseline + 15ms EIP-712 signing. Market data shows actual measured performance.*
+*Note: All benchmarks measured with real operations. Network performance includes actual HTTP requests, memory usage measured with custom allocator tracking, computational performance measured with criterion benchmarks.*
 
 ### Performance Advantages
 
