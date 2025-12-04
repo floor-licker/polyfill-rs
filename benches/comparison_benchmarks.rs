@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use polyfill_rs::{ClobClient, OrderArgs, Side, OrderBookImpl};
+use polyfill_rs::{OrderArgs, Side, OrderBookImpl};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 

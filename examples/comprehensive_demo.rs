@@ -42,6 +42,7 @@ use tokio::time::sleep;
 use tracing::{error, info, debug};
 
 /// Comprehensive demo showcasing all polyfill-rs functionality
+#[allow(dead_code)]
 pub struct PolyfillDemo {
     /// Basic HTTP client
     client: ClobClient,
@@ -513,7 +514,7 @@ impl PolyfillDemo {
             if rand::random::<bool>() {
                 Ok("Success!")
             } else {
-                Err(PolyfillError::network("Simulated network error", std::io::Error::new(std::io::ErrorKind::Other, "Simulated error")))
+                Err(PolyfillError::network("Simulated network error", std::io::Error::other("Simulated error")))
             }
         };
         

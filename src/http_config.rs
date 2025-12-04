@@ -13,7 +13,7 @@ pub async fn prewarm_connections(client: &Client, base_url: &str) -> Result<(), 
     
     for endpoint in endpoints {
         let _ = client
-            .get(&format!("{}{}", base_url, endpoint))
+            .get(format!("{}{}", base_url, endpoint))
             .timeout(Duration::from_millis(1000))
             .send()
             .await;

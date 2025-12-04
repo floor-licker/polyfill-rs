@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("• Processing cached/local data");
     println!("• Running in co-located environments");
     println!("• Performing high-frequency operations");
-    println!("");
+    println!();
     println!("For fair comparison with polymarket-rs-client:");
     println!("• Run from same geographic location");
     println!("• Use same network conditions");

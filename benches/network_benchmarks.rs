@@ -55,7 +55,7 @@ fn benchmark_real_order_creation(c: &mut Criterion) {
                 let client = ClobClient::new("https://clob.polymarket.com");
                 
                 // Set up credentials
-                if let Ok(key) = std::env::var("POLYMARKET_PRIVATE_KEY") {
+                if let Ok(_key) = std::env::var("POLYMARKET_PRIVATE_KEY") {
                     // This would require implementing credential setup
                     // let creds = ApiCredentials::from_private_key(&key)?;
                     // client.set_credentials(creds);

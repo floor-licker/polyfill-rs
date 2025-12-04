@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // First, try to create or derive API key
     match client.create_or_derive_api_key(None).await {
-        Ok(creds) => {
+        Ok(_creds) => {
             println!("  🔑 API credentials set up successfully");
             
             // Now test order creation
@@ -127,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 
                 let start = Instant::now();
                 match client.create_order(&order_args, None, None, None).await {
-                    Ok(order) => {
+                    Ok(_order) => {
                         let duration = start.elapsed();
                         times.push(duration);
                         if i < 2 {

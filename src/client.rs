@@ -202,7 +202,7 @@ impl ClobClient {
     /// Get order book for a token
     pub async fn get_order_book(&self, token_id: &str) -> Result<OrderBookSummary> {
         let response = self.http_client
-            .get(&format!("{}/book", self.base_url))
+            .get(format!("{}/book", self.base_url))
             .query(&[("token_id", token_id)])
             .send()
             .await?;
@@ -218,7 +218,7 @@ impl ClobClient {
     /// Get midpoint for a token
     pub async fn get_midpoint(&self, token_id: &str) -> Result<MidpointResponse> {
         let response = self.http_client
-            .get(&format!("{}/midpoint", self.base_url))
+            .get(format!("{}/midpoint", self.base_url))
             .query(&[("token_id", token_id)])
             .send()
             .await?;
@@ -234,7 +234,7 @@ impl ClobClient {
     /// Get spread for a token
     pub async fn get_spread(&self, token_id: &str) -> Result<SpreadResponse> {
         let response = self.http_client
-            .get(&format!("{}/spread", self.base_url))
+            .get(format!("{}/spread", self.base_url))
             .query(&[("token_id", token_id)])
             .send()
             .await?;
@@ -259,7 +259,7 @@ impl ClobClient {
             .collect();
 
         let response = self.http_client
-            .post(&format!("{}/spreads", self.base_url))
+            .post(format!("{}/spreads", self.base_url))
             .json(&request_data)
             .send()
             .await?;
@@ -275,7 +275,7 @@ impl ClobClient {
     /// Get price for a token and side
     pub async fn get_price(&self, token_id: &str, side: Side) -> Result<PriceResponse> {
         let response = self.http_client
-            .get(&format!("{}/price", self.base_url))
+            .get(format!("{}/price", self.base_url))
             .query(&[
                 ("token_id", token_id),
                 ("side", side.as_str()),
@@ -294,7 +294,7 @@ impl ClobClient {
     /// Get tick size for a token
     pub async fn get_tick_size(&self, token_id: &str) -> Result<Decimal> {
         let response = self.http_client
-            .get(&format!("{}/tick-size", self.base_url))
+            .get(format!("{}/tick-size", self.base_url))
             .query(&[("token_id", token_id)])
             .send()
             .await?;
@@ -413,7 +413,7 @@ impl ClobClient {
     /// Get neg risk for a token
     pub async fn get_neg_risk(&self, token_id: &str) -> Result<bool> {
         let response = self.http_client
-            .get(&format!("{}/neg-risk", self.base_url))
+            .get(format!("{}/neg-risk", self.base_url))
             .query(&[("token_id", token_id)])
             .send()
             .await?;
@@ -877,7 +877,7 @@ impl ClobClient {
             .collect();
         
         let response = self.http_client
-            .post(&format!("{}/midpoints", self.base_url))
+            .post(format!("{}/midpoints", self.base_url))
             .json(&request_data)
             .send()
             .await?;
@@ -909,7 +909,7 @@ impl ClobClient {
             .collect();
         
         let response = self.http_client
-            .post(&format!("{}/prices", self.base_url))
+            .post(format!("{}/prices", self.base_url))
             .json(&request_data)
             .send()
             .await?;
@@ -934,7 +934,7 @@ impl ClobClient {
             .collect();
 
         let response = self.http_client
-            .post(&format!("{}/books", self.base_url))
+            .post(format!("{}/books", self.base_url))
             .json(&request_data)
             .send()
             .await
@@ -969,7 +969,7 @@ impl ClobClient {
     /// Get last trade price for a token
     pub async fn get_last_trade_price(&self, token_id: &str) -> Result<Value> {
         let response = self.http_client
-            .get(&format!("{}/last-trade-price", self.base_url))
+            .get(format!("{}/last-trade-price", self.base_url))
             .query(&[("token_id", token_id)])
             .send()
             .await
@@ -991,7 +991,7 @@ impl ClobClient {
             .collect();
 
         let response = self.http_client
-            .post(&format!("{}/last-trades-prices", self.base_url))
+            .post(format!("{}/last-trades-prices", self.base_url))
             .json(&request_data)
             .send()
             .await
@@ -1140,7 +1140,7 @@ impl ClobClient {
         let next_cursor = next_cursor.unwrap_or("MA=="); // INITIAL_CURSOR
 
         let response = self.http_client
-            .get(&format!("{}/sampling-markets", self.base_url))
+            .get(format!("{}/sampling-markets", self.base_url))
             .query(&[("next_cursor", next_cursor)])
             .send()
             .await
@@ -1155,7 +1155,7 @@ impl ClobClient {
         let next_cursor = next_cursor.unwrap_or("MA=="); // INITIAL_CURSOR
 
         let response = self.http_client
-            .get(&format!("{}/sampling-simplified-markets", self.base_url))
+            .get(format!("{}/sampling-simplified-markets", self.base_url))
             .query(&[("next_cursor", next_cursor)])
             .send()
             .await
@@ -1170,7 +1170,7 @@ impl ClobClient {
         let next_cursor = next_cursor.unwrap_or("MA=="); // INITIAL_CURSOR
 
         let response = self.http_client
-            .get(&format!("{}/markets", self.base_url))
+            .get(format!("{}/markets", self.base_url))
             .query(&[("next_cursor", next_cursor)])
             .send()
             .await
@@ -1185,7 +1185,7 @@ impl ClobClient {
         let next_cursor = next_cursor.unwrap_or("MA=="); // INITIAL_CURSOR
 
         let response = self.http_client
-            .get(&format!("{}/simplified-markets", self.base_url))
+            .get(format!("{}/simplified-markets", self.base_url))
             .query(&[("next_cursor", next_cursor)])
             .send()
             .await
@@ -1198,7 +1198,7 @@ impl ClobClient {
     /// Get single market by condition ID
     pub async fn get_market(&self, condition_id: &str) -> Result<crate::types::Market> {
         let response = self.http_client
-            .get(&format!("{}/markets/{}", self.base_url, condition_id))
+            .get(format!("{}/markets/{}", self.base_url, condition_id))
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
@@ -1210,7 +1210,7 @@ impl ClobClient {
     /// Get market trades events
     pub async fn get_market_trades_events(&self, condition_id: &str) -> Result<Value> {
         let response = self.http_client
-            .get(&format!("{}/live-activity/events/{}", self.base_url, condition_id))
+            .get(format!("{}/live-activity/events/{}", self.base_url, condition_id))
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;

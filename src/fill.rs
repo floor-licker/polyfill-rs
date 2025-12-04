@@ -409,7 +409,7 @@ impl FillProcessor {
         // Add to pending fills
         self.pending_fills
             .entry(fill.order_id.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(fill.clone());
 
         // Move to processed if complete

@@ -1,6 +1,4 @@
-use polyfill_rs::{ClobClient, OrderArgs, Side};
-use rust_decimal::Decimal;
-use std::str::FromStr;
+use polyfill_rs::ClobClient;
 use std::time::Instant;
 
 #[tokio::main]
@@ -19,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  1. Private key for EIP-712 signing");
     println!("  2. Proper client initialization with credentials");
     println!("  3. Valid market context for orders");
-    println!("");
+    println!();
     
     // What we CAN measure: Network performance
     let client = ClobClient::new_internet("https://clob.polymarket.com");
@@ -86,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Based on our network measurements:");
     println!("  • Network baseline: {:?}", baseline_avg);
     println!("  • Market data: {:?} (3.8x faster than original)", market_avg);
-    println!("");
+    println!();
     
     println!("For order creation (266.5ms original):");
     println!("  • Network component: ~{:?} (measured)", baseline_avg);
@@ -103,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ✅ Network baseline: {:?}", baseline_avg);
     println!("  ✅ Market data: {:?} (3.8x faster)", market_avg);
     println!("  ✅ Computational: microsecond-scale operations");
-    println!("");
+    println!();
     println!("What we estimate:");
     println!("  📊 Order creation: ~{:?} (vs 266.5ms = 2.2x faster)", 
              baseline_avg + std::time::Duration::from_millis(15));

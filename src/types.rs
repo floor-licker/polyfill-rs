@@ -185,6 +185,7 @@ pub fn is_price_tick_aligned(decimal: Decimal, tick_size_decimal: Decimal) -> bo
 
 /// Trading side for orders
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Side {
     BUY = 0,
     SELL = 1,
@@ -208,6 +209,7 @@ impl Side {
 
 /// Order type specifications
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum OrderType {
     GTC,
     FOK,
@@ -480,22 +482,12 @@ pub struct Order {
 }
 
 /// API credentials for authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ApiCredentials {
     #[serde(rename = "apiKey")]
     pub api_key: String,
     pub secret: String,
     pub passphrase: String,
-}
-
-impl Default for ApiCredentials {
-    fn default() -> Self {
-        Self {
-            api_key: String::new(),
-            secret: String::new(),
-            passphrase: String::new(),
-        }
-    }
 }
 
 /// Configuration for order creation
@@ -905,16 +897,17 @@ impl BalanceAllowanceParams {
 }
 
 /// Asset type enum for balance allowance queries
+#[allow(clippy::upper_case_acronyms)]
 pub enum AssetType {
     COLLATERAL,
     CONDITIONAL,
 }
 
-impl ToString for AssetType {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for AssetType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AssetType::COLLATERAL => "COLLATERAL".to_string(),
-            AssetType::CONDITIONAL => "CONDITIONAL".to_string(),
+            AssetType::COLLATERAL => write!(f, "COLLATERAL"),
+            AssetType::CONDITIONAL => write!(f, "CONDITIONAL"),
         }
     }
 }

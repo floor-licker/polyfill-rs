@@ -9,7 +9,7 @@ use polyfill_rs::{
     fill::{FillEngine, FillProcessor},
     types::{FillEvent, MarketOrderRequest, OrderDelta, Side},
 };
-use rust_decimal::{Decimal, Decimal as RustDecimal};
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::time::Instant;
 

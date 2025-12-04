@@ -322,7 +322,7 @@ impl MockMarketData {
 
         // Generate random price movement
         let random_factor = Decimal::from(rand::random::<i64>() % 100 - 50) / Decimal::from(100);
-        let volatility_f64 = self.volatility.to_f64().unwrap_or(0.01);
+        let _volatility_f64 = self.volatility.to_f64().unwrap_or(0.01);
         let price_change = random_factor * Decimal::from(2) * self.volatility;
         let new_price = self.base_price * (Decimal::from(1) + price_change);
 

@@ -185,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Collect some samples
     for i in 0..5 {
         let start = Instant::now();
-        if let Ok(_) = client.get_server_time().await {
+        if (client.get_server_time().await).is_ok() {
             let duration = start.elapsed();
             adaptive_timeout.add_sample(duration);
             if i < 3 {

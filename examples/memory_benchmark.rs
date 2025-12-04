@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("==============================================");
     println!("Comparing with polymarket-rs-client baseline:");
     println!("  88,053 allocs, 81,823 frees, 15,945,966 bytes allocated");
-    println!("");
+    println!();
     
     // Load environment variables
     dotenv::dotenv().ok();

@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..3 {
         let start = Instant::now();
         match client.create_or_derive_api_key(None).await {
-            Ok(creds) => {
+            Ok(_creds) => {
                 let duration = start.elapsed();
                 setup_times.push(duration);
                 println!("  Run {}: ✅ API key setup in {:?}", i+1, duration);

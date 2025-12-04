@@ -8,7 +8,7 @@ use polyfill_rs::{
     book::OrderBook,
     types::{OrderDelta, Side},
 };
-use rust_decimal::{Decimal, Decimal as RustDecimal};
+use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::time::Instant;
 

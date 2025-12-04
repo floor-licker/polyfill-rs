@@ -5,7 +5,6 @@
 
 use polyfill_rs::{ClobClient, Side, Result, PolyfillError};
 use rust_decimal::Decimal;
-use std::str::FromStr;
 use tokio::time::{sleep, Duration};
 use tracing::{info, error, warn};
 
@@ -67,7 +66,7 @@ async fn test_connectivity(client: &ClobClient) -> Result<()> {
     // Test /ok endpoint
     let is_ok = client.get_ok().await;
     if !is_ok {
-        return Err(PolyfillError::network("API not responding", std::io::Error::new(std::io::ErrorKind::Other, "API not responding")));
+        return Err(PolyfillError::network("API not responding", std::io::Error::other("API not responding")));
     }
     info!("  /ok endpoint responding");
     
@@ -81,11 +80,7 @@ async fn test_connectivity(client: &ClobClient) -> Result<()> {
         .unwrap()
         .as_secs();
     
-    let time_diff = if server_time > current_time {
-        server_time - current_time
-    } else {
-        current_time - server_time
-    };
+    let time_diff = server_time.abs_diff(current_time);
     
     if time_diff > 86400 { // 24 hours
         warn!("  Server time seems off (diff: {} seconds)", time_diff);

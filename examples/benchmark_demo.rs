@@ -151,7 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("• Fixed-point arithmetic in hot paths");
     println!("• Zero-allocation order book operations");
     println!("• Cache-friendly memory layouts");
-    println!("");
+    println!();
     println!("🔬 Run `cargo bench` for detailed criterion benchmarks");
     println!("📊 Run `./scripts/benchmark_comparison.sh` for comprehensive analysis");
     

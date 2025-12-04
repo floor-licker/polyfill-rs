@@ -67,7 +67,7 @@ pub mod time {
     #[inline]
     pub fn secs_to_datetime(timestamp: u64) -> DateTime<Utc> {
         DateTime::from_timestamp(timestamp as i64, 0)
-            .unwrap_or_else(|| Utc::now())
+            .unwrap_or_else(Utc::now)
     }
 }
 
@@ -392,7 +392,7 @@ pub mod retry {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| PolyfillError::internal("Retry loop failed", std::io::Error::new(std::io::ErrorKind::Other, "No error captured"))))
+        Err(last_error.unwrap_or_else(|| PolyfillError::internal("Retry loop failed", std::io::Error::other("No error captured"))))
     }
 }
 

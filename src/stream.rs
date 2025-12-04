@@ -432,6 +432,12 @@ pub struct MockStream {
     connected: bool,
 }
 
+impl Default for MockStream {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockStream {
     pub fn new() -> Self {
         Self {
@@ -494,10 +500,17 @@ impl MarketStream for MockStream {
 }
 
 /// Stream manager for handling multiple streams
+#[allow(dead_code)]
 pub struct StreamManager {
     streams: Vec<Box<dyn MarketStream>>,
     message_tx: mpsc::UnboundedSender<StreamMessage>,
     message_rx: mpsc::UnboundedReceiver<StreamMessage>,
+}
+
+impl Default for StreamManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StreamManager {
