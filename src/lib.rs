@@ -127,6 +127,7 @@ pub mod client;
 pub mod decode;
 pub mod errors;
 pub mod fill;
+pub mod http_config;
 pub mod orders;
 pub mod stream;
 pub mod types;

@@ -79,6 +79,14 @@ harness = false
 name = "fill_processing"
 harness = false
 
+[[bench]]
+name = "comparison_benchmarks"
+harness = false
+
+[[bench]]
+name = "network_benchmarks"
+harness = false
+
 [profile.release]
 # Optimizations for HFT performance
 opt-level = 3

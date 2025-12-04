@@ -5,6 +5,7 @@
 
 use crate::auth::{create_l1_headers, create_l2_headers};
 use crate::errors::{PolyfillError, Result};
+use crate::http_config::{create_optimized_client, create_colocated_client, create_internet_client, prewarm_connections};
 use crate::types::{OrderOptions, PostOrder, SignedOrderRequest};
 use reqwest::Client;
 use serde_json::Value;
@@ -63,12 +64,36 @@ pub struct ClobClient {
 }
 
 impl ClobClient {
-    /// Create a new client
+    /// Create a new client with optimized HTTP settings
     pub fn new(host: &str) -> Self {
         Self {
-            http_client: Client::new(),
+            http_client: create_optimized_client().unwrap_or_else(|_| Client::new()),
             base_url: host.to_string(),
             chain_id: 137, // Default to Polygon
+            signer: None,
+            api_creds: None,
+            order_builder: None,
+        }
+    }
+
+    /// Create a client optimized for co-located environments
+    pub fn new_colocated(host: &str) -> Self {
+        Self {
+            http_client: create_colocated_client().unwrap_or_else(|_| Client::new()),
+            base_url: host.to_string(),
+            chain_id: 137,
+            signer: None,
+            api_creds: None,
+            order_builder: None,
+        }
+    }
+
+    /// Create a client optimized for internet connections
+    pub fn new_internet(host: &str) -> Self {
+        Self {
+            http_client: create_internet_client().unwrap_or_else(|_| Client::new()),
+            base_url: host.to_string(),
+            chain_id: 137,
             signer: None,
             api_creds: None,
             order_builder: None,
@@ -83,7 +108,7 @@ impl ClobClient {
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
         
         Self {
-            http_client: Client::new(),
+            http_client: create_optimized_client().unwrap_or_else(|_| Client::new()),
             base_url: host.to_string(),
             chain_id,
             signer: Some(signer),
@@ -100,7 +125,7 @@ impl ClobClient {
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
         
         Self {
-            http_client: Client::new(),
+            http_client: create_optimized_client().unwrap_or_else(|_| Client::new()),
             base_url: host.to_string(),
             chain_id,
             signer: Some(signer),
@@ -112,6 +137,14 @@ impl ClobClient {
     /// Set API credentials
     pub fn set_api_creds(&mut self, api_creds: ApiCreds) {
         self.api_creds = Some(api_creds);
+    }
+
+    /// Pre-warm connections to reduce first-request latency
+    pub async fn prewarm_connections(&self) -> Result<()> {
+        prewarm_connections(&self.http_client, &self.base_url)
+            .await
+            .map_err(|e| PolyfillError::network(format!("Failed to prewarm connections: {}", e), e))?;
+        Ok(())
     }
 
     /// Get the wallet address
