@@ -30,6 +30,7 @@ pub trait MarketStream: Stream<Item = Result<StreamMessage>> + Send + Sync {
 
 /// WebSocket-based market stream implementation
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct WebSocketStream {
     /// WebSocket connection
     connection: Option<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>,
@@ -219,6 +220,7 @@ impl WebSocketStream {
     }
 
     /// Handle incoming WebSocket messages
+    #[allow(dead_code)]
     async fn handle_message(&mut self, message: tokio_tungstenite::tungstenite::Message) -> Result<()> {
         match message {
             tokio_tungstenite::tungstenite::Message::Text(text) => {
@@ -264,6 +266,7 @@ impl WebSocketStream {
     }
 
     /// Parse Polymarket WebSocket message format
+    #[allow(dead_code)]
     fn parse_polymarket_message(&self, text: &str) -> Result<StreamMessage> {
         let value: Value = serde_json::from_str(text)
             .map_err(|e| PolyfillError::parse(format!("Failed to parse WebSocket message: {}", e), Some(Box::new(e))))?;
@@ -325,6 +328,7 @@ impl WebSocketStream {
     }
 
     /// Reconnect with exponential backoff
+    #[allow(dead_code)]
     async fn reconnect(&mut self) -> Result<()> {
         let mut delay = self.reconnect_config.base_delay;
         let mut retries = 0;

@@ -173,7 +173,7 @@ impl ClobClient {
 
     /// Test basic connectivity
     pub async fn get_ok(&self) -> bool {
-        match self.http_client.get(&format!("{}/ok", self.base_url)).send().await {
+        match self.http_client.get(format!("{}/ok", self.base_url)).send().await {
             Ok(response) => response.status().is_success(),
             Err(_) => false,
         }
@@ -182,7 +182,7 @@ impl ClobClient {
     /// Get server time
     pub async fn get_server_time(&self) -> Result<u64> {
         let response = self.http_client
-            .get(&format!("{}/time", self.base_url))
+            .get(format!("{}/time", self.base_url))
             .send()
             .await?;
 

@@ -26,7 +26,7 @@ const POLY_PASS_HEADER: &str = "poly_passphrase";
 
 type Headers = HashMap<&'static str, String>;
 
-/// EIP-712 struct for CLOB authentication
+// EIP-712 struct for CLOB authentication
 sol! {
     struct ClobAuth {
         address address;
@@ -36,7 +36,7 @@ sol! {
     }
 }
 
-/// EIP-712 struct for order signing
+// EIP-712 struct for order signing
 sol! {
     struct Order {
         uint256 salt;

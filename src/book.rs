@@ -392,6 +392,7 @@ impl OrderBook {
     /// Otherwise, set the total size at this price level
     /// 
     /// This converts to fixed-point and calls the fast version
+    #[allow(dead_code)]
     fn apply_bid_delta(&mut self, price: Decimal, size: Decimal) {
         // Convert to fixed-point (this should be rare since we use fast path)
         let price_ticks = decimal_to_price(price).unwrap_or(0);
@@ -403,6 +404,7 @@ impl OrderBook {
     /// Same logic as bids - size of 0 means remove the price level
     /// 
     /// This converts to fixed-point and calls the fast version
+    #[allow(dead_code)]
     fn apply_ask_delta(&mut self, price: Decimal, size: Decimal) {
         // Convert to fixed-point (this should be rare since we use fast path)
         let price_ticks = decimal_to_price(price).unwrap_or(0);
@@ -461,7 +463,6 @@ impl OrderBook {
     ///    mostly noise and will never get hit in normal trading
     /// 4. Stale data: Deep levels often contain old orders that haven't been cancelled
     /// 5. Network bandwidth: Less data to send when streaming updates
-
     fn trim_depth(&mut self) {
         // For bids, remove the LOWEST prices (worst bids) if we have too many
         // Example: If best bid is $0.65, we don't care about bids at $0.10

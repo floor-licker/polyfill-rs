@@ -372,7 +372,7 @@ pub fn parse_stream_message(raw: &str) -> Result<StreamMessage> {
                 .as_str()
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|| Utc::now());
+                .unwrap_or_else(Utc::now);
             Ok(StreamMessage::Heartbeat { timestamp })
         }
         _ => Err(PolyfillError::parse(

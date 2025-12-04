@@ -142,8 +142,9 @@ mod benches {
     use chrono::Utc;
     use std::str::FromStr;
 
+    #[allow(dead_code)]
     fn order_book_benchmark(c: &mut criterion::Criterion) {
-        let mut book_manager = OrderBookManager::new(100);
+        let book_manager = OrderBookManager::new(100);
         
         c.bench_function("apply_order_delta", |b| {
             b.iter(|| {
@@ -173,10 +174,10 @@ mod tests {
 
     #[test]
     fn test_client_creation() {
-        let client = ClobClient::new("https://test.example.com");
+        let _client = ClobClient::new("https://test.example.com");
         // Test that the client was created successfully
         // We can't test private fields, but we can verify the client exists
-        assert!(true); // Client creation successful
+        // Client creation successful
     }
 
     #[test]

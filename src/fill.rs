@@ -572,7 +572,7 @@ mod tests {
         
         // Test basic properties exist (we can't access private fields directly)
         // But we can test that the engine was created successfully
-        assert!(true); // Engine creation successful
+        // Engine creation successful
     }
 
     #[test]
