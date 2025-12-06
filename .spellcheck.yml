@@ -1,0 +1,93 @@
+# Spellcheck configuration for cargo-spellcheck
+---
+# Version of the configuration format
+version: "0.1.0"
+
+# Hunspell configuration
+hunspell:
+  # Language to use for spellchecking
+  lang: "en_US"
+  # Search paths for dictionaries
+  search_dirs:
+    - "/usr/share/hunspell"
+    - "/usr/local/share/hunspell"
+  # Additional dictionaries
+  extra_dictionaries: []
+
+# Aspell configuration (alternative to hunspell)
+aspell:
+  lang: "en_US"
+  
+# Files to check
+dev_comments: true
+docs: true
+
+# Transform rules for common abbreviations and technical terms
+transforms:
+  # Transform rules to handle common technical terms
+  - match: '(?i)api'
+    replace: 'API'
+  - match: '(?i)http'
+    replace: 'HTTP'
+  - match: '(?i)json'
+    replace: 'JSON'
+  - match: '(?i)url'
+    replace: 'URL'
+  - match: '(?i)eip'
+    replace: 'EIP'
+
+# Quirks for handling specific patterns
+quirks:
+  # Allow CamelCase identifiers
+  - Regex: '(?i)[A-Z][a-z]+(?:[A-Z][a-z]+)*'
+  # Allow snake_case identifiers  
+  - Regex: '(?i)[a-z]+(?:_[a-z]+)*'
+  # Allow SCREAMING_SNAKE_CASE constants
+  - Regex: '(?i)[A-Z]+(?:_[A-Z]+)*'
+  # Allow hex addresses
+  - Regex: '0x[a-fA-F0-9]+'
+  # Allow common crypto/trading terms
+  - Literal: 'polymarket'
+  - Literal: 'clob'
+  - Literal: 'orderbook'
+  - Literal: 'websocket'
+  - Literal: 'hmac'
+  - Literal: 'sha256'
+  - Literal: 'eip712'
+  - Literal: 'ethereum'
+  - Literal: 'blockchain'
+  - Literal: 'defi'
+  - Literal: 'gtc'
+  - Literal: 'fok'
+  - Literal: 'gtd'
+  - Literal: 'tokio'
+  - Literal: 'serde'
+  - Literal: 'reqwest'
+  - Literal: 'anyhow'
+  - Literal: 'chrono'
+  - Literal: 'uuid'
+  - Literal: 'tungstenite'
+  - Literal: 'rustc'
+  - Literal: 'rustfmt'
+  - Literal: 'clippy'
+  - Literal: 'tarpaulin'
+  - Literal: 'codecov'
+  - Literal: 'github'
+  - Literal: 'crates'
+  - Literal: 'cargo'
+  - Literal: 'polyfill'
+  - Literal: 'libclang'
+  - Literal: 'backtrace'
+  - Literal: 'stderr'
+  - Literal: 'stdout'
+  - Literal: 'stdin'
+
+# Skip certain file types
+skip_files:
+  - "*.lock"
+  - "*.toml"
+  - "target/**"
+  - ".git/**"
+  - "*.json"
+  - "*.yml"
+  - "*.yaml"
