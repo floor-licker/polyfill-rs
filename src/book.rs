@@ -362,7 +362,7 @@ impl OrderBook {
             // }
 
             // AFTER (fast, ~2ns, pure integer):
-            if tick_size_ticks > 0 && delta.price % tick_size_ticks != 0 {
+            if tick_size_ticks > 0 && !delta.price.is_multiple_of(tick_size_ticks) {
                 // Price is not aligned to tick size - reject the update
                 warn!(
                     "Rejecting misaligned price: {} not divisible by tick size {}",
