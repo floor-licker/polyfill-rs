@@ -69,7 +69,7 @@ impl FillEngine {
         book: &crate::book::OrderBook,
     ) -> Result<FillResult> {
         let start_time = Utc::now();
-        
+
         // Validate order
         self.validate_market_order(order)?;
 
@@ -81,7 +81,10 @@ impl FillEngine {
 
         if levels.is_empty() {
             return Ok(FillResult {
-                order_id: order.client_id.clone().unwrap_or_else(|| "market_order".to_string()),
+                order_id: order
+                    .client_id
+                    .clone()
+                    .unwrap_or_else(|| "market_order".to_string()),
                 fills: Vec::new(),
                 total_size: Decimal::ZERO,
                 average_price: Decimal::ZERO,
@@ -105,13 +108,16 @@ impl FillEngine {
 
             let fill_size = std::cmp::min(remaining_size, level.size);
             let fill_cost = fill_size * level.price;
-            
+
             // Calculate fee
             let fee = self.calculate_fee(fill_cost);
-            
+
             let fill = FillEvent {
                 id: uuid::Uuid::new_v4().to_string(),
-                order_id: order.client_id.clone().unwrap_or_else(|| "market_order".to_string()),
+                order_id: order
+                    .client_id
+                    .clone()
+                    .unwrap_or_else(|| "market_order".to_string()),
                 token_id: order.token_id.clone(),
                 side: order.side,
                 price: level.price,
@@ -136,7 +142,10 @@ impl FillEngine {
                     slippage, self.max_slippage_pct
                 );
                 return Ok(FillResult {
-                    order_id: order.client_id.clone().unwrap_or_else(|| "market_order".to_string()),
+                    order_id: order
+                        .client_id
+                        .clone()
+                        .unwrap_or_else(|| "market_order".to_string()),
                     fills: Vec::new(),
                     total_size: Decimal::ZERO,
                     average_price: Decimal::ZERO,
@@ -166,7 +175,10 @@ impl FillEngine {
         let total_fees: Decimal = fills.iter().map(|f| f.fee).sum();
 
         let result = FillResult {
-            order_id: order.client_id.clone().unwrap_or_else(|| "market_order".to_string()),
+            order_id: order
+                .client_id
+                .clone()
+                .unwrap_or_else(|| "market_order".to_string()),
             fills,
             total_size,
             average_price,
@@ -178,7 +190,8 @@ impl FillEngine {
 
         // Store fills for tracking
         if !result.fills.is_empty() {
-            self.fills.insert(result.order_id.clone(), result.fills.clone());
+            self.fills
+                .insert(result.order_id.clone(), result.fills.clone());
         }
 
         info!(
@@ -211,19 +224,22 @@ impl FillEngine {
                 } else {
                     false
                 }
-            }
+            },
             Side::SELL => {
                 if let Some(best_bid) = book.best_bid() {
                     order.price <= best_bid.price
                 } else {
                     false
                 }
-            }
+            },
         };
 
         if !can_fill {
             return Ok(FillResult {
-                order_id: order.client_id.clone().unwrap_or_else(|| "limit_order".to_string()),
+                order_id: order
+                    .client_id
+                    .clone()
+                    .unwrap_or_else(|| "limit_order".to_string()),
                 fills: Vec::new(),
                 total_size: Decimal::ZERO,
                 average_price: Decimal::ZERO,
@@ -237,7 +253,10 @@ impl FillEngine {
         // Simulate immediate fill
         let fill = FillEvent {
             id: uuid::Uuid::new_v4().to_string(),
-            order_id: order.client_id.clone().unwrap_or_else(|| "limit_order".to_string()),
+            order_id: order
+                .client_id
+                .clone()
+                .unwrap_or_else(|| "limit_order".to_string()),
             token_id: order.token_id.clone(),
             side: order.side,
             price: order.price,
@@ -249,7 +268,10 @@ impl FillEngine {
         };
 
         let result = FillResult {
-            order_id: order.client_id.clone().unwrap_or_else(|| "limit_order".to_string()),
+            order_id: order
+                .client_id
+                .clone()
+                .unwrap_or_else(|| "limit_order".to_string()),
             fills: vec![fill],
             total_size: order.size,
             average_price: order.price,
@@ -260,7 +282,8 @@ impl FillEngine {
         };
 
         // Store fills for tracking
-        self.fills.insert(result.order_id.clone(), result.fills.clone());
+        self.fills
+            .insert(result.order_id.clone(), result.fills.clone());
 
         info!(
             "Limit order executed: {} {} @ {}",
@@ -273,7 +296,11 @@ impl FillEngine {
     }
 
     /// Calculate slippage for a market order
-    fn calculate_slippage(&self, order: &MarketOrderRequest, fills: &[FillEvent]) -> Option<Decimal> {
+    fn calculate_slippage(
+        &self,
+        order: &MarketOrderRequest,
+        fills: &[FillEvent],
+    ) -> Option<Decimal> {
         if fills.is_empty() {
             return None;
         }
@@ -284,11 +311,15 @@ impl FillEngine {
 
         // Get reference price (best bid/ask)
         let reference_price = match order.side {
-            Side::BUY => fills.first()?.price, // Best ask
+            Side::BUY => fills.first()?.price,  // Best ask
             Side::SELL => fills.first()?.price, // Best bid
         };
 
-        Some(math::calculate_slippage(reference_price, average_price, order.side))
+        Some(math::calculate_slippage(
+            reference_price,
+            average_price,
+            order.side,
+        ))
     }
 
     /// Calculate fee for a trade
@@ -307,7 +338,10 @@ impl FillEngine {
 
         if order.amount < self.min_fill_size {
             return Err(PolyfillError::order(
-                format!("Order size {} below minimum {}", order.amount, self.min_fill_size),
+                format!(
+                    "Order size {} below minimum {}",
+                    order.amount, self.min_fill_size
+                ),
                 crate::errors::OrderErrorKind::SizeConstraint,
             ));
         }
@@ -333,7 +367,10 @@ impl FillEngine {
 
         if order.size < self.min_fill_size {
             return Err(PolyfillError::order(
-                format!("Order size {} below minimum {}", order.size, self.min_fill_size),
+                format!(
+                    "Order size {} below minimum {}",
+                    order.size, self.min_fill_size
+                ),
                 crate::errors::OrderErrorKind::SizeConstraint,
             ));
         }
@@ -424,7 +461,12 @@ impl FillProcessor {
             self.cleanup_old_pending();
         }
 
-        debug!("Processed fill: {} {} @ {}", fill.size, fill.side.as_str(), fill.price);
+        debug!(
+            "Processed fill: {} {} @ {}",
+            fill.size,
+            fill.side.as_str(),
+            fill.price
+        );
 
         Ok(())
     }
@@ -517,7 +559,7 @@ mod tests {
     #[test]
     fn test_market_order_validation() {
         let engine = FillEngine::new(dec!(1), dec!(5), 10);
-        
+
         let valid_order = MarketOrderRequest {
             token_id: "test".to_string(),
             side: Side::BUY,
@@ -547,7 +589,7 @@ mod tests {
     #[test]
     fn test_fill_processor() {
         let mut processor = FillProcessor::new(100);
-        
+
         let fill = FillEvent {
             id: "fill1".to_string(),
             order_id: "order1".to_string(),
@@ -569,7 +611,7 @@ mod tests {
     fn test_fill_engine_advanced_creation() {
         // Test that we can create a fill engine with parameters
         let _engine = FillEngine::new(dec!(1.0), dec!(0.05), 50); // min_fill_size, max_slippage, fee_rate_bps
-        
+
         // Test basic properties exist (we can't access private fields directly)
         // But we can test that the engine was created successfully
         // Engine creation successful
@@ -578,7 +620,7 @@ mod tests {
     #[test]
     fn test_fill_processor_basic_operations() {
         let mut processor = FillProcessor::new(100); // max_pending
-        
+
         // Test that we can create a fill event and process it
         let fill_event = FillEvent {
             id: "fill_1".to_string(),
@@ -592,11 +634,11 @@ mod tests {
             taker_address: alloy_primitives::Address::ZERO,
             fee: dec!(0.01),
         };
-        
+
         let result = processor.process_fill(fill_event);
         assert!(result.is_ok());
-        
+
         // Check that the fill was added to pending
         assert_eq!(processor.pending_fills.len(), 1);
     }
-} 
+}

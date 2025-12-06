@@ -4,9 +4,9 @@
 //! for the Polymarket CLOB, including EIP-712 signature generation.
 
 use crate::auth::sign_order_message;
-use crate::errors::{PolyfillError, Result};
 use crate::client::OrderArgs;
-use crate::types::{ExtraOrderArgs, MarketOrderArgs, OrderOptions, SignedOrderRequest, Side};
+use crate::errors::{PolyfillError, Result};
+use crate::types::{ExtraOrderArgs, MarketOrderArgs, OrderOptions, Side, SignedOrderRequest};
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use rand::Rng;
@@ -41,7 +41,6 @@ pub struct ContractConfig {
     pub collateral: String,
     pub conditional_tokens: String,
 }
-
 
 /// Order builder for creating and signing orders
 pub struct OrderBuilder {
@@ -177,7 +176,7 @@ impl OrderBuilder {
                     decimal_to_token_u32(raw_maker_amt),
                     decimal_to_token_u32(raw_taker_amt),
                 )
-            }
+            },
             Side::SELL => {
                 let raw_maker_amt = size.round_dp_with_strategy(round_config.size, ToZero);
                 let raw_taker_amt = raw_maker_amt * raw_price;
@@ -187,7 +186,7 @@ impl OrderBuilder {
                     decimal_to_token_u32(raw_maker_amt),
                     decimal_to_token_u32(raw_taker_amt),
                 )
-            }
+            },
         }
     }
 
@@ -224,9 +223,12 @@ impl OrderBuilder {
                 return Ok(level.price);
             }
         }
-        
+
         Err(PolyfillError::order(
-            format!("Not enough liquidity to create market order with amount {}", amount_to_match),
+            format!(
+                "Not enough liquidity to create market order with amount {}",
+                amount_to_match
+            ),
             crate::errors::OrderErrorKind::InsufficientBalance,
         ))
     }
@@ -240,20 +242,20 @@ impl OrderBuilder {
         extras: &ExtraOrderArgs,
         options: &OrderOptions,
     ) -> Result<SignedOrderRequest> {
-        let tick_size = options.tick_size
+        let tick_size = options
+            .tick_size
             .ok_or_else(|| PolyfillError::validation("Cannot create order without tick size"))?;
-        
-        let (maker_amount, taker_amount) = self.get_market_order_amounts(
-            order_args.amount,
-            price,
-            &ROUNDING_CONFIG[&tick_size],
-        );
 
-        let neg_risk = options.neg_risk
+        let (maker_amount, taker_amount) =
+            self.get_market_order_amounts(order_args.amount, price, &ROUNDING_CONFIG[&tick_size]);
+
+        let neg_risk = options
+            .neg_risk
             .ok_or_else(|| PolyfillError::validation("Cannot create order without neg_risk"))?;
 
-        let contract_config = get_contract_config(chain_id, neg_risk)
-            .ok_or_else(|| PolyfillError::config("No contract found with given chain_id and neg_risk"))?;
+        let contract_config = get_contract_config(chain_id, neg_risk).ok_or_else(|| {
+            PolyfillError::config("No contract found with given chain_id and neg_risk")
+        })?;
 
         let exchange_address = Address::from_str(&contract_config.exchange)
             .map_err(|e| PolyfillError::config(format!("Invalid exchange address: {}", e)))?;
@@ -279,9 +281,10 @@ impl OrderBuilder {
         extras: &ExtraOrderArgs,
         options: &OrderOptions,
     ) -> Result<SignedOrderRequest> {
-        let tick_size = options.tick_size
+        let tick_size = options
+            .tick_size
             .ok_or_else(|| PolyfillError::validation("Cannot create order without tick size"))?;
-        
+
         let (maker_amount, taker_amount) = self.get_order_amounts(
             order_args.side,
             order_args.size,
@@ -289,11 +292,13 @@ impl OrderBuilder {
             &ROUNDING_CONFIG[&tick_size],
         );
 
-        let neg_risk = options.neg_risk
+        let neg_risk = options
+            .neg_risk
             .ok_or_else(|| PolyfillError::validation("Cannot create order without neg_risk"))?;
 
-        let contract_config = get_contract_config(chain_id, neg_risk)
-            .ok_or_else(|| PolyfillError::config("No contract found with given chain_id and neg_risk"))?;
+        let contract_config = get_contract_config(chain_id, neg_risk).ok_or_else(|| {
+            PolyfillError::config("No contract found with given chain_id and neg_risk")
+        })?;
 
         let exchange_address = Address::from_str(&contract_config.exchange)
             .map_err(|e| PolyfillError::config(format!("Invalid exchange address: {}", e)))?;
@@ -387,11 +392,11 @@ mod tests {
         // Test zero
         let result = decimal_to_token_u32(Decimal::ZERO);
         assert_eq!(result, 0);
-        
+
         // Test small decimal
         let result = decimal_to_token_u32(Decimal::from_str("0.000001").unwrap());
         assert_eq!(result, 1);
-        
+
         // Test large number
         let result = decimal_to_token_u32(Decimal::from_str("1000.0").unwrap());
         assert_eq!(result, 1_000_000_000);
@@ -402,11 +407,11 @@ mod tests {
         // Test Polygon mainnet
         let config = get_contract_config(137, false);
         assert!(config.is_some());
-        
+
         // Test with neg risk
         let config_neg = get_contract_config(137, true);
         assert!(config_neg.is_some());
-        
+
         // Test unsupported chain
         let config_unsupported = get_contract_config(999, false);
         assert!(config_unsupported.is_none());
@@ -415,7 +420,7 @@ mod tests {
     #[test]
     fn test_seed_generation_uniqueness() {
         let mut seeds = std::collections::HashSet::new();
-        
+
         // Generate 1000 seeds and ensure they're all unique
         for _ in 0..1000 {
             let seed = generate_seed();

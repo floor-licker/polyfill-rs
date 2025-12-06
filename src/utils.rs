@@ -4,6 +4,7 @@
 //! operations in trading environments.
 
 use crate::errors::{PolyfillError, Result};
+use ::url::Url;
 use alloy_primitives::{Address, U256};
 use base64::{engine::general_purpose::URL_SAFE, Engine};
 use chrono::{DateTime, Utc};
@@ -13,7 +14,6 @@ use serde::Serialize;
 use sha2::Sha256;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use ::url::Url;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -66,8 +66,7 @@ pub mod time {
     /// Convert Unix timestamp to DateTime
     #[inline]
     pub fn secs_to_datetime(timestamp: u64) -> DateTime<Utc> {
-        DateTime::from_timestamp(timestamp as i64, 0)
-            .unwrap_or_else(Utc::now)
+        DateTime::from_timestamp(timestamp as i64, 0).unwrap_or_else(Utc::now)
     }
 }
 
@@ -95,12 +94,12 @@ pub mod crypto {
             Some(data) => {
                 let json = serde_json::to_string(data)?;
                 format!("{timestamp}{method}{path}{json}")
-            }
+            },
         };
 
         let mut mac = HmacSha256::new_from_slice(&decoded)
             .map_err(|e| PolyfillError::internal("HMAC initialization failed", e))?;
-        
+
         mac.update(message.as_bytes());
         let result = mac.finalize();
 
@@ -127,13 +126,13 @@ pub mod crypto {
 /// Price and size calculation utilities
 pub mod math {
     use super::*;
-    use rust_decimal::prelude::*;
     use crate::types::{Price, Qty, SCALE_FACTOR};
+    use rust_decimal::prelude::*;
 
     // ========================================================================
     // LEGACY DECIMAL FUNCTIONS (for backward compatibility)
     // ========================================================================
-    // 
+    //
     // These are kept for API compatibility, but internally we should use
     // the fixed-point versions below for better performance.
 
@@ -185,10 +184,10 @@ pub mod math {
     // That's a 10-50x speedup on the critical path!
 
     /// Round price to tick size (FAST VERSION)
-    /// 
+    ///
     /// This is much faster than the Decimal version because it's just
     /// integer division and multiplication.
-    /// 
+    ///
     /// Example: round_to_tick_fast(6543, 10) = 6540 (rounds to nearest 10 ticks)
     #[inline]
     pub fn round_to_tick_fast(price_ticks: Price, tick_size_ticks: Price) -> Price {
@@ -202,10 +201,10 @@ pub mod math {
     }
 
     /// Calculate notional value (price * size) (FAST VERSION)
-    /// 
+    ///
     /// Returns the result in the same scale as our quantities.
     /// This avoids the expensive Decimal multiplication.
-    /// 
+    ///
     /// Example: notional_fast(6543, 1000000) = 6543000000 (representing $654.30)
     #[inline]
     pub fn notional_fast(price_ticks: Price, size_units: Qty) -> i64 {
@@ -218,47 +217,47 @@ pub mod math {
     }
 
     /// Calculate spread as percentage (FAST VERSION)
-    /// 
+    ///
     /// Returns the spread as a percentage in basis points (1/100th of a percent).
     /// This avoids floating-point arithmetic entirely.
-    /// 
+    ///
     /// Example: spread_pct_fast(6500, 6700) = Some(307) (representing 3.07%)
     #[inline]
     pub fn spread_pct_fast(bid_ticks: Price, ask_ticks: Price) -> Option<u32> {
         if bid_ticks == 0 || ask_ticks <= bid_ticks {
             return None;
         }
-        
+
         let spread = ask_ticks - bid_ticks;
         // Calculate percentage in basis points (multiply by 10000 for 4 decimal places)
         // We use u64 for intermediate calculation to avoid overflow
         let spread_bps = ((spread as u64) * 10000) / (bid_ticks as u64);
-        
+
         // Convert back to u32 (should always fit since spreads are typically small)
         Some(spread_bps as u32)
     }
 
     /// Calculate mid price (FAST VERSION)
-    /// 
+    ///
     /// Returns the midpoint between bid and ask in ticks.
     /// Much faster than the Decimal version.
-    /// 
+    ///
     /// Example: mid_price_fast(6500, 6700) = Some(6600)
     #[inline]
     pub fn mid_price_fast(bid_ticks: Price, ask_ticks: Price) -> Option<Price> {
         if bid_ticks == 0 || ask_ticks == 0 || ask_ticks <= bid_ticks {
             return None;
         }
-        
+
         // Use u64 to avoid overflow in addition
         let sum = (bid_ticks as u64) + (ask_ticks as u64);
         Some((sum / 2) as Price)
     }
 
     /// Calculate spread in ticks (FAST VERSION)
-    /// 
+    ///
     /// Simple subtraction - much faster than Decimal operations.
-    /// 
+    ///
     /// Example: spread_fast(6500, 6700) = Some(200) (representing $0.02 spread)
     #[inline]
     pub fn spread_fast(bid_ticks: Price, ask_ticks: Price) -> Option<Price> {
@@ -269,9 +268,9 @@ pub mod math {
     }
 
     /// Check if price is within valid range (FAST VERSION)
-    /// 
+    ///
     /// Much faster than converting to Decimal and back.
-    /// 
+    ///
     /// Example: is_valid_price_fast(6543, 1, 10000) = true
     #[inline]
     pub fn is_valid_price_fast(price_ticks: Price, min_tick: Price, max_tick: Price) -> bool {
@@ -310,14 +309,14 @@ pub mod math {
                 } else {
                     Decimal::ZERO
                 }
-            }
+            },
             crate::types::Side::SELL => {
                 if executed_price < target_price {
                     (target_price - executed_price) / target_price
                 } else {
                     Decimal::ZERO
                 }
-            }
+            },
         }
     }
 }
@@ -351,10 +350,7 @@ pub mod retry {
     }
 
     /// Retry a future with exponential backoff
-    pub async fn with_retry<F, Fut, T>(
-        config: &RetryConfig,
-        mut operation: F,
-    ) -> Result<T>
+    pub async fn with_retry<F, Fut, T>(config: &RetryConfig, mut operation: F) -> Result<T>
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = Result<T>>,
@@ -367,7 +363,7 @@ pub mod retry {
                 Ok(result) => return Ok(result),
                 Err(err) => {
                     last_error = Some(err.clone());
-                    
+
                     if !err.is_retryable() || attempt == config.max_attempts - 1 {
                         return Err(err);
                     }
@@ -385,14 +381,21 @@ pub mod retry {
 
                     // Exponential backoff
                     delay = std::cmp::min(
-                        Duration::from_nanos((delay.as_nanos() as f64 * config.backoff_factor) as u64),
+                        Duration::from_nanos(
+                            (delay.as_nanos() as f64 * config.backoff_factor) as u64,
+                        ),
                         config.max_delay,
                     );
-                }
+                },
             }
         }
 
-        Err(last_error.unwrap_or_else(|| PolyfillError::internal("Retry loop failed", std::io::Error::other("No error captured"))))
+        Err(last_error.unwrap_or_else(|| {
+            PolyfillError::internal(
+                "Retry loop failed",
+                std::io::Error::other("No error captured"),
+            )
+        }))
     }
 }
 
@@ -440,10 +443,7 @@ pub mod url {
     }
 
     /// Add query parameters to URL
-    pub fn add_query_params(
-        mut url: url::Url,
-        params: &[(&str, &str)],
-    ) -> url::Url {
+    pub fn add_query_params(mut url: url::Url, params: &[(&str, &str)]) -> url::Url {
         {
             let mut query_pairs = url.query_pairs_mut();
             for (key, value) in params {
@@ -481,7 +481,7 @@ pub mod rate_limit {
         /// Try to consume a token, return true if successful
         pub fn try_consume(&self) -> bool {
             self.refill();
-            
+
             let mut tokens = self.tokens.lock().unwrap();
             if *tokens > 0 {
                 *tokens -= 1;
@@ -495,7 +495,7 @@ pub mod rate_limit {
             let now = SystemTime::now();
             let mut last_refill = self.last_refill.lock().unwrap();
             let elapsed = now.duration_since(*last_refill).unwrap_or_default();
-            
+
             if elapsed >= self.refill_rate {
                 let tokens_to_add = elapsed.as_nanos() / self.refill_rate.as_nanos();
                 let mut tokens = self.tokens.lock().unwrap();
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_round_to_tick() {
         use math::round_to_tick;
-        
+
         let price = Decimal::from_str("0.567").unwrap();
         let tick = Decimal::from_str("0.01").unwrap();
         let rounded = round_to_tick(price, tick);
@@ -523,7 +523,7 @@ mod tests {
     #[test]
     fn test_mid_price() {
         use math::mid_price;
-        
+
         let bid = Decimal::from_str("0.50").unwrap();
         let ask = Decimal::from_str("0.52").unwrap();
         let mid = mid_price(bid, ask).unwrap();
@@ -533,11 +533,11 @@ mod tests {
     #[test]
     fn test_token_units_conversion() {
         use math::{decimal_to_token_units, token_units_to_decimal};
-        
+
         let amount = Decimal::from_str("1.234567").unwrap();
         let units = decimal_to_token_units(amount);
         assert_eq!(units, 1_234_567);
-        
+
         let back = token_units_to_decimal(units);
         assert_eq!(back, amount);
     }
@@ -545,11 +545,11 @@ mod tests {
     #[test]
     fn test_address_validation() {
         use address::parse_address;
-        
+
         let valid = "0x1234567890123456789012345678901234567890";
         assert!(parse_address(valid).is_ok());
-        
+
         let invalid = "invalid_address";
         assert!(parse_address(invalid).is_err());
     }
-} 
+}

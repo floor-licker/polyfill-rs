@@ -54,7 +54,6 @@ sol! {
     }
 }
 
-
 /// Get current Unix timestamp in seconds
 pub fn get_current_unix_time_secs() -> u64 {
     SystemTime::now()
@@ -134,8 +133,10 @@ where
         method.to_uppercase(),
         request_path,
         match body {
-            Some(b) => serde_json::to_string(b)
-                .map_err(|e| PolyfillError::parse(format!("Failed to serialize body: {}", e), None))?,
+            Some(b) => serde_json::to_string(b).map_err(|e| PolyfillError::parse(
+                format!("Failed to serialize body: {}", e),
+                None
+            ))?,
             None => String::new(),
         }
     );
@@ -174,7 +175,8 @@ where
     let address = encode_prefixed(signer.address().as_slice());
     let timestamp = get_current_unix_time_secs();
 
-    let hmac_signature = build_hmac_signature(&api_creds.secret, timestamp, method, req_path, body)?;
+    let hmac_signature =
+        build_hmac_signature(&api_creds.secret, timestamp, method, req_path, body)?;
 
     Ok(HashMap::from([
         (POLY_ADDR_HEADER, address),
@@ -197,26 +199,15 @@ mod tests {
 
     #[test]
     fn test_hmac_signature() {
-        let result = build_hmac_signature::<String>(
-            "test_secret",
-            1234567890,
-            "GET",
-            "/test",
-            None,
-        );
+        let result =
+            build_hmac_signature::<String>("test_secret", 1234567890, "GET", "/test", None);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_hmac_signature_with_body() {
         let body = r#"{"test": "data"}"#;
-        let result = build_hmac_signature(
-            "test_secret",
-            1234567890,
-            "POST",
-            "/orders",
-            Some(body),
-        );
+        let result = build_hmac_signature("test_secret", 1234567890, "POST", "/orders", Some(body));
         assert!(result.is_ok());
         let signature = result.unwrap();
         assert!(!signature.is_empty());
@@ -228,10 +219,10 @@ mod tests {
         let timestamp = 1234567890;
         let method = "GET";
         let path = "/test";
-        
+
         let sig1 = build_hmac_signature::<String>(secret, timestamp, method, path, None).unwrap();
         let sig2 = build_hmac_signature::<String>(secret, timestamp, method, path, None).unwrap();
-        
+
         // Same inputs should produce same signature
         assert_eq!(sig1, sig2);
     }
@@ -240,11 +231,13 @@ mod tests {
     fn test_hmac_signature_different_inputs() {
         let secret = "test_secret";
         let timestamp = 1234567890;
-        
+
         let sig1 = build_hmac_signature::<String>(secret, timestamp, "GET", "/test", None).unwrap();
-        let sig2 = build_hmac_signature::<String>(secret, timestamp, "POST", "/test", None).unwrap();
-        let sig3 = build_hmac_signature::<String>(secret, timestamp, "GET", "/other", None).unwrap();
-        
+        let sig2 =
+            build_hmac_signature::<String>(secret, timestamp, "POST", "/test", None).unwrap();
+        let sig3 =
+            build_hmac_signature::<String>(secret, timestamp, "GET", "/other", None).unwrap();
+
         // Different inputs should produce different signatures
         assert_ne!(sig1, sig2);
         assert_ne!(sig1, sig3);
@@ -253,15 +246,15 @@ mod tests {
 
     #[test]
     fn test_create_l1_headers() {
-        use alloy_signer_local::PrivateKeySigner;
         use alloy_primitives::U256;
-        
+        use alloy_signer_local::PrivateKeySigner;
+
         let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
         let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
-        
+
         let result = create_l1_headers(&signer, Some(U256::from(12345)));
         assert!(result.is_ok());
-        
+
         let headers = result.unwrap();
         assert!(headers.contains_key("poly_address"));
         assert!(headers.contains_key("poly_signature"));
@@ -271,69 +264,66 @@ mod tests {
 
     #[test]
     fn test_create_l1_headers_different_nonces() {
-        use alloy_signer_local::PrivateKeySigner;
         use alloy_primitives::U256;
-        
+        use alloy_signer_local::PrivateKeySigner;
+
         let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
         let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
-        
+
         let headers_1 = create_l1_headers(&signer, Some(U256::from(12345))).unwrap();
         let headers_2 = create_l1_headers(&signer, Some(U256::from(54321))).unwrap();
-        
+
         // Different nonces should produce different signatures
         assert_ne!(
             headers_1.get("poly_signature"),
             headers_2.get("poly_signature")
         );
-        
+
         // But same address
-        assert_eq!(
-            headers_1.get("poly_address"),
-            headers_2.get("poly_address")
-        );
+        assert_eq!(headers_1.get("poly_address"), headers_2.get("poly_address"));
     }
 
     #[test]
     fn test_create_l2_headers() {
         use alloy_signer_local::PrivateKeySigner;
-        
+
         let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
         let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
-        
+
         let api_creds = ApiCredentials {
             api_key: "test_key".to_string(),
             secret: "test_secret".to_string(),
             passphrase: "test_passphrase".to_string(),
         };
-        
+
         let result = create_l2_headers::<String>(&signer, &api_creds, "/test", "GET", None);
         assert!(result.is_ok());
-        
+
         let headers = result.unwrap();
         assert!(headers.contains_key("poly_api_key"));
         assert!(headers.contains_key("poly_signature"));
         assert!(headers.contains_key("poly_timestamp"));
         assert!(headers.contains_key("poly_passphrase"));
-        
+
         assert_eq!(headers.get("poly_api_key").unwrap(), "test_key");
         assert_eq!(headers.get("poly_passphrase").unwrap(), "test_passphrase");
     }
 
     #[test]
     fn test_eip712_signature_format() {
-        use alloy_signer_local::PrivateKeySigner;
         use alloy_primitives::U256;
-        
+        use alloy_signer_local::PrivateKeySigner;
+
         let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
         let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
-        
+
         // Test that we can create and sign EIP-712 messages
         let result = create_l1_headers(&signer, Some(U256::from(12345)));
         assert!(result.is_ok());
-        
+
         let headers = result.unwrap();
         let signature = headers.get("poly_signature").unwrap();
-        
+
         // EIP-712 signatures should be hex strings of specific length
         assert!(signature.starts_with("0x"));
         assert_eq!(signature.len(), 132); // 0x + 130 hex chars = 132 total
@@ -344,10 +334,10 @@ mod tests {
         let ts1 = get_current_unix_time_secs();
         std::thread::sleep(std::time::Duration::from_millis(1));
         let ts2 = get_current_unix_time_secs();
-        
+
         // Timestamps should be increasing
         assert!(ts2 >= ts1);
-        
+
         // Should be reasonable current time (after 2020, before 2030)
         assert!(ts1 > 1_600_000_000);
         assert!(ts1 < 1_900_000_000);

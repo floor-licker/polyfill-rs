@@ -4,15 +4,15 @@
 //! for clear error handling in trading environments where fast error recovery
 //! is critical.
 
-use thiserror::Error;
 use std::time::Duration;
+use thiserror::Error;
 
 /// Main error type for the Polymarket client
 #[derive(Error, Debug)]
 pub enum PolyfillError {
     /// Network-related errors (retryable)
     #[error("Network error: {message}")]
-    Network { 
+    Network {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -20,7 +20,7 @@ pub enum PolyfillError {
 
     /// API errors from Polymarket
     #[error("API error ({status}): {message}")]
-    Api { 
+    Api {
         status: u16,
         message: String,
         error_code: Option<String>,
@@ -28,34 +28,32 @@ pub enum PolyfillError {
 
     /// Authentication/authorization errors
     #[error("Auth error: {message}")]
-    Auth { 
+    Auth {
         message: String,
         kind: AuthErrorKind,
     },
 
     /// Order-related errors
     #[error("Order error: {message}")]
-    Order { 
+    Order {
         message: String,
         kind: OrderErrorKind,
     },
 
     /// Market data errors
     #[error("Market data error: {message}")]
-    MarketData { 
+    MarketData {
         message: String,
         kind: MarketDataErrorKind,
     },
 
     /// Configuration errors
     #[error("Config error: {message}")]
-    Config { 
-        message: String,
-    },
+    Config { message: String },
 
     /// Parsing/serialization errors
     #[error("Parse error: {message}")]
-    Parse { 
+    Parse {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -63,35 +61,35 @@ pub enum PolyfillError {
 
     /// Timeout errors
     #[error("Timeout error: operation timed out after {duration:?}")]
-    Timeout { 
+    Timeout {
         duration: Duration,
         operation: String,
     },
 
     /// Rate limiting errors
     #[error("Rate limit exceeded: {message}")]
-    RateLimit { 
+    RateLimit {
         message: String,
         retry_after: Option<Duration>,
     },
 
     /// WebSocket/streaming errors
     #[error("Stream error: {message}")]
-    Stream { 
+    Stream {
         message: String,
         kind: StreamErrorKind,
     },
 
     /// Validation errors
     #[error("Validation error: {message}")]
-    Validation { 
+    Validation {
         message: String,
         field: Option<String>,
     },
 
     /// Internal errors (bugs)
     #[error("Internal error: {message}")]
-    Internal { 
+    Internal {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -155,7 +153,10 @@ impl PolyfillError {
             PolyfillError::Timeout { .. } => true,
             PolyfillError::RateLimit { .. } => true,
             PolyfillError::Stream { kind, .. } => {
-                matches!(kind, StreamErrorKind::ConnectionLost | StreamErrorKind::Reconnecting)
+                matches!(
+                    kind,
+                    StreamErrorKind::ConnectionLost | StreamErrorKind::Reconnecting
+                )
             },
             _ => false,
         }
@@ -267,7 +268,10 @@ impl PolyfillError {
         }
     }
 
-    pub fn parse(message: impl Into<String>, source: Option<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+    pub fn parse(
+        message: impl Into<String>,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
         Self::Parse {
             message: message.into(),
             source,
@@ -355,7 +359,7 @@ impl From<url::ParseError> for PolyfillError {
 impl From<tokio_tungstenite::tungstenite::Error> for PolyfillError {
     fn from(err: tokio_tungstenite::tungstenite::Error) -> Self {
         use tokio_tungstenite::tungstenite::Error as WsError;
-        
+
         let kind = match &err {
             WsError::ConnectionClosed | WsError::AlreadyClosed => StreamErrorKind::ConnectionLost,
             WsError::Io(_) => StreamErrorKind::ConnectionFailed,
@@ -371,81 +375,67 @@ impl From<tokio_tungstenite::tungstenite::Error> for PolyfillError {
 impl Clone for PolyfillError {
     fn clone(&self) -> Self {
         match self {
-            PolyfillError::Network { message, source: _ } => {
-                PolyfillError::Network { 
-                    message: message.clone(), 
-                    source: None 
-                }
-            }
-            PolyfillError::Api { status, message, error_code } => {
-                PolyfillError::Api { 
-                    status: *status, 
-                    message: message.clone(), 
-                    error_code: error_code.clone() 
-                }
-            }
-            PolyfillError::Auth { message, kind } => {
-                PolyfillError::Auth { 
-                    message: message.clone(), 
-                    kind: kind.clone() 
-                }
-            }
-            PolyfillError::Order { message, kind } => {
-                PolyfillError::Order { 
-                    message: message.clone(), 
-                    kind: kind.clone() 
-                }
-            }
-            PolyfillError::MarketData { message, kind } => {
-                PolyfillError::MarketData { 
-                    message: message.clone(), 
-                    kind: kind.clone() 
-                }
-            }
-            PolyfillError::Config { message } => {
-                PolyfillError::Config { 
-                    message: message.clone() 
-                }
-            }
-            PolyfillError::Parse { message, source: _ } => {
-                PolyfillError::Parse { 
-                    message: message.clone(), 
-                    source: None 
-                }
-            }
-            PolyfillError::Timeout { duration, operation } => {
-                PolyfillError::Timeout { 
-                    duration: *duration, 
-                    operation: operation.clone() 
-                }
-            }
-            PolyfillError::RateLimit { message, retry_after } => {
-                PolyfillError::RateLimit { 
-                    message: message.clone(), 
-                    retry_after: *retry_after 
-                }
-            }
-            PolyfillError::Stream { message, kind } => {
-                PolyfillError::Stream { 
-                    message: message.clone(), 
-                    kind: kind.clone() 
-                }
-            }
-            PolyfillError::Validation { message, field } => {
-                PolyfillError::Validation { 
-                    message: message.clone(), 
-                    field: field.clone() 
-                }
-            }
-            PolyfillError::Internal { message, source: _ } => {
-                PolyfillError::Internal { 
-                    message: message.clone(), 
-                    source: None 
-                }
-            }
+            PolyfillError::Network { message, source: _ } => PolyfillError::Network {
+                message: message.clone(),
+                source: None,
+            },
+            PolyfillError::Api {
+                status,
+                message,
+                error_code,
+            } => PolyfillError::Api {
+                status: *status,
+                message: message.clone(),
+                error_code: error_code.clone(),
+            },
+            PolyfillError::Auth { message, kind } => PolyfillError::Auth {
+                message: message.clone(),
+                kind: kind.clone(),
+            },
+            PolyfillError::Order { message, kind } => PolyfillError::Order {
+                message: message.clone(),
+                kind: kind.clone(),
+            },
+            PolyfillError::MarketData { message, kind } => PolyfillError::MarketData {
+                message: message.clone(),
+                kind: kind.clone(),
+            },
+            PolyfillError::Config { message } => PolyfillError::Config {
+                message: message.clone(),
+            },
+            PolyfillError::Parse { message, source: _ } => PolyfillError::Parse {
+                message: message.clone(),
+                source: None,
+            },
+            PolyfillError::Timeout {
+                duration,
+                operation,
+            } => PolyfillError::Timeout {
+                duration: *duration,
+                operation: operation.clone(),
+            },
+            PolyfillError::RateLimit {
+                message,
+                retry_after,
+            } => PolyfillError::RateLimit {
+                message: message.clone(),
+                retry_after: *retry_after,
+            },
+            PolyfillError::Stream { message, kind } => PolyfillError::Stream {
+                message: message.clone(),
+                kind: kind.clone(),
+            },
+            PolyfillError::Validation { message, field } => PolyfillError::Validation {
+                message: message.clone(),
+                field: field.clone(),
+            },
+            PolyfillError::Internal { message, source: _ } => PolyfillError::Internal {
+                message: message.clone(),
+                source: None,
+            },
         }
     }
 }
 
 /// Result type alias for convenience
-pub type Result<T> = std::result::Result<T, PolyfillError>; 
+pub type Result<T> = std::result::Result<T, PolyfillError>;

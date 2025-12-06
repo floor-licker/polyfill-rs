@@ -13,9 +13,9 @@ use polyfill_rs::{
     types::*,
     utils::time,
 };
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use rust_decimal::prelude::ToPrimitive;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -92,7 +92,7 @@ impl SnipeStrategy {
             fill_engine: FillEngine::new(
                 min_order_size,
                 dec!(2.0), // 2% max slippage
-                5,          // 5 bps fee rate
+                5,         // 5 bps fee rate
             ),
             stats: SnipeStats::default(),
         }
@@ -105,16 +105,16 @@ impl SnipeStrategy {
                 if data.token_id == self.token_id {
                     self.process_book_update(data)?;
                 }
-            }
+            },
             StreamMessage::Trade { data } => {
                 if data.token_id == self.token_id {
                     self.process_trade(data)?;
                 }
-            }
+            },
             StreamMessage::Heartbeat { timestamp: _ } => {
                 self.check_stale_quotes()?;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         Ok(())
     }
@@ -123,13 +123,13 @@ impl SnipeStrategy {
     fn process_book_update(&mut self, delta: OrderDelta) -> Result<()> {
         // Ensure book exists
         self.book_manager.get_or_create_book(&self.token_id)?;
-        
+
         // Update local order book
         self.book_manager.apply_delta(delta.clone())?;
 
         // Get current book state
         let book = self.book_manager.get_book(&self.token_id)?;
-        
+
         // Update best prices
         if let Some(best_bid) = book.bids.first() {
             self.last_best_bid = Some(best_bid.price);
@@ -137,7 +137,7 @@ impl SnipeStrategy {
         if let Some(best_ask) = book.asks.first() {
             self.last_best_ask = Some(best_ask.price);
         }
-        
+
         self.last_update = time::now_secs();
 
         // Check for trading opportunities
@@ -158,10 +158,10 @@ impl SnipeStrategy {
 
         // Update statistics
         self.stats.total_volume += fill.size;
-        
+
         // Calculate P&L if this was our trade
         // (In a real implementation, you'd track your own orders)
-        
+
         Ok(())
     }
 
@@ -174,16 +174,14 @@ impl SnipeStrategy {
 
         // Calculate spread
         let spread_pct = match (bid, ask) {
-            (bid, ask) if bid > dec!(0) && ask > bid => {
-                (ask - bid) / bid * dec!(100)
-            }
+            (bid, ask) if bid > dec!(0) && ask > bid => (ask - bid) / bid * dec!(100),
             _ => return Ok(()),
         };
 
         // Check if spread is within our target
         if spread_pct <= self.max_spread_pct {
             self.stats.opportunities_detected += 1;
-            
+
             info!(
                 "Opportunity detected: spread {}% (target: {}%)",
                 spread_pct, self.max_spread_pct
@@ -200,8 +198,8 @@ impl SnipeStrategy {
     fn execute_snipe_order(&mut self, bid: Decimal, ask: Decimal) -> Result<()> {
         // Calculate order size (random between min and max)
         let random_factor = Decimal::from(rand::random::<u64>() % 100) / Decimal::from(100);
-        let size = self.min_order_size + 
-            (self.max_order_size - self.min_order_size) * random_factor;
+        let size =
+            self.min_order_size + (self.max_order_size - self.min_order_size) * random_factor;
 
         // Determine side based on market conditions
         let side = if bid > ask {
@@ -222,7 +220,7 @@ impl SnipeStrategy {
         // Get current book for execution simulation
         let book = self.book_manager.get_book(&self.token_id)?;
         let mut book_impl = polyfill_rs::book::OrderBook::new(self.token_id.clone(), 100);
-        
+
         // Convert to internal book format
         for level in &book.bids {
             book_impl.apply_delta(OrderDelta {
@@ -234,7 +232,7 @@ impl SnipeStrategy {
                 sequence: 1,
             })?;
         }
-        
+
         for level in &book.asks {
             book_impl.apply_delta(OrderDelta {
                 token_id: self.token_id.clone(),
@@ -248,7 +246,9 @@ impl SnipeStrategy {
 
         // Execute order
         let start_time = std::time::Instant::now();
-        let result = self.fill_engine.execute_market_order(&request, &book_impl)?;
+        let result = self
+            .fill_engine
+            .execute_market_order(&request, &book_impl)?;
         let fill_time = start_time.elapsed().as_millis() as f64;
 
         // Update statistics
@@ -258,7 +258,8 @@ impl SnipeStrategy {
         }
 
         // Update average fill time
-        let total_time = self.stats.avg_fill_time_ms * (self.stats.orders_filled - 1) as f64 + fill_time;
+        let total_time =
+            self.stats.avg_fill_time_ms * (self.stats.orders_filled - 1) as f64 + fill_time;
         self.stats.avg_fill_time_ms = total_time / self.stats.orders_filled as f64;
 
         info!(
@@ -327,7 +328,11 @@ impl MockMarketData {
         let new_price = self.base_price * (Decimal::from(1) + price_change);
 
         // Generate order book update
-        let side = if rand::random::<bool>() { Side::BUY } else { Side::SELL };
+        let side = if rand::random::<bool>() {
+            Side::BUY
+        } else {
+            Side::SELL
+        };
         let size = Decimal::from(rand::random::<u64>() % 1000 + 100);
 
         StreamMessage::BookUpdate {
@@ -338,7 +343,7 @@ impl MockMarketData {
                 price: new_price,
                 size,
                 sequence: self.sequence,
-            }
+            },
         }
     }
 }
@@ -372,7 +377,7 @@ async fn main() -> Result<()> {
     while message_count < max_messages {
         // Generate market update
         let update = market_data.generate_update();
-        
+
         // Process update
         if let Err(e) = strategy.process_update(update) {
             error!("Error processing update: {}", e);
@@ -397,7 +402,10 @@ async fn main() -> Result<()> {
     // Print final statistics
     let final_stats = strategy.get_stats();
     info!("Final statistics:");
-    info!("  Opportunities detected: {}", final_stats.opportunities_detected);
+    info!(
+        "  Opportunities detected: {}",
+        final_stats.opportunities_detected
+    );
     info!("  Orders placed: {}", final_stats.orders_placed);
     info!("  Orders filled: {}", final_stats.orders_filled);
     info!("  Total volume: {}", final_stats.total_volume);
@@ -405,4 +413,4 @@ async fn main() -> Result<()> {
 
     info!("Snipe trading example completed!");
     Ok(())
-} 
+}

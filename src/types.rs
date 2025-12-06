@@ -5,8 +5,8 @@
 
 use alloy_primitives::{Address, U256};
 use chrono::{DateTime, Utc};
-use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -34,20 +34,20 @@ use serde::{Deserialize, Serialize};
 /// - $0.6543 = 6543 ticks
 /// - $1.0000 = 10000 ticks  
 /// - $0.0001 = 1 tick (minimum price increment)
-/// 
-/// Why u32? 
+///
+/// Why u32?
 /// - Can represent prices from $0.0001 to $429,496.7295 (way more than needed)
 /// - Fits in CPU register for fast operations
 /// - No sign bit needed since prices are always positive
 pub type Price = u32;
 
 /// Quantity/size represented as fixed-point integer for performance
-/// 
+///
 /// Each unit represents 0.0001 (1/10,000) of a token
 /// Examples:
 /// - 100.0 tokens = 1,000,000 units
 /// - 0.0001 tokens = 1 unit (minimum size increment)
-/// 
+///
 /// Why i64?
 /// - Can represent quantities from -922,337,203,685.4775 to +922,337,203,685.4775
 /// - Signed because we need to handle both buys (+) and sells (-)
@@ -55,7 +55,7 @@ pub type Price = u32;
 pub type Qty = i64;
 
 /// Scale factor for converting between Decimal and fixed-point
-/// 
+///
 /// We use 10,000 (1e4) as our scale factor, giving us 4 decimal places of precision.
 /// This is perfect for most prediction markets where prices are between $0.01-$0.99
 /// and we need precision to the nearest $0.0001.
@@ -80,11 +80,11 @@ pub const MAX_QTY: Qty = Qty::MAX / 2; // Leave room for intermediate calculatio
 // and handle edge cases gracefully.
 
 /// Convert a Decimal price to fixed-point ticks
-/// 
+///
 /// This is called when we receive price data from the API or user input.
 /// We quantize the price to the nearest tick to ensure all prices are
 /// aligned to our internal representation.
-/// 
+///
 /// Examples:
 /// - decimal_to_price(Decimal::from_str("0.6543")) = Ok(6543)
 /// - decimal_to_price(Decimal::from_str("1.0000")) = Ok(10000)
@@ -92,13 +92,13 @@ pub const MAX_QTY: Qty = Qty::MAX / 2; // Leave room for intermediate calculatio
 pub fn decimal_to_price(decimal: Decimal) -> std::result::Result<Price, &'static str> {
     // Convert to fixed-point by multiplying by scale factor
     let scaled = decimal * Decimal::from(SCALE_FACTOR);
-    
+
     // Round to nearest integer (this handles tick alignment automatically)
     let rounded = scaled.round();
-    
+
     // Convert to u64 first to handle the conversion safely
     let as_u64 = rounded.to_u64().ok_or("Price too large or negative")?;
-    
+
     // Check bounds
     if as_u64 < MIN_PRICE_TICKS as u64 {
         return Ok(MIN_PRICE_TICKS); // Clamp to minimum
@@ -106,15 +106,15 @@ pub fn decimal_to_price(decimal: Decimal) -> std::result::Result<Price, &'static
     if as_u64 > MAX_PRICE_TICKS as u64 {
         return Err("Price exceeds maximum");
     }
-    
+
     Ok(as_u64 as Price)
 }
 
 /// Convert fixed-point ticks back to Decimal price
-/// 
+///
 /// This is called when we need to return price data to the API or display to users.
 /// It's the inverse of decimal_to_price().
-/// 
+///
 /// Examples:
 /// - price_to_decimal(6543) = Decimal::from_str("0.6543")
 /// - price_to_decimal(10000) = Decimal::from_str("1.0000")
@@ -123,28 +123,28 @@ pub fn price_to_decimal(ticks: Price) -> Decimal {
 }
 
 /// Convert a Decimal quantity to fixed-point units
-/// 
+///
 /// Similar to decimal_to_price but handles signed quantities.
 /// Quantities can be negative (for sells or position changes).
-/// 
+///
 /// Examples:
 /// - decimal_to_qty(Decimal::from_str("100.0")) = Ok(1000000)
 /// - decimal_to_qty(Decimal::from_str("-50.5")) = Ok(-505000)
 pub fn decimal_to_qty(decimal: Decimal) -> std::result::Result<Qty, &'static str> {
     let scaled = decimal * Decimal::from(SCALE_FACTOR);
     let rounded = scaled.round();
-    
+
     let as_i64 = rounded.to_i64().ok_or("Quantity too large")?;
-    
+
     if as_i64.abs() > MAX_QTY {
         return Err("Quantity exceeds maximum");
     }
-    
+
     Ok(as_i64)
 }
 
 /// Convert fixed-point units back to Decimal quantity
-/// 
+///
 /// Examples:
 /// - qty_to_decimal(1000000) = Decimal::from_str("100.0")
 /// - qty_to_decimal(-505000) = Decimal::from_str("-50.5")
@@ -153,11 +153,11 @@ pub fn qty_to_decimal(units: Qty) -> Decimal {
 }
 
 /// Check if a price is properly tick-aligned
-/// 
+///
 /// This is used to validate incoming price data. In a well-behaved system,
 /// all prices should already be tick-aligned, but we check anyway to catch
 /// bugs or malicious data.
-/// 
+///
 /// A price is tick-aligned if it's an exact multiple of the minimum tick size.
 /// Since we use integer ticks internally, this just checks if the price
 /// converts cleanly to our internal representation.
@@ -167,19 +167,19 @@ pub fn is_price_tick_aligned(decimal: Decimal, tick_size_decimal: Decimal) -> bo
         Ok(ticks) => ticks,
         Err(_) => return false,
     };
-    
+
     // Convert the price to ticks
     let price_ticks = match decimal_to_price(decimal) {
         Ok(ticks) => ticks,
         Err(_) => return false,
     };
-    
+
     // Check if price is a multiple of tick size
     // If tick_size_ticks is 0, we consider everything aligned (no restrictions)
     if tick_size_ticks == 0 {
         return true;
     }
-    
+
     price_ticks % tick_size_ticks == 0
 }
 
@@ -256,7 +256,7 @@ pub struct MarketSnapshot {
 }
 
 /// Order book level (price/size pair) - EXTERNAL API VERSION
-/// 
+///
 /// This is what we expose to users and serialize to JSON.
 /// It uses Decimal for precision and human readability.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,19 +268,19 @@ pub struct BookLevel {
 }
 
 /// Order book level (price/size pair) - INTERNAL HOT PATH VERSION
-/// 
+///
 /// This is what we use internally for maximum performance.
 /// All order book operations use this to avoid Decimal overhead.
-/// 
+///
 /// The performance difference is huge:
 /// - BookLevel: ~50ns per operation (Decimal math + allocation)
 /// - FastBookLevel: ~2ns per operation (integer math, no allocation)
-/// 
+///
 /// That's a 25x speedup on the critical path
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FastBookLevel {
-    pub price: Price,  // Price in ticks (u32)
-    pub size: Qty,     // Size in fixed-point units (i64)
+    pub price: Price, // Price in ticks (u32)
+    pub size: Qty,    // Size in fixed-point units (i64)
 }
 
 impl FastBookLevel {
@@ -288,7 +288,7 @@ impl FastBookLevel {
     pub fn new(price: Price, size: Qty) -> Self {
         Self { price, size }
     }
-    
+
     /// Convert to external BookLevel for API responses
     /// This is only called at the edges when we need to return data to users
     pub fn to_book_level(self) -> BookLevel {
@@ -297,7 +297,7 @@ impl FastBookLevel {
             size: qty_to_decimal(self.size),
         }
     }
-    
+
     /// Create from external BookLevel (with validation)
     /// This is called when we receive data from the API
     pub fn from_book_level(level: &BookLevel) -> std::result::Result<Self, &'static str> {
@@ -305,10 +305,10 @@ impl FastBookLevel {
         let size = decimal_to_qty(level.size)?;
         Ok(Self::new(price, size))
     }
-    
+
     /// Calculate notional value (price * size) in fixed-point
     /// Returns the result scaled appropriately to avoid overflow
-    /// 
+    ///
     /// This is much faster than the Decimal equivalent:
     /// - Decimal: price.mul(size) -> ~20ns + allocation
     /// - Fixed-point: (price as i64 * size) / SCALE_FACTOR -> ~1ns, no allocation
@@ -336,7 +336,7 @@ pub struct OrderBook {
 }
 
 /// Order book delta for streaming updates - EXTERNAL API VERSION
-/// 
+///
 /// This is what we receive from WebSocket streams and REST API calls.
 /// It uses Decimal for compatibility with external systems.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -350,10 +350,10 @@ pub struct OrderDelta {
 }
 
 /// Order book delta for streaming updates - INTERNAL HOT PATH VERSION
-/// 
+///
 /// This is what we use internally for processing order book updates.
 /// Converting to this format on ingress gives us massive performance gains.
-/// 
+///
 /// Why the performance matters:
 /// - We might process 10,000+ deltas per second in active markets
 /// - Each delta triggers multiple calculations (spread, impact, etc.)
@@ -361,32 +361,35 @@ pub struct OrderDelta {
 ///   keeping up with the market feed vs falling behind
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FastOrderDelta {
-    pub token_id_hash: u64,    // Hash of token_id for fast lookup (avoids string comparisons)
+    pub token_id_hash: u64, // Hash of token_id for fast lookup (avoids string comparisons)
     pub timestamp: DateTime<Utc>,
     pub side: Side,
-    pub price: Price,          // Price in ticks
-    pub size: Qty,             // Size in fixed-point units (0 means remove level)
+    pub price: Price, // Price in ticks
+    pub size: Qty,    // Size in fixed-point units (0 means remove level)
     pub sequence: u64,
 }
 
 impl FastOrderDelta {
     /// Create from external OrderDelta with validation and tick alignment
-    /// 
+    ///
     /// This is where we enforce tick alignment - if the incoming price
     /// doesn't align to valid ticks, we either reject it or round it.
     /// This prevents bad data from corrupting our order book.
-    pub fn from_order_delta(delta: &OrderDelta, tick_size: Option<Decimal>) -> std::result::Result<Self, &'static str> {
+    pub fn from_order_delta(
+        delta: &OrderDelta,
+        tick_size: Option<Decimal>,
+    ) -> std::result::Result<Self, &'static str> {
         // Validate tick alignment if we have a tick size
         if let Some(tick_size) = tick_size {
             if !is_price_tick_aligned(delta.price, tick_size) {
                 return Err("Price not aligned to tick size");
             }
         }
-        
+
         // Convert to fixed-point with validation
         let price = decimal_to_price(delta.price)?;
         let size = decimal_to_qty(delta.size)?;
-        
+
         // Hash the token_id for fast lookups
         // This avoids string comparisons in the hot path
         let token_id_hash = {
@@ -396,7 +399,7 @@ impl FastOrderDelta {
             delta.token_id.hash(&mut hasher);
             hasher.finish()
         };
-        
+
         Ok(Self {
             token_id_hash,
             timestamp: delta.timestamp,
@@ -406,7 +409,7 @@ impl FastOrderDelta {
             sequence: delta.sequence,
         })
     }
-    
+
     /// Convert back to external OrderDelta (for API responses)
     /// We need the original token_id since we only store the hash
     pub fn to_order_delta(self, token_id: String) -> OrderDelta {
@@ -419,7 +422,7 @@ impl FastOrderDelta {
             sequence: self.sequence,
         }
     }
-    
+
     /// Check if this delta removes a level (size is zero)
     pub fn is_removal(self) -> bool {
         self.size == 0
@@ -663,39 +666,23 @@ pub struct WssSubscription {
 #[serde(tag = "type")]
 pub enum StreamMessage {
     #[serde(rename = "book_update")]
-    BookUpdate {
-        data: OrderDelta,
-    },
+    BookUpdate { data: OrderDelta },
     #[serde(rename = "trade")]
-    Trade {
-        data: FillEvent,
-    },
+    Trade { data: FillEvent },
     #[serde(rename = "order_update")]
-    OrderUpdate {
-        data: Order,
-    },
+    OrderUpdate { data: Order },
     #[serde(rename = "heartbeat")]
-    Heartbeat {
-        timestamp: DateTime<Utc>,
-    },
+    Heartbeat { timestamp: DateTime<Utc> },
     /// User channel events
     #[serde(rename = "user_order_update")]
-    UserOrderUpdate {
-        data: Order,
-    },
+    UserOrderUpdate { data: Order },
     #[serde(rename = "user_trade")]
-    UserTrade {
-        data: FillEvent,
-    },
+    UserTrade { data: FillEvent },
     /// Market channel events
     #[serde(rename = "market_book_update")]
-    MarketBookUpdate {
-        data: OrderDelta,
-    },
+    MarketBookUpdate { data: OrderDelta },
     #[serde(rename = "market_trade")]
-    MarketTrade {
-        data: FillEvent,
-    },
+    MarketTrade { data: FillEvent },
 }
 
 /// Subscription parameters for streaming
@@ -757,7 +744,6 @@ pub type OrderId = String;
 pub type MarketId = String;
 pub type ClientId = String;
 
-
 /// Parameters for querying open orders
 #[derive(Debug, Clone)]
 pub struct OpenOrderParams {
@@ -811,19 +797,19 @@ impl TradeParams {
         if let Some(x) = &self.market {
             params.push(("market", x.clone()));
         }
-        
+
         if let Some(x) = &self.maker_address {
             params.push(("maker_address", x.clone()));
         }
-        
+
         if let Some(x) = &self.before {
             params.push(("before", x.to_string()));
         }
-        
+
         if let Some(x) = &self.after {
             params.push(("after", x.to_string()));
         }
-        
+
         params
     }
 }
@@ -853,7 +839,6 @@ pub struct OpenOrder {
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub created_at: u64,
 }
-
 
 /// Balance allowance information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1068,9 +1053,9 @@ pub struct Rewards {
 pub type ClientResult<T> = anyhow::Result<T>;
 
 /// Result type used throughout the client
-pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>; 
+pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>;
 
 // Type aliases for 100% compatibility with baseline implementation
 pub type ApiCreds = ApiCredentials;
 pub type CreateOrderOptions = OrderOptions;
-pub type OrderArgs = OrderRequest; 
+pub type OrderArgs = OrderRequest;

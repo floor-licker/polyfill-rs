@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use polyfill_rs::{OrderArgs, Side, OrderBookImpl};
+use polyfill_rs::{OrderArgs, OrderBookImpl, Side};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -14,7 +14,7 @@ fn benchmark_create_order_eip712(c: &mut Criterion) {
                 Decimal::from_str("100.0").unwrap(),
                 Side::BUY,
             );
-            
+
             // Simulate the computational work of order creation
             black_box(order_args)
         })
@@ -24,7 +24,7 @@ fn benchmark_create_order_eip712(c: &mut Criterion) {
 // Benchmark: JSON parsing (simulate market data parsing)
 fn benchmark_json_parsing(c: &mut Criterion) {
     let sample_json = r#"{"data":[{"condition_id":"test","question":"Test Question","description":"Test Description","end_date_iso":"2024-01-01T00:00:00Z","game_start_time":"2024-01-01T00:00:00Z","image":"","icon":"","active":true,"closed":false,"archived":false,"accepting_orders":true,"minimum_order_size":"1.0","minimum_tick_size":"0.01","market_slug":"test","seconds_delay":0,"fpmm":"0x123","rewards":{"min_size":"1.0","max_spread":"0.1"},"tokens":[{"token_id":"123","outcome":"Yes","price":"0.5","winner":false}]}]}"#;
-    
+
     c.bench_function("json_parsing_markets", |b| {
         b.iter(|| {
             // This benchmarks JSON parsing and deserialization
@@ -39,12 +39,12 @@ fn benchmark_order_book_operations(c: &mut Criterion) {
     c.bench_function("order_book_updates", |b| {
         b.iter(|| {
             let mut book = OrderBookImpl::new("test_token".to_string(), 100);
-            
+
             // Simulate rapid order book updates
             for i in 0..1000 {
                 let price = Decimal::from_str(&format!("0.{:04}", 5000 + (i % 100))).unwrap();
                 let size = Decimal::from_str("100.0").unwrap();
-                
+
                 let bid_delta = polyfill_rs::OrderDelta {
                     token_id: "test_token".to_string(),
                     timestamp: chrono::Utc::now(),
@@ -53,10 +53,10 @@ fn benchmark_order_book_operations(c: &mut Criterion) {
                     size,
                     sequence: i as u64,
                 };
-                
+
                 let _ = book.apply_delta(bid_delta);
             }
-            
+
             black_box(book)
         })
     });
@@ -65,24 +65,28 @@ fn benchmark_order_book_operations(c: &mut Criterion) {
 // Benchmark: Fast order book operations
 fn benchmark_fast_operations(c: &mut Criterion) {
     let mut book = OrderBookImpl::new("test_token".to_string(), 100);
-    
+
     // Pre-populate the book
     for i in 0..50 {
         let price = Decimal::from_str(&format!("0.{:04}", 5000 + i)).unwrap();
         let size = Decimal::from_str("100.0").unwrap();
-        
+
         let delta = polyfill_rs::OrderDelta {
             token_id: "test_token".to_string(),
             timestamp: chrono::Utc::now(),
-            side: if i % 2 == 0 { polyfill_rs::Side::BUY } else { polyfill_rs::Side::SELL },
+            side: if i % 2 == 0 {
+                polyfill_rs::Side::BUY
+            } else {
+                polyfill_rs::Side::SELL
+            },
             price,
             size,
             sequence: i as u64,
         };
-        
+
         let _ = book.apply_delta(delta);
     }
-    
+
     c.bench_function("fast_spread_mid_calculations", |b| {
         b.iter(|| {
             // These use fixed-point arithmetic internally

@@ -31,15 +31,15 @@ pub mod deserializers {
                     T::deserialize(serde_json::Value::Number(serde_json::Number::from(v)))
                         .map_err(|_| serde::de::Error::custom("Failed to deserialize number"))
                 } else if let Some(v) = n.as_f64() {
-                    T::deserialize(serde_json::Value::Number(serde_json::Number::from_f64(v).unwrap()))
-                        .map_err(|_| serde::de::Error::custom("Failed to deserialize number"))
+                    T::deserialize(serde_json::Value::Number(
+                        serde_json::Number::from_f64(v).unwrap(),
+                    ))
+                    .map_err(|_| serde::de::Error::custom("Failed to deserialize number"))
                 } else {
                     Err(serde::de::Error::custom("Invalid number format"))
                 }
-            }
-            serde_json::Value::String(s) => {
-                s.parse::<T>().map_err(serde::de::Error::custom)
-            }
+            },
+            serde_json::Value::String(s) => s.parse::<T>().map_err(serde::de::Error::custom),
             _ => Err(serde::de::Error::custom("Expected number or string")),
         }
     }
@@ -62,28 +62,30 @@ pub mod deserializers {
                         .map(Some)
                         .map_err(|_| serde::de::Error::custom("Failed to deserialize number"))
                 } else if let Some(v) = n.as_f64() {
-                    T::deserialize(serde_json::Value::Number(serde_json::Number::from_f64(v).unwrap()))
-                        .map(Some)
-                        .map_err(|_| serde::de::Error::custom("Failed to deserialize number"))
+                    T::deserialize(serde_json::Value::Number(
+                        serde_json::Number::from_f64(v).unwrap(),
+                    ))
+                    .map(Some)
+                    .map_err(|_| serde::de::Error::custom("Failed to deserialize number"))
                 } else {
                     Err(serde::de::Error::custom("Invalid number format"))
                 }
-            }
+            },
             serde_json::Value::String(s) => {
                 if s.is_empty() {
                     Ok(None)
                 } else {
-                    s.parse::<T>()
-                        .map(Some)
-                        .map_err(serde::de::Error::custom)
+                    s.parse::<T>().map(Some).map_err(serde::de::Error::custom)
                 }
-            }
+            },
             _ => Err(serde::de::Error::custom("Expected number, string, or null")),
         }
     }
 
     /// Deserialize DateTime from Unix timestamp
-    pub fn datetime_from_timestamp<'de, D>(deserializer: D) -> std::result::Result<DateTime<Utc>, D::Error>
+    pub fn datetime_from_timestamp<'de, D>(
+        deserializer: D,
+    ) -> std::result::Result<DateTime<Utc>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -236,18 +238,25 @@ impl Decoder<Order> for RawOrderResponse {
             "FILLED" => OrderStatus::Filled,
             "PARTIAL" => OrderStatus::Partial,
             "EXPIRED" => OrderStatus::Expired,
-            _ => return Err(PolyfillError::parse(
-                format!("Unknown order status: {}", self.status),
-                None,
-            )),
+            _ => {
+                return Err(PolyfillError::parse(
+                    format!("Unknown order status: {}", self.status),
+                    None,
+                ))
+            },
         };
 
-        let created_at = chrono::DateTime::from_timestamp(self.created_at as i64, 0)
-            .ok_or_else(|| PolyfillError::parse("Invalid created_at timestamp".to_string(), None))?;
+        let created_at =
+            chrono::DateTime::from_timestamp(self.created_at as i64, 0).ok_or_else(|| {
+                PolyfillError::parse("Invalid created_at timestamp".to_string(), None)
+            })?;
 
         let expiration = if self.expiration > 0 {
-            Some(chrono::DateTime::from_timestamp(self.expiration as i64, 0)
-                .ok_or_else(|| PolyfillError::parse("Invalid expiration timestamp".to_string(), None))?)
+            Some(
+                chrono::DateTime::from_timestamp(self.expiration as i64, 0).ok_or_else(|| {
+                    PolyfillError::parse("Invalid expiration timestamp".to_string(), None)
+                })?,
+            )
         } else {
             None
         };
@@ -344,7 +353,7 @@ impl Decoder<Market> for RawMarketResponse {
 /// WebSocket message parsing
 pub fn parse_stream_message(raw: &str) -> Result<StreamMessage> {
     let value: Value = serde_json::from_str(raw)?;
-    
+
     let msg_type = value["type"]
         .as_str()
         .ok_or_else(|| PolyfillError::parse("Missing message type".to_string(), None))?;
@@ -354,19 +363,19 @@ pub fn parse_stream_message(raw: &str) -> Result<StreamMessage> {
             let data = value["data"].clone();
             let delta: OrderDelta = serde_json::from_value(data)?;
             Ok(StreamMessage::BookUpdate { data: delta })
-        }
+        },
         "trade" => {
             let data = value["data"].clone();
             let raw_trade: RawTradeResponse = serde_json::from_value(data)?;
             let fill = raw_trade.decode()?;
             Ok(StreamMessage::Trade { data: fill })
-        }
+        },
         "order_update" => {
             let data = value["data"].clone();
             let raw_order: RawOrderResponse = serde_json::from_value(data)?;
             let order = raw_order.decode()?;
             Ok(StreamMessage::OrderUpdate { data: order })
-        }
+        },
         "heartbeat" => {
             let timestamp = value["timestamp"]
                 .as_str()
@@ -374,7 +383,7 @@ pub fn parse_stream_message(raw: &str) -> Result<StreamMessage> {
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(Utc::now);
             Ok(StreamMessage::Heartbeat { timestamp })
-        }
+        },
         _ => Err(PolyfillError::parse(
             format!("Unknown message type: {}", msg_type),
             None,
@@ -440,8 +449,8 @@ impl BatchDecoder {
                     if depth == 0 {
                         return Some(start + i + 1);
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
@@ -512,8 +521,8 @@ mod tests {
     fn test_batch_decoder() {
         let mut decoder = BatchDecoder::new();
         let data = r#"{"test":1}{"test":2}"#.as_bytes();
-        
+
         let results: Vec<serde_json::Value> = decoder.parse_json_stream(data).unwrap();
         assert_eq!(results.len(), 2);
     }
-} 
+}

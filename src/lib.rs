@@ -1,7 +1,7 @@
 //! Polyfill-rs: High-performance Rust client for Polymarket
-//! 
+//!
 //! # Features
-//! 
+//!
 //! - **High-performance order book management** with optimized data structures
 //! - **Real-time market data streaming** with WebSocket support
 //! - **Trade execution simulation** with slippage protection
@@ -9,14 +9,14 @@
 //! - **Rate limiting and retry logic** for robust API interactions
 //! - **Ethereum integration** with EIP-712 signing support
 //! - **Benchmarking tools** for performance analysis
-//! 
+//!
 //! # Quick Start
-//! 
+//!
 //! ```rust,no_run
 //! use polyfill_rs::{ClobClient, OrderArgs, Side};
 //! use rust_decimal::Decimal;
 //! use std::str::FromStr;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create client (compatible with polymarket-rs-client)
@@ -25,11 +25,11 @@
 //!         "your_private_key",
 //!         137,
 //!     );
-//! 
+//!
 //!     // Get API credentials
 //!     let api_creds = client.create_or_derive_api_key(None).await.unwrap();
 //!     client.set_api_creds(api_creds);
-//! 
+//!
 //!     // Create and post order
 //!     let order_args = OrderArgs::new(
 //!         "token_id",
@@ -37,39 +37,38 @@
 //!         Decimal::from_str("100.0").unwrap(),
 //!         Side::BUY,
 //!     );
-//! 
+//!
 //!     let result = client.create_and_post_order(&order_args).await.unwrap();
 //!     println!("Order posted: {:?}", result);
-//! 
+//!
 //!     Ok(())
 //! }
 //! ```
-//! 
+//!
 //! # Advanced Usage
-//! 
+//!
 //! ```rust,no_run
 //! use polyfill_rs::{ClobClient, OrderBookImpl};
 //! use rust_decimal::Decimal;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create a basic client
 //!     let client = ClobClient::new("https://clob.polymarket.com");
-//! 
+//!
 //!     // Get market data
 //!     let markets = client.get_sampling_markets(None).await.unwrap();
 //!     println!("Found {} markets", markets.data.len());
-//! 
+//!
 //!     // Create an order book for high-performance operations
 //!     let mut book = OrderBookImpl::new("token_id".to_string(), 100); // 100 levels depth
 //!     println!("Order book created for token: {}", book.token_id);
-//! 
+//!
 //!     Ok(())
 //! }
 //! ```
 
 use tracing::info;
-
 
 // Global constants
 pub const DEFAULT_CHAIN_ID: u64 = 137; // Polygon
@@ -86,39 +85,70 @@ pub fn init() {
 
 // Re-export main types
 pub use crate::types::{
-    ApiCredentials, Balance, BalanceAllowance, BatchMidpointRequest, BatchMidpointResponse,
-    BatchPriceRequest, BatchPriceResponse, ClientConfig, FillEvent, MarketSnapshot, 
-    NotificationParams, OpenOrder, OpenOrderParams, Order, OrderBook, OrderDelta, 
-    OrderRequest, OrderStatus, OrderType, Side, StreamMessage, TokenPrice, TradeParams,
-    WssAuth, WssSubscription, WssChannelType,
+    ApiCredentials,
     // Additional compatibility types
-    ApiKeysResponse, MidpointResponse, PriceResponse, SpreadResponse, TickSizeResponse,
-    NegRiskResponse, BookParams, MarketsResponse, SimplifiedMarketsResponse, Market,
-    SimplifiedMarket, Token, Rewards, ClientResult, OrderBookSummary, OrderSummary,
-    BalanceAllowanceParams, AssetType,
+    ApiKeysResponse,
+    AssetType,
+    Balance,
+    BalanceAllowance,
+    BalanceAllowanceParams,
+    BatchMidpointRequest,
+    BatchMidpointResponse,
+    BatchPriceRequest,
+    BatchPriceResponse,
+    BookParams,
+    ClientConfig,
+    ClientResult,
+    FillEvent,
+    Market,
+    MarketSnapshot,
+    MarketsResponse,
+    MidpointResponse,
+    NegRiskResponse,
+    NotificationParams,
+    OpenOrder,
+    OpenOrderParams,
+    Order,
+    OrderBook,
+    OrderBookSummary,
+    OrderDelta,
+    OrderRequest,
+    OrderStatus,
+    OrderSummary,
+    OrderType,
+    PriceResponse,
+    Rewards,
+    Side,
+    SimplifiedMarket,
+    SimplifiedMarketsResponse,
+    SpreadResponse,
+    StreamMessage,
+    TickSizeResponse,
+    Token,
+    TokenPrice,
+    TradeParams,
+    WssAuth,
+    WssChannelType,
+    WssSubscription,
 };
 
 // Re-export client
 pub use crate::client::{ClobClient, PolyfillClient};
 
 // Re-export compatibility types (for easy migration from polymarket-rs-client)
-pub use crate::client::{
-    OrderArgs,
-};
+pub use crate::client::OrderArgs;
 
 // Re-export error types
 pub use crate::errors::{PolyfillError, Result};
 
 // Re-export advanced components
 pub use crate::book::{OrderBook as OrderBookImpl, OrderBookManager};
+pub use crate::decode::Decoder;
 pub use crate::fill::{FillEngine, FillResult};
 pub use crate::stream::{MarketStream, StreamManager, WebSocketStream};
-pub use crate::decode::Decoder;
 
 // Re-export utilities
-pub use crate::utils::{
-    crypto, math, retry, time, url, rate_limit,
-};
+pub use crate::utils::{crypto, math, rate_limit, retry, time, url};
 
 // Module declarations
 pub mod auth;
@@ -136,16 +166,16 @@ pub mod utils;
 // Benchmarks
 #[cfg(test)]
 mod benches {
-    use criterion::{criterion_group, criterion_main};
     use crate::{OrderBookManager, OrderDelta, Side};
-    use rust_decimal::Decimal;
     use chrono::Utc;
+    use criterion::{criterion_group, criterion_main};
+    use rust_decimal::Decimal;
     use std::str::FromStr;
 
     #[allow(dead_code)]
     fn order_book_benchmark(c: &mut criterion::Criterion) {
         let book_manager = OrderBookManager::new(100);
-        
+
         c.bench_function("apply_order_delta", |b| {
             b.iter(|| {
                 let delta = OrderDelta {
@@ -156,7 +186,7 @@ mod benches {
                     size: Decimal::from_str("100.0").unwrap(),
                     sequence: 1,
                 };
-                
+
                 let _ = book_manager.apply_delta(delta);
             });
         });
@@ -188,7 +218,7 @@ mod tests {
             Decimal::from_str("100.0").unwrap(),
             Side::BUY,
         );
-        
+
         assert_eq!(args.token_id, "test_token");
         assert_eq!(args.side, Side::BUY);
     }
@@ -201,4 +231,4 @@ mod tests {
         assert_eq!(args.size, Decimal::ZERO);
         assert_eq!(args.side, Side::BUY);
     }
-} 
+}

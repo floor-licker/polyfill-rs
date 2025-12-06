@@ -33,7 +33,6 @@ match_block_trailing_comma = true
 
 # Control flow
 control_brace_style = "AlwaysSameLine"
-control_brace_style = "ClosingNextLine"
 
 # Functions
 fn_call_width = 60
