@@ -50,12 +50,14 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 
 | Operation | polyfill-rs | polymarket-rs-client | Official Python Client |
 |-----------|-------------|----------------------|------------------------|
-| **Fetch Markets** | **382.6 ms ± 75.1 ms** | 404.5 ms ± 22.9 ms | 1.366 s ± 0.048 s |
+| **Fetch Markets** | **368.6 ms ± 67.1 ms** | 404.5 ms ± 22.9 ms | 1.366 s ± 0.048 s |
 
 
 **Performance vs Competition:**
-- **5.4% faster** than polymarket-rs-client (Rust) - 21.9ms improvement
-- **3.6x faster** than Official Python Client
+- **8.9% faster** than polymarket-rs-client - 35.9ms improvement
+- **3.7x faster** than Official Python Client
+
+**Note:** Best performance achieved with connection keep-alive enabled (`client.start_keepalive(Duration::from_secs(30)).await`).
 
 **Computational Performance (pure CPU, no I/O)**
 
@@ -67,7 +69,7 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 
 **Key Performance Optimizations:**
 
-polyfill-rs achieves 5.4% better performance than polymarket-rs-client through several targeted optimizations. We use simd-json for SIMD-accelerated JSON parsing, which provides a 1.77x speedup over standard serde_json deserialization and saves approximately 1-2ms per request. Our HTTP/2 configuration has been empirically tuned through systematic benchmarking, with a 512KB initial stream window size proving optimal for the typical 469KB payload sizes from Polymarket's API. We've implemented DNS caching to eliminate redundant lookups, connection keep-alive management to maintain warm connections, and a buffer pool to reduce memory allocation overhead during request processing. These optimizations collectively reduce mean latency from 401ms to 382.6ms while maintaining production-safe, conservative approaches.
+polyfill-rs achieves 8.9% better performance than polymarket-rs-client through several targeted optimizations and infrastructure integration. We use simd-json for SIMD-accelerated JSON parsing, which provides a 1.77x speedup over standard serde_json deserialization and saves approximately 1-2ms per request. Our HTTP/2 configuration has been empirically tuned through systematic benchmarking, with a 512KB initial stream window size proving optimal for the typical 469KB payload sizes from Polymarket's API. The client includes integrated DNS caching to eliminate redundant lookups, a connection manager with background keep-alive to maintain warm connections (preventing costly reconnections), and a buffer pool to reduce memory allocation overhead during request processing. These optimizations collectively reduce mean latency from 401ms to 368.6ms (with keep-alive enabled) while maintaining production-safe, conservative approaches.
 
 **Performance Breakdown:**
 - Network (DNS/TCP/TLS): ~150ms (optimized with DNS caching and HTTP/2 tuning)

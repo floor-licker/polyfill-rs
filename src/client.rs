@@ -61,10 +61,14 @@ pub struct ClobClient {
     signer: Option<PrivateKeySigner>,
     api_creds: Option<ApiCreds>,
     order_builder: Option<crate::orders::OrderBuilder>,
+    dns_cache: Option<std::sync::Arc<crate::dns_cache::DnsCache>>,
+    connection_manager: Option<std::sync::Arc<crate::connection_manager::ConnectionManager>>,
+    buffer_pool: std::sync::Arc<crate::buffer_pool::BufferPool>,
 }
 
 impl ClobClient {
     /// Create a new client with optimized HTTP/2 settings (benchmarked 11.4% faster)
+    /// Now includes DNS caching, connection management, and buffer pooling
     pub fn new(host: &str) -> Self {
         // Benchmarked optimal configuration: 512KB stream window
         // Results: 309.3ms vs 349ms baseline (11.4% improvement)
@@ -77,6 +81,43 @@ impl ClobClient {
             .build()
             .unwrap_or_else(|_| Client::new());
 
+        // Initialize DNS cache and pre-warm it
+        let dns_cache = tokio::runtime::Handle::try_current()
+            .ok()
+            .and_then(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let cache = crate::dns_cache::DnsCache::new().await.ok()?;
+                        let hostname = host
+                            .trim_start_matches("https://")
+                            .trim_start_matches("http://")
+                            .split('/')
+                            .next()?;
+                        cache.prewarm(hostname).await.ok()?;
+                        Some(std::sync::Arc::new(cache))
+                    })
+                })
+            });
+
+        // Initialize connection manager
+        let connection_manager = Some(std::sync::Arc::new(
+            crate::connection_manager::ConnectionManager::new(
+                optimized_client.clone(),
+                host.to_string(),
+            ),
+        ));
+
+        // Initialize buffer pool (512KB buffers, pool of 10)
+        let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
+        
+        // Pre-warm buffer pool with 3 buffers
+        let pool_clone = buffer_pool.clone();
+        if let Ok(_handle) = tokio::runtime::Handle::try_current() {
+            tokio::spawn(async move {
+                pool_clone.prewarm(3).await;
+            });
+        }
+
         Self {
             http_client: optimized_client,
             base_url: host.to_string(),
@@ -84,30 +125,59 @@ impl ClobClient {
             signer: None,
             api_creds: None,
             order_builder: None,
+            dns_cache,
+            connection_manager,
+            buffer_pool,
         }
     }
 
     /// Create a client optimized for co-located environments
     pub fn new_colocated(host: &str) -> Self {
+        let http_client = create_colocated_client().unwrap_or_else(|_| Client::new());
+        
+        let connection_manager = Some(std::sync::Arc::new(
+            crate::connection_manager::ConnectionManager::new(
+                http_client.clone(),
+                host.to_string(),
+            ),
+        ));
+        let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
+        
         Self {
-            http_client: create_colocated_client().unwrap_or_else(|_| Client::new()),
+            http_client,
             base_url: host.to_string(),
             chain_id: 137,
             signer: None,
             api_creds: None,
             order_builder: None,
+            dns_cache: None,
+            connection_manager,
+            buffer_pool,
         }
     }
 
     /// Create a client optimized for internet connections
     pub fn new_internet(host: &str) -> Self {
+        let http_client = create_internet_client().unwrap_or_else(|_| Client::new());
+        
+        let connection_manager = Some(std::sync::Arc::new(
+            crate::connection_manager::ConnectionManager::new(
+                http_client.clone(),
+                host.to_string(),
+            ),
+        ));
+        let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
+        
         Self {
-            http_client: create_internet_client().unwrap_or_else(|_| Client::new()),
+            http_client,
             base_url: host.to_string(),
             chain_id: 137,
             signer: None,
             api_creds: None,
             order_builder: None,
+            dns_cache: None,
+            connection_manager,
+            buffer_pool,
         }
     }
 
@@ -119,13 +189,28 @@ impl ClobClient {
 
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
 
+        let http_client = create_optimized_client().unwrap_or_else(|_| Client::new());
+        
+        // Initialize infrastructure modules
+        let dns_cache = None; // Skip DNS cache for simplicity in this constructor
+        let connection_manager = Some(std::sync::Arc::new(
+            crate::connection_manager::ConnectionManager::new(
+                http_client.clone(),
+                host.to_string(),
+            ),
+        ));
+        let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
+
         Self {
-            http_client: create_optimized_client().unwrap_or_else(|_| Client::new()),
+            http_client,
             base_url: host.to_string(),
             chain_id,
             signer: Some(signer),
             api_creds: None,
             order_builder: Some(order_builder),
+            dns_cache,
+            connection_manager,
+            buffer_pool,
         }
     }
 
@@ -142,19 +227,49 @@ impl ClobClient {
 
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
 
+        let http_client = create_optimized_client().unwrap_or_else(|_| Client::new());
+        
+        // Initialize infrastructure modules
+        let dns_cache = None; // Skip DNS cache for simplicity in this constructor
+        let connection_manager = Some(std::sync::Arc::new(
+            crate::connection_manager::ConnectionManager::new(
+                http_client.clone(),
+                host.to_string(),
+            ),
+        ));
+        let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
+
         Self {
-            http_client: create_optimized_client().unwrap_or_else(|_| Client::new()),
+            http_client,
             base_url: host.to_string(),
             chain_id,
             signer: Some(signer),
             api_creds: Some(api_creds),
             order_builder: Some(order_builder),
+            dns_cache,
+            connection_manager,
+            buffer_pool,
         }
     }
 
     /// Set API credentials
     pub fn set_api_creds(&mut self, api_creds: ApiCreds) {
         self.api_creds = Some(api_creds);
+    }
+
+    /// Start background keep-alive to maintain warm connection
+    /// Sends periodic lightweight requests to prevent connection drops
+    pub async fn start_keepalive(&self, interval: std::time::Duration) {
+        if let Some(manager) = &self.connection_manager {
+            manager.start_keepalive(interval).await;
+        }
+    }
+
+    /// Stop keep-alive background task
+    pub async fn stop_keepalive(&self) {
+        if let Some(manager) = &self.connection_manager {
+            manager.stop_keepalive().await;
+        }
     }
 
     /// Pre-warm connections to reduce first-request latency
