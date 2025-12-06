@@ -13,6 +13,8 @@ documentation = "https://docs.rs/polyfill-rs"
 homepage = "https://github.com/floor-licker/polyfill-rs"
 
 [dependencies]
+# Pin base64ct to avoid Edition 2024 requirement
+base64ct = "=1.6.0"
 # Async runtime and futures
 tokio = { version = "1.41", features = ["full"] }
 futures = "0.3"
