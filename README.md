@@ -42,6 +42,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **Production Hardened**: Designed for co-located environments processing 100k+ market data updates per second
 
+## Performance Comparison
+
+Performance comparison with existing implementations:
+
+| | polyfill-rs | polymarket-rs-client | Official Python client |
+|-------------------------------------------|------------------------------------------------------------|------------------------------------------------------------|-------------------------------------------------------------|
+| Create a order with EIP-712 signature. | ~157ms (1.7x faster) | 266.5 ms ± 28.6 ms | 1.127 s ± 0.047 s |
+| Fetch and parse json(simplified markets). | ~394ms (1.0x competitive) | 404.5 ms ± 22.9 ms | 1.366 s ± 0.048 s |
+| Fetch markets. Mem usage | 774 allocs, 738 frees, 30,245 bytes allocated (527x less memory) | 88,053 allocs, 81,823 frees, 15,945,966 bytes allocated | 211,898 allocs, 202,962 frees, 128,457,588 bytes allocated |
+| Order book updates (1000 ops) | ~118 µs (8,500 updates/sec) | N/A | N/A |
+| Fast spread/mid calculations | ~2.3 ns (434M ops/sec) | N/A | N/A |
+
 ## Migration from polymarket-rs-client
 
 **Drop-in replacement in 2 steps:**
@@ -142,19 +154,6 @@ Precision-performance tradeoff optimization through boundary quantization:
 
 **Implementation notes**: Performance-critical sections include cycle count analysis and memory access pattern documentation. Cache miss profiling and branch prediction optimization detailed in inline comments.
 
-## Benchmark Comparison
-
-Performance comparison with existing implementations:
-
-| | polymarket-rs-client | Official Python client | polyfill-rs |
-|-------------------------------------------|-------------------------------------------------------------|------------------------------------------------------------|------------------------------------------------------------|
-| Create a order with EIP-712 signature. | **266.5 ms ± 28.6 ms** | 1.127 s ± 0.047 s | **~157ms** (1.7x faster) |
-| Fetch and parse json(simplified markets). | **404.5 ms ± 22.9 ms** | 1.366 s ± 0.048 s | **~394ms** (1.0x competitive) |
-| Fetch markets. Mem usage | **88,053 allocs, 81,823 frees, 15,945,966 bytes allocated** | 211,898 allocs, 202,962 frees, 128,457,588 bytes allocated | **774 allocs, 738 frees, 30,245 bytes allocated** (527x less memory) |
-| Order book updates (1000 ops) | N/A | N/A | **~118 µs** (8,500 updates/sec) |
-| Fast spread/mid calculations | N/A | N/A | **~2.3 ns** (434M ops/sec) |
-
-*Note: All benchmarks measured with real operations. Network performance includes actual HTTP requests, memory usage measured with custom allocator tracking, computational performance measured with criterion benchmarks.*
 
 ### Performance Advantages
 
