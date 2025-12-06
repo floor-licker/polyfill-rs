@@ -1,4 +1,4 @@
-# polyfill-rs
+![polyfill-rs](header.png)
 
 [![Crates.io](https://img.shields.io/crates/v/polyfill-rs.svg)](https://crates.io/crates/polyfill-rs)
 [![Documentation](https://docs.rs/polyfill-rs/badge.svg)](https://docs.rs/polyfill-rs)
