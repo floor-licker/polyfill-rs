@@ -1,6 +1,6 @@
 [package]
 name = "polyfill-rs"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 authors = ["Julius Tranquilli <julius@example.com>"]
 description = "The Fastest Polymarket Client On The Market."
