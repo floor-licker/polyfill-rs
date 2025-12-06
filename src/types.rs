@@ -589,6 +589,31 @@ pub struct Market {
     pub seconds_delay: Decimal,
     pub icon: String,
     pub fpmm: String,
+    // Additional fields from API
+    #[serde(default)]
+    pub enable_order_book: bool,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub accepting_orders: bool,
+    #[serde(default)]
+    pub accepting_order_timestamp: Option<String>,
+    #[serde(with = "rust_decimal::serde::str", default)]
+    pub maker_base_fee: Decimal,
+    #[serde(with = "rust_decimal::serde::str", default)]
+    pub taker_base_fee: Decimal,
+    #[serde(default)]
+    pub notifications_enabled: bool,
+    #[serde(default)]
+    pub neg_risk: bool,
+    #[serde(default)]
+    pub neg_risk_market_id: String,
+    #[serde(default)]
+    pub neg_risk_request_id: String,
+    #[serde(default)]
+    pub image: String,
+    #[serde(default)]
+    pub is_50_50_outcome: bool,
 }
 
 /// Token information within a market
@@ -596,6 +621,10 @@ pub struct Market {
 pub struct Token {
     pub token_id: String,
     pub outcome: String,
+    #[serde(with = "rust_decimal::serde::str", default)]
+    pub price: Decimal,
+    #[serde(default)]
+    pub winner: bool,
 }
 
 /// Client configuration for PolyfillClient
@@ -1037,15 +1066,16 @@ pub struct SimplifiedMarket {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rewards {
     pub rates: Option<serde_json::Value>,
-    #[serde(with = "rust_decimal::serde::str")]
+    // API returns these as plain numbers, not strings
     pub min_size: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
     pub max_spread: Decimal,
+    #[serde(default)]
     pub event_start_date: Option<String>,
+    #[serde(default)]
     pub event_end_date: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub in_game_multiplier: Option<Decimal>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub reward_epoch: Option<Decimal>,
 }
 

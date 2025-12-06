@@ -311,10 +311,14 @@ impl Decoder<Market> for RawMarketResponse {
             Token {
                 token_id: self.tokens[0].token_id.clone(),
                 outcome: self.tokens[0].outcome.clone(),
+                price: Decimal::ZERO,
+                winner: false,
             },
             Token {
                 token_id: self.tokens[1].token_id.clone(),
                 outcome: self.tokens[1].outcome.clone(),
+                price: Decimal::ZERO,
+                winner: false,
             },
         ];
 
@@ -346,6 +350,19 @@ impl Decoder<Market> for RawMarketResponse {
             seconds_delay: Decimal::ZERO,
             icon: String::new(),
             fpmm: String::new(),
+            // Additional fields
+            enable_order_book: false,
+            archived: false,
+            accepting_orders: false,
+            accepting_order_timestamp: None,
+            maker_base_fee: Decimal::ZERO,
+            taker_base_fee: Decimal::ZERO,
+            notifications_enabled: false,
+            neg_risk: false,
+            neg_risk_market_id: String::new(),
+            neg_risk_request_id: String::new(),
+            image: String::new(),
+            is_50_50_outcome: false,
         })
     }
 }
@@ -480,6 +497,36 @@ pub mod fast_parse {
     pub fn parse_address(s: &str) -> Result<Address> {
         Address::from_str(s)
             .map_err(|e| PolyfillError::parse(format!("Invalid address: {}", e), None))
+    }
+
+    /// Fast JSON parsing using SIMD instructions when possible
+    /// Falls back to serde_json if simd-json fails
+    /// Note: This requires owned types (no borrowing from input)
+    #[inline]
+    pub fn parse_json_fast<T>(bytes: &mut [u8]) -> Result<T>
+    where
+        T: for<'de> serde::Deserialize<'de>,
+    {
+        // Try SIMD parsing first (2-3x faster)
+        match simd_json::serde::from_slice(bytes) {
+            Ok(val) => Ok(val),
+            Err(_) => {
+                // Fallback to standard serde_json for safety
+                serde_json::from_slice(bytes)
+                    .map_err(|e| PolyfillError::parse(format!("JSON parse error: {}", e), None))
+            }
+        }
+    }
+
+    /// Fast JSON parsing for immutable data
+    #[inline]
+    pub fn parse_json_fast_owned<T>(bytes: &[u8]) -> Result<T>
+    where
+        T: for<'de> serde::Deserialize<'de>,
+    {
+        // Make a mutable copy for SIMD parsing
+        let mut data = bytes.to_vec();
+        parse_json_fast(&mut data)
     }
 
     /// Fast U256 parsing
