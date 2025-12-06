@@ -27,6 +27,7 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
         targets: ${{ matrix.target }}
+        components: rustfmt, clippy
 
     - name: Cache dependencies
       uses: actions/cache@v4
@@ -76,8 +77,7 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: stable
-        override: true
-        profile: minimal
+        components: rustfmt, clippy
 
     - name: Cache dependencies
       uses: actions/cache@v4
@@ -105,8 +105,7 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: stable
-        override: true
-        profile: minimal
+        components: rustfmt, clippy
 
     - name: Install cargo-audit
       run: cargo install cargo-audit
@@ -125,8 +124,7 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: stable
-        override: true
-        profile: minimal
+        components: rustfmt, clippy
 
     - name: Build documentation
       run: cargo doc --no-deps --all-features
@@ -145,8 +143,7 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: stable
-        override: true
-        profile: minimal
+        components: rustfmt, clippy
 
     - name: Build examples
       run: cargo build --examples --all-features
@@ -166,8 +163,7 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: stable
-        override: true
-        profile: minimal
+        components: rustfmt, clippy
 
     - name: Install system dependencies for cargo-spellcheck
       run: |
@@ -214,8 +210,7 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: stable
-        override: true
-        profile: minimal
+        components: rustfmt, clippy
 
     - name: Build for release
       run: cargo build --release --all-features
