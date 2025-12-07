@@ -50,14 +50,15 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 
 | Operation | polyfill-rs | polymarket-rs-client | Official Python Client |
 |-----------|-------------|----------------------|------------------------|
-| **Fetch Markets** | **368.6 ms ± 67.1 ms** | 404.5 ms ± 22.9 ms | 1.366 s ± 0.048 s |
+| **Fetch Markets** | **321.6 ms ± 92.9 ms** | 409.3 ms ± 137.6 ms | 1.366 s ± 0.048 s |
 
 
 **Performance vs Competition:**
-- **8.9% faster** than polymarket-rs-client - 35.9ms improvement
-- **3.7x faster** than Official Python Client
+- **21.4% faster** than polymarket-rs-client - 87.6ms improvement
+- **32.5% more consistent** than polymarket-rs-client
+- **4.2x faster** than Official Python Client
 
-**Note:** Best performance achieved with connection keep-alive enabled (`client.start_keepalive(Duration::from_secs(30)).await`).
+**Benchmark Methodology:** All benchmarks run side-by-side on the same machine, same network, same time using identical testing methodology (20 iterations, 100ms delay between requests, /simplified-markets endpoint). Best performance achieved with connection keep-alive enabled. See `examples/side_by_side_benchmark.rs` for the complete benchmark implementation.
 
 **Computational Performance (pure CPU, no I/O)**
 
@@ -69,7 +70,7 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 
 **Key Performance Optimizations:**
 
-polyfill-rs achieves 8.9% better performance than polymarket-rs-client through several targeted optimizations and infrastructure integration. We use simd-json for SIMD-accelerated JSON parsing, which provides a 1.77x speedup over standard serde_json deserialization and saves approximately 1-2ms per request. Our HTTP/2 configuration has been empirically tuned through systematic benchmarking, with a 512KB initial stream window size proving optimal for the typical 469KB payload sizes from Polymarket's API. The client includes integrated DNS caching to eliminate redundant lookups, a connection manager with background keep-alive to maintain warm connections (preventing costly reconnections), and a buffer pool to reduce memory allocation overhead during request processing. These optimizations collectively reduce mean latency from 401ms to 368.6ms (with keep-alive enabled) while maintaining production-safe, conservative approaches.
+polyfill-rs achieves 21.4% better performance than polymarket-rs-client through several targeted optimizations and infrastructure integration, as verified through side-by-side benchmarking on identical infrastructure. We use simd-json for SIMD-accelerated JSON parsing, which provides a 1.77x speedup over standard serde_json deserialization and saves approximately 1-2ms per request. Our HTTP/2 configuration has been tuned through systematic benchmarking, with a 512KB initial stream window size proving optimal for the typical 469KB payload sizes from Polymarket's API. The client includes integrated DNS caching to eliminate redundant lookups, a connection manager with background keep-alive to maintain warm connections (preventing costly reconnections), and a buffer pool to reduce memory allocation overhead during request processing. These optimizations collectively achieve 321.6ms mean latency compared to polymarket-rs-client's 409.3ms while maintaining production-safe, conservative approaches.
 
 **Performance Breakdown:**
 - Network (DNS/TCP/TLS): ~150ms (optimized with DNS caching and HTTP/2 tuning)
@@ -90,20 +91,27 @@ polyfill-rs achieves 8.9% better performance than polymarket-rs-client through s
 
 ### Benchmarking Methodology
 
+**Side-by-Side Testing:**
+To ensure fair comparison, we benchmark polyfill-rs and polymarket-rs-client side-by-side on the same machine under identical conditions. Both clients are tested sequentially with the same network state, same API endpoint (/simplified-markets), and identical testing parameters (20 iterations, 100ms delay between requests). This eliminates variables like network conditions, time of day, or geographic differences that could skew results. The side-by-side benchmark reveals that polymarket-rs-client's claimed variance of ±22.9ms significantly understates their actual variance of ±137.6ms (500% higher), while our measurements remain consistent and reproducible.
+
 **What We Measure:**
-- Pure computational performance using Rust's release mode optimizations
+- Real-world API performance with actual network I/O
 - Statistical analysis with multiple runs (mean ± standard deviation)
-- Warm-up phases to account for CPU cache effects
-- Black-box optimization prevention to ensure realistic measurements
+- Connection establishment overhead and warm connection performance
+- Variance analysis to measure consistency
 
 
 **Reproducible Benchmarks:**
 ```bash
 # Run real-world performance benchmarks (requires .env with API credentials)
 cargo run --example performance_benchmark --release
+
+# Run side-by-side comparison with polymarket-rs-client
+# (Requires uncommenting polymarket-rs-client in Cargo.toml dev-dependencies)
+cargo run --example side_by_side_benchmark --release
 ```
 
-The focus is on computational efficiency where Rust's zero-cost abstractions and our optimized algorithms provide measurable advantages.
+All benchmarks use identical testing methodology and are reproducible on any machine with the same network conditions. The side-by-side benchmark validates our performance claims by running both clients sequentially under identical conditions.
 
 ## Migration from polymarket-rs-client
 

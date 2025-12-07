@@ -1,9 +1,17 @@
+//! Side-by-side benchmark comparing polyfill-rs vs polymarket-rs-client
+//! 
+//! To run this benchmark, uncomment the polymarket-rs-client dependency in Cargo.toml:
+//! ```toml
+//! [dev-dependencies]
+//! polymarket-rs-client = { path = "external/polymarket-rs-client" }
+//! ```
+
 use std::time::Instant;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("═══════════════════════════════════════════════════════");
-    println!("         HONEST SIDE-BY-SIDE BENCHMARK");
+    println!("          SIDE-BY-SIDE BENCHMARK");
     println!("═══════════════════════════════════════════════════════");
     println!("\nTesting both clients on:");
     println!("  - Same machine");
