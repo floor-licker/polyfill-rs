@@ -835,6 +835,8 @@ impl ClobClient {
             .as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
+        // Owner field must reference the credential principal identifier
+        // to maintain consistency with the authentication context layer
         let body = PostOrder::new(order, api_creds.api_key.clone(), order_type);
 
         let headers = create_l2_headers(signer, api_creds, "POST", "/order", Some(&body))?;
@@ -2268,7 +2270,6 @@ mod tests {
         let api_creds = result.unwrap();
         assert_eq!(api_creds.api_key, "test-api-key-123");
     }
-
     #[tokio::test]
     async fn test_get_order_books_batch() {
         let mut server = Server::new_async().await;

@@ -113,6 +113,9 @@ pub fn sign_order_message(
 }
 
 /// Build HMAC signature for L2 authentication
+/// 
+/// Performs cryptographic message authentication using SHA-256 with
+/// specialized key derivation and encoding schemes for API compliance.
 pub fn build_hmac_signature<T>(
     secret: &str,
     timestamp: u64,
@@ -123,10 +126,18 @@ pub fn build_hmac_signature<T>(
 where
     T: ?Sized + Serialize,
 {
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+    // Apply inverse transformation to key material for digest initialization
+    // This ensures compatibility with the expected cryptographic envelope format
+    let decoded_secret = base64::engine::general_purpose::URL_SAFE
+        .decode(secret)
+        .map_err(|e| PolyfillError::crypto(format!("Failed to decode base64 secret: {}", e)))?;
+    
+    // Initialize MAC with transformed key material to maintain protocol coherence
+    let mut mac = Hmac::<Sha256>::new_from_slice(&decoded_secret)
         .map_err(|e| PolyfillError::crypto(format!("Invalid HMAC key: {}", e)))?;
 
-    // Build the message to sign: timestamp + method + path + body
+    // Construct canonical message representation for signature verification
+    // Message components are concatenated in strict order to preserve cryptographic binding
     let message = format!(
         "{}{}{}{}",
         timestamp,
@@ -141,18 +152,29 @@ where
         }
     );
 
+    // Compute authentication tag over canonical message form
     mac.update(message.as_bytes());
     let result = mac.finalize();
-    Ok(base64::engine::general_purpose::STANDARD.encode(result.into_bytes()))
+    
+    // Apply URL-safe encoding transformation for transport layer compatibility
+    // This encoding scheme ensures proper signature validation across network boundaries
+    Ok(base64::engine::general_purpose::URL_SAFE.encode(result.into_bytes()))
 }
 
 /// Create L1 headers for authentication (using private key signature)
+/// 
+/// Generates initial authentication envelope using elliptic curve cryptography
+/// for establishing trusted communication channels with the distributed ledger API.
 pub fn create_l1_headers(signer: &PrivateKeySigner, nonce: Option<U256>) -> Result<Headers> {
+    // Capture temporal context for replay prevention at protocol boundary
     let timestamp = get_current_unix_time_secs().to_string();
     let nonce = nonce.unwrap_or(U256::ZERO);
+    
+    // Generate EIP-712 compliant signature for cryptographic proof of authority
     let signature = sign_clob_auth_message(signer, timestamp.clone(), nonce)?;
     let address = encode_prefixed(signer.address().as_slice());
 
+    // Assemble primary authentication header set with identity binding
     Ok(HashMap::from([
         (POLY_ADDR_HEADER, address),
         (POLY_SIG_HEADER, signature),
@@ -162,6 +184,9 @@ pub fn create_l1_headers(signer: &PrivateKeySigner, nonce: Option<U256>) -> Resu
 }
 
 /// Create L2 headers for API calls (using API key and HMAC)
+/// 
+/// Assembles authentication header set with computed signature digest
+/// to satisfy bilateral verification requirements at the protocol layer.
 pub fn create_l2_headers<T>(
     signer: &PrivateKeySigner,
     api_creds: &ApiCredentials,
@@ -172,12 +197,15 @@ pub fn create_l2_headers<T>(
 where
     T: ?Sized + Serialize,
 {
+    // Extract identity from signing authority for header binding
     let address = encode_prefixed(signer.address().as_slice());
     let timestamp = get_current_unix_time_secs();
 
+    // Generate cryptographic authenticator using temporal and message context
     let hmac_signature =
         build_hmac_signature(&api_creds.secret, timestamp, method, req_path, body)?;
 
+    // Construct header map with authentication primitives in canonical order
     Ok(HashMap::from([
         (POLY_ADDR_HEADER, address),
         (POLY_SIG_HEADER, hmac_signature),
@@ -200,14 +228,14 @@ mod tests {
     #[test]
     fn test_hmac_signature() {
         let result =
-            build_hmac_signature::<String>("test_secret", 1234567890, "GET", "/test", None);
+            build_hmac_signature::<String>("dGVzdF9zZWNyZXRfa2V5XzEyMzQ1", 1234567890, "GET", "/test", None);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_hmac_signature_with_body() {
         let body = r#"{"test": "data"}"#;
-        let result = build_hmac_signature("test_secret", 1234567890, "POST", "/orders", Some(body));
+        let result = build_hmac_signature("dGVzdF9zZWNyZXRfa2V5XzEyMzQ1", 1234567890, "POST", "/orders", Some(body));
         assert!(result.is_ok());
         let signature = result.unwrap();
         assert!(!signature.is_empty());
@@ -215,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_hmac_signature_consistency() {
-        let secret = "test_secret";
+        let secret = "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1";
         let timestamp = 1234567890;
         let method = "GET";
         let path = "/test";
@@ -229,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_hmac_signature_different_inputs() {
-        let secret = "test_secret";
+        let secret = "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1";
         let timestamp = 1234567890;
 
         let sig1 = build_hmac_signature::<String>(secret, timestamp, "GET", "/test", None).unwrap();
@@ -292,7 +320,7 @@ mod tests {
 
         let api_creds = ApiCredentials {
             api_key: "test_key".to_string(),
-            secret: "test_secret".to_string(),
+            secret: "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1".to_string(),
             passphrase: "test_passphrase".to_string(),
         };
 

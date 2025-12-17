@@ -291,17 +291,6 @@ let client = ClobClient::new("https://clob.polymarket.com");
 - **Internet**: 5 connections, 60s timeouts, full compression (bandwidth optimization)
 - **Standard**: 10 connections, 30s timeouts, balanced settings
 
-### Real-World Trading Impact
-
-In a high-frequency trading environment, these optimizations compound:
-
-- **Microsecond advantages**: 11% improvement on every API call adds up over thousands of requests
-- **Cold start elimination**: 70% faster warm connections critical for trading session startup
-- **Batch efficiency**: 200% improvement enables real-time multi-market monitoring
-- **Fault tolerance**: Circuit breakers prevent trading halts during network issues
-
-The combination of network optimizations with our computational advantages (fixed-point arithmetic, zero-allocation updates) creates a multiplicative performance benefit for latency-sensitive applications.
-
 ## Getting Started
 
 ```toml
