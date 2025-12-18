@@ -8,8 +8,8 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use trust_dns_resolver::config::*;
-use trust_dns_resolver::TokioAsyncResolver;
+use hickory_resolver::config::*;
+use hickory_resolver::TokioAsyncResolver;
 
 /// DNS cache entry with TTL
 #[derive(Clone, Debug)]
