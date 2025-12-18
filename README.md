@@ -193,38 +193,21 @@ EIP-712 signature validation, HMAC-SHA256 authentication, and adaptive rate limi
 Designed for deterministic latency profiles in high-frequency environments:
 
 ### Critical Path Optimizations
-- **Fixed-point arithmetic**: Eliminates floating-point pipeline stalls and decimal parsing overhead
-- **Lock-free updates**: Compare-and-swap operations for concurrent book modifications
-- **Cache-aligned structures**: 64-byte alignment for optimal L1/L2 cache utilization
-- **Vectorized operations**: SIMD-friendly data layouts for batch price level processing
+
+The library achieves deterministic latency through several fundamental design choices. Fixed-point arithmetic eliminates floating-point pipeline stalls and decimal parsing overhead that would otherwise introduce variable execution times. Lock-free updates using compare-and-swap operations enable concurrent book modifications without mutex contention or priority inversion. Cache-aligned structures maintain 64-byte alignment for optimal L1/L2 cache utilization, ensuring that hot data structures fit within single cache lines. Vectorized operations leverage SIMD-friendly data layouts to enable batch price level processing, allowing modern CPUs to process multiple price levels in parallel.
 
 ### Memory Architecture
-- **Bounded allocation**: Pre-allocated pools eliminate GC pressure and allocation latency spikes
-- **Depth limiting**: Configurable book depth prevents memory bloat in illiquid markets
-- **Temporal locality**: Hot data structures designed for cache line efficiency
+
+The memory subsystem is designed around predictable allocation patterns to prevent latency spikes. Pre-allocated pools eliminate garbage collection pressure and allocation latency spikes by maintaining warm buffers ready for immediate use. Configurable book depth limiting prevents memory bloat in illiquid markets where maintaining deep order books provides diminishing returns. Hot data structures are designed with temporal locality in mind, grouping frequently-accessed fields together to maximize cache line efficiency and minimize memory bandwidth consumption.
 
 ### Architectural Principles
-Precision-performance tradeoff optimization through boundary quantization:
 
-- **Ingress quantization**: Convert to fixed-point at system boundaries, maintaining tick-aligned precision
-- **Critical path integers**: Branchless comparisons and arithmetic in order matching logic
-- **Egress conversion**: IEEE 754 compliance at API surfaces for downstream compatibility
-- **Deterministic execution**: Predictable instruction counts for latency-sensitive code paths
-
-**Implementation notes**: Performance-critical sections include cycle count analysis and memory access pattern documentation. Cache miss profiling and branch prediction optimization detailed in inline comments.
+The library optimizes the precision-performance tradeoff through strategic boundary quantization. At system ingress, all price data converts to fixed-point representation at system boundaries while maintaining tick-aligned precision required by exchange protocols. The critical path operates exclusively on integer arithmetic with branchless comparisons and arithmetic operations in order matching logic, eliminating conditional jumps that would pollute the branch predictor. At system egress, all data converts back to IEEE 754 floating-point representation to ensure API surface compatibility with downstream consumers. This architecture enables deterministic execution with predictable instruction counts for latency-sensitive code paths. Performance-critical sections include cycle count analysis and memory access pattern documentation, with cache miss profiling and branch prediction optimization detailed in inline comments.
 
 
 ### Performance Advantages
 
-- **Fixed-point arithmetic**: Sub-nanosecond price calculations vs decimal operations
-- **Zero-allocation updates**: Order book modifications without memory allocation
-- **Cache-optimized layouts**: Data structures aligned for CPU cache efficiency
-- **Lock-free operations**: Concurrent access without mutex contention
-- **Network optimizations**: HTTP/2, connection pooling, TCP_NODELAY, adaptive timeouts
-- **Connection pre-warming**: 1.7x faster subsequent requests
-- **Request parallelization**: 3x faster when batching operations
-
-Run benchmarks: `cargo bench --bench comparison_benchmarks`
+The library achieves superior performance through multiple orthogonal optimization strategies working in concert. Fixed-point arithmetic enables sub-nanosecond price calculations compared to the overhead of decimal operations, while zero-allocation updates allow order book modifications without triggering memory allocation or garbage collection pauses. Data structures use cache-optimized layouts with careful alignment to maximize CPU cache efficiency and minimize memory bandwidth requirements. Lock-free operations enable concurrent access patterns without mutex contention or context switching overhead. Network optimizations including HTTP/2 multiplexing, connection pooling, TCP_NODELAY for immediate packet transmission, and adaptive timeouts reduce end-to-end latency. Connection pre-warming provides 1.7x faster subsequent requests by maintaining warm TCP connections and pre-resolved DNS entries. Request parallelization achieves 3x speedup when batching operations by maximizing connection utilization and reducing round-trip overhead. Run benchmarks using `cargo bench --bench comparison_benchmarks` to measure these improvements on your hardware.
 
 ## Network Optimization Deep Dive
 
@@ -535,48 +518,6 @@ If you're tracking lots of tokens, you might want to clean up stale books:
 let removed = book_manager.cleanup_stale_books(Duration::from_secs(300))?;
 println!("Cleaned up {} stale order books", removed);
 ```
-
-## Error Handling (Because Things Break)
-
-The library tries to be helpful about what went wrong:
-
-```rust
-use polyfill_rs::errors::PolyfillError;
-
-match book_manager.apply_delta(delta) {
-    Ok(_) => {
-        // Order book updated successfully
-    }
-    Err(PolyfillError::Validation { message, .. }) => {
-        // Bad data (price not aligned to tick size, etc.)
-        eprintln!("Invalid data: {}", message);
-    }
-    Err(PolyfillError::Network { .. }) => {
-        // Network problems - probably worth retrying
-        eprintln!("Network error, will retry...");
-    }
-    Err(PolyfillError::RateLimit { retry_after, .. }) => {
-        // Hit rate limits - back off
-        if let Some(delay) = retry_after {
-            tokio::time::sleep(delay).await;
-        }
-    }
-    Err(PolyfillError::Stream { kind, .. }) => {
-        // WebSocket issues - the library will try to reconnect automatically
-        eprintln!("Stream error: {:?}", kind);
-    }
-    Err(e) => {
-        eprintln!("Something else went wrong: {}", e);
-    }
-}
-```
-
-Most errors tell you whether they're worth retrying or if you should give up.
-
-## What's Different From Other Libraries?
-
-### Performance
-Most trading libraries are built for "demo day" - they work fine for small examples but fall apart under real load. This one is designed for people who actually need to process thousands of updates per second.
 
 ### Market Microstructure Compliance
 Automatic tick size validation and price quantization prevent market fragmentation and ensure exchange compatibility. Sub-tick pricing rejection happens at ingress with zero-cost integer modulo operations.
