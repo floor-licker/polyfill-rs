@@ -8,8 +8,8 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use trust_dns_resolver::TokioAsyncResolver;
 use trust_dns_resolver::config::*;
+use trust_dns_resolver::TokioAsyncResolver;
 
 /// DNS cache entry with TTL
 #[derive(Clone, Debug)]
@@ -28,10 +28,8 @@ pub struct DnsCache {
 impl DnsCache {
     /// Create a new DNS cache with system configuration
     pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let resolver = TokioAsyncResolver::tokio(
-            ResolverConfig::default(),
-            ResolverOpts::default(),
-        );
+        let resolver =
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
         Ok(Self {
             resolver,
@@ -42,10 +40,8 @@ impl DnsCache {
 
     /// Create a DNS cache with custom TTL
     pub async fn with_ttl(ttl: Duration) -> Result<Self, Box<dyn std::error::Error>> {
-        let resolver = TokioAsyncResolver::tokio(
-            ResolverConfig::default(),
-            ResolverOpts::default(),
-        );
+        let resolver =
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
 
         Ok(Self {
             resolver,
@@ -127,4 +123,3 @@ mod tests {
         assert_eq!(cache.cache_size().await, 0);
     }
 }
-

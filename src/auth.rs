@@ -113,7 +113,7 @@ pub fn sign_order_message(
 }
 
 /// Build HMAC signature for L2 authentication
-/// 
+///
 /// Performs cryptographic message authentication using SHA-256 with
 /// specialized key derivation and encoding schemes for API compliance.
 pub fn build_hmac_signature<T>(
@@ -131,7 +131,7 @@ where
     let decoded_secret = base64::engine::general_purpose::URL_SAFE
         .decode(secret)
         .map_err(|e| PolyfillError::crypto(format!("Failed to decode base64 secret: {}", e)))?;
-    
+
     // Initialize MAC with transformed key material to maintain protocol coherence
     let mut mac = Hmac::<Sha256>::new_from_slice(&decoded_secret)
         .map_err(|e| PolyfillError::crypto(format!("Invalid HMAC key: {}", e)))?;
@@ -155,21 +155,21 @@ where
     // Compute authentication tag over canonical message form
     mac.update(message.as_bytes());
     let result = mac.finalize();
-    
+
     // Apply URL-safe encoding transformation for transport layer compatibility
     // This encoding scheme ensures proper signature validation across network boundaries
     Ok(base64::engine::general_purpose::URL_SAFE.encode(result.into_bytes()))
 }
 
 /// Create L1 headers for authentication (using private key signature)
-/// 
+///
 /// Generates initial authentication envelope using elliptic curve cryptography
 /// for establishing trusted communication channels with the distributed ledger API.
 pub fn create_l1_headers(signer: &PrivateKeySigner, nonce: Option<U256>) -> Result<Headers> {
     // Capture temporal context for replay prevention at protocol boundary
     let timestamp = get_current_unix_time_secs().to_string();
     let nonce = nonce.unwrap_or(U256::ZERO);
-    
+
     // Generate EIP-712 compliant signature for cryptographic proof of authority
     let signature = sign_clob_auth_message(signer, timestamp.clone(), nonce)?;
     let address = encode_prefixed(signer.address().as_slice());
@@ -184,7 +184,7 @@ pub fn create_l1_headers(signer: &PrivateKeySigner, nonce: Option<U256>) -> Resu
 }
 
 /// Create L2 headers for API calls (using API key and HMAC)
-/// 
+///
 /// Assembles authentication header set with computed signature digest
 /// to satisfy bilateral verification requirements at the protocol layer.
 pub fn create_l2_headers<T>(
@@ -227,15 +227,26 @@ mod tests {
 
     #[test]
     fn test_hmac_signature() {
-        let result =
-            build_hmac_signature::<String>("dGVzdF9zZWNyZXRfa2V5XzEyMzQ1", 1234567890, "GET", "/test", None);
+        let result = build_hmac_signature::<String>(
+            "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1",
+            1234567890,
+            "GET",
+            "/test",
+            None,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_hmac_signature_with_body() {
         let body = r#"{"test": "data"}"#;
-        let result = build_hmac_signature("dGVzdF9zZWNyZXRfa2V5XzEyMzQ1", 1234567890, "POST", "/orders", Some(body));
+        let result = build_hmac_signature(
+            "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1",
+            1234567890,
+            "POST",
+            "/orders",
+            Some(body),
+        );
         assert!(result.is_ok());
         let signature = result.unwrap();
         assert!(!signature.is_empty());

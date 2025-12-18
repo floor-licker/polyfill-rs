@@ -15,7 +15,7 @@ pub struct BufferPool {
 
 impl BufferPool {
     /// Create a new buffer pool
-    /// 
+    ///
     /// # Arguments
     /// * `buffer_size` - Initial size of each buffer (e.g., 512KB for typical market data)
     /// * `max_pool_size` - Maximum number of buffers to keep in the pool
@@ -30,23 +30,23 @@ impl BufferPool {
     /// Get a buffer from the pool, or create a new one if pool is empty
     pub async fn get(&self) -> Vec<u8> {
         let mut buffers = self.buffers.lock().await;
-        
+
         match buffers.pop() {
             Some(mut buffer) => {
                 buffer.clear();
                 buffer
-            }
+            },
             None => {
                 // Pool is empty, create a new buffer
                 Vec::with_capacity(self.buffer_size)
-            }
+            },
         }
     }
 
     /// Return a buffer to the pool
     pub async fn return_buffer(&self, mut buffer: Vec<u8>) {
         let mut buffers = self.buffers.lock().await;
-        
+
         // Only return to pool if we're under the size limit
         if buffers.len() < self.max_pool_size {
             buffer.clear();
@@ -88,10 +88,10 @@ mod tests {
     #[tokio::test]
     async fn test_buffer_pool_get_and_return() {
         let pool = BufferPool::new(1024, 5);
-        
+
         let buffer = pool.get().await;
         assert_eq!(buffer.capacity(), 1024);
-        
+
         pool.return_buffer(buffer).await;
         assert_eq!(pool.size().await, 1);
     }
@@ -106,16 +106,15 @@ mod tests {
     #[tokio::test]
     async fn test_buffer_pool_max_size() {
         let pool = BufferPool::new(1024, 2);
-        
+
         let buf1 = pool.get().await;
         let buf2 = pool.get().await;
         let buf3 = pool.get().await;
-        
+
         pool.return_buffer(buf1).await;
         pool.return_buffer(buf2).await;
         pool.return_buffer(buf3).await; // This should be dropped, not added to pool
-        
+
         assert_eq!(pool.size().await, 2); // Max size is 2
     }
 }
-

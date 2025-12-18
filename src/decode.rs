@@ -514,7 +514,7 @@ pub mod fast_parse {
                 // Fallback to standard serde_json for safety
                 serde_json::from_slice(bytes)
                     .map_err(|e| PolyfillError::parse(format!("JSON parse error: {}", e), None))
-            }
+            },
         }
     }
 

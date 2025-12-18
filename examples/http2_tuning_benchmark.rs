@@ -2,6 +2,7 @@ use reqwest::ClientBuilder;
 use std::time::{Duration, Instant};
 
 #[tokio::main]
+#[allow(unused_assignments)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("HTTP/2 Configuration Tuning Benchmark");
     println!("======================================\n");
@@ -26,9 +27,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     let max_frame_sizes = vec![
-        None,             // Default (16KB)
-        Some(32 * 1024),  // 32KB
-        Some(64 * 1024),  // 64KB
+        None,            // Default (16KB)
+        Some(32 * 1024), // 32KB
+        Some(64 * 1024), // 64KB
     ];
 
     let keep_alive_intervals = vec![
@@ -72,10 +73,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 3: Connection window sizes (with best stream window from above)
     println!("\n\nTest 3: Connection Window Sizes");
     println!("================================");
-    
+
     // Use 2MB stream window as a reasonable default for this test
     let default_stream_window = 2 * 1024 * 1024;
-    
+
     for conn_window in &connection_windows {
         let client = ClientBuilder::new()
             .http2_adaptive_window(true)
@@ -117,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => "Frame: Default".to_string(),
             Some(s) => format!("Frame: {}KB", s / 1024),
         };
-        
+
         let mean = test_config(client, &name).await?;
 
         if mean < best_mean {
@@ -159,7 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nBest Configuration: {}", best_config.unwrap());
     println!("Best Mean Latency: {:.1} ms", best_mean);
     println!("\nBaseline (default): {:.1} ms", baseline_mean);
-    
+
     let improvement = ((baseline_mean - best_mean) / baseline_mean) * 100.0;
     if improvement > 0.0 {
         println!("Improvement: {:.1}% faster", improvement);
@@ -170,15 +171,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn test_config(client: reqwest::Client, name: &str) -> Result<f64, Box<dyn std::error::Error>> {
+async fn test_config(
+    client: reqwest::Client,
+    name: &str,
+) -> Result<f64, Box<dyn std::error::Error>> {
     let iterations = 20;
     let mut times = Vec::new();
 
     print!("  Testing {}... ", name);
-    
+
     for _ in 0..iterations {
         let start = Instant::now();
-        
+
         match client
             .get("https://clob.polymarket.com/simplified-markets?next_cursor=MA==")
             .send()
@@ -189,11 +193,11 @@ async fn test_config(client: reqwest::Client, name: &str) -> Result<f64, Box<dyn
                     let _ = response.bytes().await;
                     times.push(start.elapsed());
                 }
-            }
+            },
             Err(_) => {
                 // Skip failed requests
                 continue;
-            }
+            },
         }
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -205,16 +209,17 @@ async fn test_config(client: reqwest::Client, name: &str) -> Result<f64, Box<dyn
     }
 
     let mean = times.iter().sum::<Duration>().as_millis() as f64 / times.len() as f64;
-    let variance = times.iter()
+    let variance = times
+        .iter()
         .map(|t| {
             let diff = t.as_millis() as f64 - mean;
             diff * diff
         })
-        .sum::<f64>() / times.len() as f64;
+        .sum::<f64>()
+        / times.len() as f64;
     let std_dev = variance.sqrt();
 
     println!("{:.1} ms ± {:.1} ms", mean, std_dev);
 
     Ok(mean)
 }
-

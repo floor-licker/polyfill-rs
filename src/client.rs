@@ -61,8 +61,11 @@ pub struct ClobClient {
     signer: Option<PrivateKeySigner>,
     api_creds: Option<ApiCreds>,
     order_builder: Option<crate::orders::OrderBuilder>,
+    #[allow(dead_code)]
     dns_cache: Option<std::sync::Arc<crate::dns_cache::DnsCache>>,
+    #[allow(dead_code)]
     connection_manager: Option<std::sync::Arc<crate::connection_manager::ConnectionManager>>,
+    #[allow(dead_code)]
     buffer_pool: std::sync::Arc<crate::buffer_pool::BufferPool>,
 }
 
@@ -82,22 +85,20 @@ impl ClobClient {
             .unwrap_or_else(|_| Client::new());
 
         // Initialize DNS cache and pre-warm it
-        let dns_cache = tokio::runtime::Handle::try_current()
-            .ok()
-            .and_then(|_| {
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        let cache = crate::dns_cache::DnsCache::new().await.ok()?;
-                        let hostname = host
-                            .trim_start_matches("https://")
-                            .trim_start_matches("http://")
-                            .split('/')
-                            .next()?;
-                        cache.prewarm(hostname).await.ok()?;
-                        Some(std::sync::Arc::new(cache))
-                    })
+        let dns_cache = tokio::runtime::Handle::try_current().ok().and_then(|_| {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let cache = crate::dns_cache::DnsCache::new().await.ok()?;
+                    let hostname = host
+                        .trim_start_matches("https://")
+                        .trim_start_matches("http://")
+                        .split('/')
+                        .next()?;
+                    cache.prewarm(hostname).await.ok()?;
+                    Some(std::sync::Arc::new(cache))
                 })
-            });
+            })
+        });
 
         // Initialize connection manager
         let connection_manager = Some(std::sync::Arc::new(
@@ -109,7 +110,7 @@ impl ClobClient {
 
         // Initialize buffer pool (512KB buffers, pool of 10)
         let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
-        
+
         // Pre-warm buffer pool with 3 buffers
         let pool_clone = buffer_pool.clone();
         if let Ok(_handle) = tokio::runtime::Handle::try_current() {
@@ -134,7 +135,7 @@ impl ClobClient {
     /// Create a client optimized for co-located environments
     pub fn new_colocated(host: &str) -> Self {
         let http_client = create_colocated_client().unwrap_or_else(|_| Client::new());
-        
+
         let connection_manager = Some(std::sync::Arc::new(
             crate::connection_manager::ConnectionManager::new(
                 http_client.clone(),
@@ -142,7 +143,7 @@ impl ClobClient {
             ),
         ));
         let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
-        
+
         Self {
             http_client,
             base_url: host.to_string(),
@@ -159,7 +160,7 @@ impl ClobClient {
     /// Create a client optimized for internet connections
     pub fn new_internet(host: &str) -> Self {
         let http_client = create_internet_client().unwrap_or_else(|_| Client::new());
-        
+
         let connection_manager = Some(std::sync::Arc::new(
             crate::connection_manager::ConnectionManager::new(
                 http_client.clone(),
@@ -167,7 +168,7 @@ impl ClobClient {
             ),
         ));
         let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
-        
+
         Self {
             http_client,
             base_url: host.to_string(),
@@ -190,7 +191,7 @@ impl ClobClient {
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
 
         let http_client = create_optimized_client().unwrap_or_else(|_| Client::new());
-        
+
         // Initialize infrastructure modules
         let dns_cache = None; // Skip DNS cache for simplicity in this constructor
         let connection_manager = Some(std::sync::Arc::new(
@@ -228,7 +229,7 @@ impl ClobClient {
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
 
         let http_client = create_optimized_client().unwrap_or_else(|_| Client::new());
-        
+
         // Initialize infrastructure modules
         let dns_cache = None; // Skip DNS cache for simplicity in this constructor
         let connection_manager = Some(std::sync::Arc::new(
@@ -1751,7 +1752,7 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_client_creation() {
         let client = create_test_client("https://test.example.com");
         assert_eq!(client.base_url, "https://test.example.com");
@@ -1759,7 +1760,7 @@ mod tests {
         assert!(client.api_creds.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_client_with_l1_headers() {
         let client = create_test_client_with_auth("https://test.example.com");
         assert_eq!(client.base_url, "https://test.example.com");
@@ -1767,7 +1768,7 @@ mod tests {
         assert_eq!(client.chain_id, 137);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_client_with_l2_headers() {
         let api_creds = ApiCredentials {
             api_key: "test_key".to_string(),
@@ -1788,7 +1789,7 @@ mod tests {
         assert_eq!(client.chain_id, 137);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_set_api_creds() {
         let mut client = create_test_client("https://test.example.com");
         assert!(client.api_creds.is_none());
@@ -1804,7 +1805,7 @@ mod tests {
         assert_eq!(client.api_creds.unwrap().api_key, "test_key");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_sampling_markets_success() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -1866,7 +1867,7 @@ mod tests {
         assert_eq!(markets.data[0].question, "Will this test pass?");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_sampling_markets_with_cursor() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -1897,7 +1898,7 @@ mod tests {
         assert_eq!(markets.data.len(), 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_order_book_success() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -1933,7 +1934,7 @@ mod tests {
         assert_eq!(book.asks.len(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_midpoint_success() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -1958,7 +1959,7 @@ mod tests {
         assert_eq!(response.mid, Decimal::from_str("0.755").unwrap());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_spread_success() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -1983,7 +1984,7 @@ mod tests {
         assert_eq!(response.spread, Decimal::from_str("0.01").unwrap());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_price_success() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -2011,7 +2012,7 @@ mod tests {
         assert_eq!(response.price, Decimal::from_str("0.76").unwrap());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_tick_size_success() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -2036,7 +2037,7 @@ mod tests {
         assert_eq!(tick_size, Decimal::from_str("0.01").unwrap());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_neg_risk_success() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -2061,7 +2062,7 @@ mod tests {
         assert!(!neg_risk);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_api_error_handling() {
         let mut server = Server::new_async().await;
 
@@ -2091,7 +2092,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_network_error_handling() {
         // Test with invalid URL to simulate network error
         let client = create_test_client("http://invalid-host-that-does-not-exist.com");
@@ -2111,7 +2112,7 @@ mod tests {
         assert_eq!(client2.base_url, "http://localhost:8080");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_midpoints_batch() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -2160,7 +2161,7 @@ mod tests {
         assert_eq!(auth_client.chain_id, 137);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_ok() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{"status": "ok"}"#;
@@ -2180,7 +2181,7 @@ mod tests {
         assert!(result);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_prices_batch() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -2223,7 +2224,7 @@ mod tests {
         assert!(prices.contains_key("0x456"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_server_time() {
         let mut server = Server::new_async().await;
         let mock_response = "1234567890"; // Plain text response
@@ -2244,7 +2245,7 @@ mod tests {
         assert_eq!(timestamp, 1234567890);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_or_derive_api_key() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
@@ -2270,7 +2271,7 @@ mod tests {
         let api_creds = result.unwrap();
         assert_eq!(api_creds.api_key, "test-api-key-123");
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_get_order_books_batch() {
         let mut server = Server::new_async().await;
         let mock_response = r#"[
@@ -2305,7 +2306,7 @@ mod tests {
         assert_eq!(books.len(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_order_args_creation() {
         // Test OrderArgs creation and default values
         let order_args = ClientOrderArgs::new(

@@ -4,8 +4,8 @@
 //! connection drops that cause 200ms+ reconnection overhead.
 
 use reqwest::Client;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -38,7 +38,7 @@ impl ConnectionManager {
         }
 
         self.running.store(true, Ordering::Relaxed);
-        
+
         let client = self.client.clone();
         let base_url = self.base_url.clone();
         let running = self.running.clone();
@@ -65,7 +65,7 @@ impl ConnectionManager {
     /// Stop the keep-alive background task
     pub async fn stop_keepalive(&self) {
         self.running.store(false, Ordering::Relaxed);
-        
+
         let mut handle_guard = self.handle.lock().await;
         if let Some(handle) = handle_guard.take() {
             handle.abort();
@@ -109,14 +109,13 @@ mod tests {
     async fn test_keepalive_start_stop() {
         let client = Client::new();
         let manager = ConnectionManager::new(client, "https://clob.polymarket.com".to_string());
-        
+
         manager.start_keepalive(Duration::from_secs(30)).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(manager.is_running());
-        
+
         manager.stop_keepalive().await;
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!manager.is_running());
     }
 }
-
