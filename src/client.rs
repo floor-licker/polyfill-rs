@@ -1809,20 +1809,20 @@ mod tests {
     async fn test_get_sampling_markets_success() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
-            "limit": "10",
-            "count": "2", 
+            "limit": 10,
+            "count": 2, 
             "next_cursor": null,
             "data": [
                 {
                     "condition_id": "0x123",
                     "tokens": [
-                        {"token_id": "0x456", "outcome": "Yes"},
-                        {"token_id": "0x789", "outcome": "No"}
+                        {"token_id": "0x456", "outcome": "Yes", "price": 0.5, "winner": false},
+                        {"token_id": "0x789", "outcome": "No", "price": 0.5, "winner": false}
                     ],
                     "rewards": {
                         "rates": null,
-                        "min_size": "1.0",
-                        "max_spread": "0.1",
+                        "min_size": 1.0,
+                        "max_spread": 0.1,
                         "event_start_date": null,
                         "event_end_date": null,
                         "in_game_multiplier": null,
@@ -1833,15 +1833,15 @@ mod tests {
                     "active": true,
                     "closed": false,
                     "question_id": "0x123",
-                    "minimum_order_size": "1.0",
-                    "minimum_tick_size": "0.01",
+                    "minimum_order_size": 1.0,
+                    "minimum_tick_size": 0.01,
                     "description": "Test market",
                     "category": "test",
                     "end_date_iso": null,
                     "game_start_time": null,
                     "question": "Will this test pass?",
                     "market_slug": "test-market",
-                    "seconds_delay": "0",
+                    "seconds_delay": 0,
                     "icon": "",
                     "fpmm": ""
                 }
@@ -1871,8 +1871,8 @@ mod tests {
     async fn test_get_sampling_markets_with_cursor() {
         let mut server = Server::new_async().await;
         let mock_response = r#"{
-            "limit": "5",
-            "count": "0",
+            "limit": 5,
+            "count": 0,
             "next_cursor": null,
             "data": []
         }"#;

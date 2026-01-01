@@ -575,9 +575,7 @@ pub struct Market {
     pub active: bool,
     pub closed: bool,
     pub question_id: String,
-    #[serde(with = "rust_decimal::serde::str")]
     pub minimum_order_size: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
     pub minimum_tick_size: Decimal,
     pub description: String,
     pub category: Option<String>,
@@ -585,7 +583,6 @@ pub struct Market {
     pub game_start_time: Option<String>,
     pub question: String,
     pub market_slug: String,
-    #[serde(with = "rust_decimal::serde::str")]
     pub seconds_delay: Decimal,
     pub icon: String,
     pub fpmm: String,
@@ -598,9 +595,9 @@ pub struct Market {
     pub accepting_orders: bool,
     #[serde(default)]
     pub accepting_order_timestamp: Option<String>,
-    #[serde(with = "rust_decimal::serde::str", default)]
+    #[serde(default)]
     pub maker_base_fee: Decimal,
-    #[serde(with = "rust_decimal::serde::str", default)]
+    #[serde(default)]
     pub taker_base_fee: Decimal,
     #[serde(default)]
     pub notifications_enabled: bool,
@@ -621,7 +618,6 @@ pub struct Market {
 pub struct Token {
     pub token_id: String,
     pub outcome: String,
-    #[serde(with = "rust_decimal::serde::str", default)]
     pub price: Decimal,
     #[serde(default)]
     pub winner: bool,
@@ -1032,20 +1028,16 @@ pub struct OrderSummary {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MarketsResponse {
-    #[serde(with = "rust_decimal::serde::str")]
-    pub limit: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub count: Decimal,
+    pub limit: usize,
+    pub count: usize,
     pub next_cursor: Option<String>,
     pub data: Vec<Market>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SimplifiedMarketsResponse {
-    #[serde(with = "rust_decimal::serde::str")]
-    pub limit: Decimal,
-    #[serde(with = "rust_decimal::serde::str")]
-    pub count: Decimal,
+    pub limit: usize,
+    pub count: usize,
     pub next_cursor: Option<String>,
     pub data: Vec<SimplifiedMarket>,
 }
