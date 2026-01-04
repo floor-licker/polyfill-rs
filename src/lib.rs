@@ -24,6 +24,7 @@
 //!         "https://clob.polymarket.com",
 //!         "your_private_key",
 //!         137,
+//!         None,
 //!     );
 //!
 //!     // Get API credentials

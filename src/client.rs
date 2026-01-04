@@ -53,6 +53,20 @@ impl Default for OrderArgs {
     }
 }
 
+/// HTTP client configuration type
+#[derive(Debug, Clone, Copy)]
+pub enum ClientType {
+    Colocated,
+    Internet,
+    Optimized,
+}
+
+impl Default for ClientType {
+    fn default() -> Self {
+        ClientType::Colocated
+    }
+}
+
 /// Main client for interacting with Polymarket API
 pub struct ClobClient {
     pub http_client: Client,
@@ -183,14 +197,23 @@ impl ClobClient {
     }
 
     /// Create a client with L1 headers (for authentication)
-    pub fn with_l1_headers(host: &str, private_key: &str, chain_id: u64) -> Self {
+    pub fn with_l1_headers(
+        host: &str,
+        private_key: &str,
+        chain_id: u64,
+        client_type: Option<ClientType>,
+    ) -> Self {
         let signer = private_key
             .parse::<PrivateKeySigner>()
             .expect("Invalid private key");
 
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
 
-        let http_client = create_optimized_client().unwrap_or_else(|_| Client::new());
+        let http_client = match client_type.unwrap_or_default() {
+            ClientType::Colocated => create_colocated_client().unwrap_or_else(|_| Client::new()),
+            ClientType::Internet => create_internet_client().unwrap_or_else(|_| Client::new()),
+            ClientType::Optimized => create_optimized_client().unwrap_or_else(|_| Client::new()),
+        };
 
         // Initialize infrastructure modules
         let dns_cache = None; // Skip DNS cache for simplicity in this constructor
@@ -1749,6 +1772,7 @@ mod tests {
             base_url,
             "0x1234567890123456789012345678901234567890123456789012345678901234",
             137,
+            None,
         )
     }
 

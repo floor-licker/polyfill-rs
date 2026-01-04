@@ -13,7 +13,8 @@ async fn test_create_api_key_simple() {
     let mut client = ClobClient::with_l1_headers(
         "https://clob.polymarket.com",
         &private_key,
-        137
+        137,
+        None
     );
     
     println!("Step 1: Creating/deriving API key...");
@@ -60,7 +61,8 @@ async fn test_get_api_keys() {
     let mut client = ClobClient::with_l1_headers(
         "https://clob.polymarket.com",
         &private_key,
-        137
+        137,
+        None
     );
     
     let creds = client.create_or_derive_api_key(None).await
@@ -96,7 +98,8 @@ async fn test_get_trades() {
     let mut client = ClobClient::with_l1_headers(
         "https://clob.polymarket.com",
         &private_key,
-        137
+        137,
+        None
     );
     
     let creds = client.create_or_derive_api_key(None).await
@@ -132,7 +135,8 @@ async fn test_get_notifications() {
     let mut client = ClobClient::with_l1_headers(
         "https://clob.polymarket.com",
         &private_key,
-        137
+        137,
+        None
     );
     
     let creds = client.create_or_derive_api_key(None).await

@@ -15,7 +15,8 @@ async fn test_post_order_authentication() {
     let mut client = ClobClient::with_l1_headers(
         "https://clob.polymarket.com",
         &private_key,
-        137
+        137,
+        None
     );
     
     println!("Step 1: Creating API credentials...");
