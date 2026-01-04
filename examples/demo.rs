@@ -1,4 +1,4 @@
-//! Comprehensive Demo for polyfill-rs
+//! Demo for polyfill-rs
 //!
 //! This example demonstrates all the major functions and capabilities of the polyfill-rs library:
 //! - Basic client operations and API calls
@@ -45,7 +45,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
-/// Comprehensive demo showcasing all polyfill-rs functionality
+/// Demo showcasing polyfill-rs functionality
 #[allow(dead_code)]
 pub struct PolyfillDemo {
     /// Basic HTTP client
@@ -91,7 +91,7 @@ impl Default for DemoStats {
 }
 
 impl PolyfillDemo {
-    /// Create a new comprehensive demo
+    /// Create a new demo
     pub fn new() -> Result<Self> {
         // Create basic client
         let client = ClobClient::new("https://clob.polymarket.com");
@@ -585,15 +585,18 @@ impl PolyfillDemo {
 
         // Simulate subscription
         let subscription = WssSubscription {
-            auth: WssAuth {
+            channel_type: "user".to_string(),
+            operation: Some("subscribe".to_string()),
+            markets: vec!["market1".to_string(), "market2".to_string()],
+            asset_ids: vec!["12345".to_string(), "67890".to_string()],
+            initial_dump: Some(true),
+            custom_feature_enabled: None,
+            auth: Some(WssAuth {
                 address: "0x1234567890123456789012345678901234567890".to_string(),
                 signature: "mock_signature".to_string(),
                 timestamp: time::now_secs(),
                 nonce: crypto::generate_nonce().to_string(),
-            },
-            markets: Some(vec!["market1".to_string(), "market2".to_string()]),
-            asset_ids: Some(vec!["12345".to_string(), "67890".to_string()]),
-            channel_type: "USER".to_string(),
+            }),
         };
 
         info!("Created subscription: {:?}", subscription);
@@ -711,7 +714,7 @@ impl PolyfillDemo {
 
     /// Run all demos
     pub async fn run_all_demos(&mut self) -> Result<()> {
-        info!("Starting comprehensive polyfill-rs demo...");
+        info!("Starting polyfill-rs demo...");
 
         // Run all demo sections
         self.demo_basic_api_operations().await?;
@@ -740,7 +743,7 @@ impl PolyfillDemo {
 
         self.demo_performance_analytics().await?;
 
-        info!("Comprehensive demo completed successfully!");
+        info!("Demo completed successfully!");
         Ok(())
     }
 }
@@ -750,7 +753,7 @@ async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    info!("Polyfill-rs Comprehensive Demo");
+    info!("Polyfill-rs Demo");
     info!("==============================");
 
     // Create and run demo

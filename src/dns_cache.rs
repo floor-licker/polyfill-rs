@@ -3,13 +3,13 @@
 //! This module provides DNS caching functionality to avoid repeated DNS lookups
 //! which can add 10-20ms per request.
 
+use hickory_resolver::config::*;
+use hickory_resolver::TokioAsyncResolver;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use hickory_resolver::config::*;
-use hickory_resolver::TokioAsyncResolver;
 
 /// DNS cache entry with TTL
 #[derive(Clone, Debug)]

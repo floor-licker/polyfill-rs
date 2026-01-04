@@ -5,7 +5,7 @@
 //! - **High-performance order book management** with optimized data structures
 //! - **Real-time market data streaming** with WebSocket support
 //! - **Trade execution simulation** with slippage protection
-//! - **Comprehensive error handling** with specific error types
+//! - **Detailed error handling** with specific error types
 //! - **Rate limiting and retry logic** for robust API interactions
 //! - **Ethereum integration** with EIP-712 signing support
 //! - **Benchmarking tools** for performance analysis

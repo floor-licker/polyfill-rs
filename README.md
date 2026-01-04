@@ -30,17 +30,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**That's it!** Your existing code works unchanged, but now runs significantly faster.
+Your existing code works unchanged, but now runs significantly faster.
 
 ## Why polyfill-rs?
 
-**100% API Compatible**: Drop-in replacement for `polymarket-rs-client` with identical method signatures
-
-**Latency Optimized**: Fixed-point arithmetic with cache-friendly data layouts for sub-microsecond order book operations
-
-**Market Microstructure Aware**: Handles tick alignment, sequence validation, and market impact calculations with nanosecond precision
-
-**Production Hardened**: Designed for co-located environments processing 100k+ market data updates per second
+A 100% API-compatible drop-in replacement for `polymarket-rs-client` with identical method signatures. Fixed-point arithmetic and cache-friendly data layouts deliver sub-microsecond order book operations. Handles tick alignment, sequence validation, and market impact calculations with nanosecond precision. Designed for co-located environments processing 100k+ market data updates per second.
 
 ## Performance Comparison
 
@@ -70,7 +64,7 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 
 **Key Performance Optimizations:**
 
-polyfill-rs achieves 21.4% better performance than polymarket-rs-client through several targeted optimizations and infrastructure integration, as verified through side-by-side benchmarking on identical infrastructure. We use simd-json for SIMD-accelerated JSON parsing, which provides a 1.77x speedup over standard serde_json deserialization and saves approximately 1-2ms per request. Our HTTP/2 configuration has been tuned through systematic benchmarking, with a 512KB initial stream window size proving optimal for the typical 469KB payload sizes from Polymarket's API. The client includes integrated DNS caching to eliminate redundant lookups, a connection manager with background keep-alive to maintain warm connections (preventing costly reconnections), and a buffer pool to reduce memory allocation overhead during request processing. These optimizations collectively achieve 321.6ms mean latency compared to polymarket-rs-client's 409.3ms while maintaining production-safe, conservative approaches.
+The 21.4% performance improvement comes from SIMD-accelerated JSON parsing (1.77x faster than serde_json), HTTP/2 tuning with 512KB stream windows optimized for 469KB payloads, integrated DNS caching, connection keep-alive, and buffer pooling to reduce allocation overhead.
 
 **Performance Breakdown:**
 - Network (DNS/TCP/TLS): ~150ms (optimized with DNS caching and HTTP/2 tuning)
@@ -92,7 +86,7 @@ polyfill-rs achieves 21.4% better performance than polymarket-rs-client through 
 ### Benchmarking Methodology
 
 **Side-by-Side Testing:**
-To ensure fair comparison, we benchmark polyfill-rs and polymarket-rs-client side-by-side on the same machine under identical conditions. Both clients are tested sequentially with the same network state, same API endpoint (/simplified-markets), and identical testing parameters (20 iterations, 100ms delay between requests). This eliminates variables like network conditions, time of day, or geographic differences that could skew results. The side-by-side benchmark reveals that polymarket-rs-client's claimed variance of ±22.9ms significantly understates their actual variance of ±137.6ms (500% higher), while our measurements remain consistent and reproducible.
+Both clients tested sequentially on identical infrastructure with the same network state, API endpoint, and parameters (20 iterations, 100ms delays). Side-by-side testing reveals polymarket-rs-client's claimed ±22.9ms variance understates actual ±137.6ms variance by 500%.
 
 **What We Measure:**
 - Real-world API performance with actual network I/O
@@ -111,7 +105,7 @@ cargo run --example performance_benchmark --release
 cargo run --example side_by_side_benchmark --release
 ```
 
-All benchmarks use identical testing methodology and are reproducible on any machine with the same network conditions. The side-by-side benchmark validates our performance claims by running both clients sequentially under identical conditions.
+All benchmarks use identical methodology and are reproducible under equivalent network conditions.
 
 ## Migration from polymarket-rs-client
 
@@ -194,20 +188,15 @@ Designed for deterministic latency profiles in high-frequency environments:
 
 ### Critical Path Optimizations
 
-The library achieves deterministic latency through several fundamental design choices. Fixed-point arithmetic eliminates floating-point pipeline stalls and decimal parsing overhead that would otherwise introduce variable execution times. Lock-free updates using compare-and-swap operations enable concurrent book modifications without mutex contention or priority inversion. Cache-aligned structures maintain 64-byte alignment for optimal L1/L2 cache utilization, ensuring that hot data structures fit within single cache lines. Vectorized operations leverage SIMD-friendly data layouts to enable batch price level processing, allowing modern CPUs to process multiple price levels in parallel.
+Fixed-point arithmetic eliminates floating-point pipeline stalls and decimal parsing overhead. Lock-free updates using compare-and-swap operations prevent mutex contention. Cache-aligned structures maintain 64-byte alignment for L1/L2 cache efficiency. SIMD-friendly data layouts enable batch price level processing.
 
 ### Memory Architecture
 
-The memory subsystem is designed around predictable allocation patterns to prevent latency spikes. Pre-allocated pools eliminate garbage collection pressure and allocation latency spikes by maintaining warm buffers ready for immediate use. Configurable book depth limiting prevents memory bloat in illiquid markets where maintaining deep order books provides diminishing returns. Hot data structures are designed with temporal locality in mind, grouping frequently-accessed fields together to maximize cache line efficiency and minimize memory bandwidth consumption.
+Pre-allocated pools eliminate allocation latency spikes. Configurable book depth limiting prevents memory bloat. Hot data structures group frequently-accessed fields for cache line efficiency.
 
 ### Architectural Principles
 
-The library optimizes the precision-performance tradeoff through strategic boundary quantization. At system ingress, all price data converts to fixed-point representation at system boundaries while maintaining tick-aligned precision required by exchange protocols. The critical path operates exclusively on integer arithmetic with branchless comparisons and arithmetic operations in order matching logic, eliminating conditional jumps that would pollute the branch predictor. At system egress, all data converts back to IEEE 754 floating-point representation to ensure API surface compatibility with downstream consumers. This architecture enables deterministic execution with predictable instruction counts for latency-sensitive code paths. Performance-critical sections include cycle count analysis and memory access pattern documentation, with cache miss profiling and branch prediction optimization detailed in inline comments.
-
-
-### Performance Advantages
-
-The library achieves superior performance through multiple orthogonal optimization strategies working in concert. Fixed-point arithmetic enables sub-nanosecond price calculations compared to the overhead of decimal operations, while zero-allocation updates allow order book modifications without triggering memory allocation or garbage collection pauses. Data structures use cache-optimized layouts with careful alignment to maximize CPU cache efficiency and minimize memory bandwidth requirements. Lock-free operations enable concurrent access patterns without mutex contention or context switching overhead. Network optimizations including HTTP/2 multiplexing, connection pooling, TCP_NODELAY for immediate packet transmission, and adaptive timeouts reduce end-to-end latency. Connection pre-warming provides 1.7x faster subsequent requests by maintaining warm TCP connections and pre-resolved DNS entries. Request parallelization achieves 3x speedup when batching operations by maximizing connection utilization and reducing round-trip overhead. Run benchmarks using `cargo bench --bench comparison_benchmarks` to measure these improvements on your hardware.
+Price data converts to fixed-point at ingress boundaries while maintaining tick-aligned precision. The critical path uses integer arithmetic with branchless operations. Data converts back to IEEE 754 at egress for API compatibility. This enables deterministic execution with predictable instruction counts.
 
 ## Network Optimization Deep Dive
 
@@ -242,10 +231,7 @@ let prices = futures_util::future::join_all(futures).await;
 ```
 
 #### **Adaptive Network Resilience**
-- **Circuit breaker pattern**: Prevents cascade failures during network instability
-- **Adaptive timeouts**: Dynamic timeout adjustment based on network conditions
-- **Connection affinity**: Sticky connections for consistent performance
-- **Automatic retry logic**: Exponential backoff with jitter
+Circuit breaker patterns prevent cascade failures during network instability. Dynamic timeout adjustment adapts to network conditions. Connection affinity maintains consistent performance. Automatic retry logic uses exponential backoff with jitter.
 
 ### Measured Network Improvements
 
@@ -285,7 +271,7 @@ polyfill-rs = "0.2.3"
 
 ### If You're Coming From polymarket-rs-client
 
-Good news: your existing code should work without changes. I kept the same API.
+Existing code works without changes. The API is identical.
 
 ```rust
 use polyfill_rs::{ClobClient, OrderArgs, Side};
@@ -313,11 +299,11 @@ let order_args = OrderArgs::new(
 let result = client.create_and_post_order(&order_args).await?;
 ```
 
-The difference is sub-microsecond order book operations and deterministic latency profiles.
+Performance improvements: sub-microsecond order book operations with deterministic latency.
 
 ### Real-Time Order Book Tracking
 
-Here's where it gets interesting. You can track live order books for multiple tokens:
+Track live order books for multiple tokens:
 
 ```rust
 use polyfill_rs::{OrderBookManager, OrderDelta, Side};
@@ -334,7 +320,7 @@ let delta = OrderDelta {
     sequence: 1,
 };
 
-book_manager.apply_delta(delta)?;  // This is now super fast
+book_manager.apply_delta(delta)?;
 
 // Get current market state
 let book = book_manager.get_book("market_token")?;
@@ -344,11 +330,11 @@ let best_bid = book.best_bid();       // Highest buy price
 let best_ask = book.best_ask();       // Lowest sell price
 ```
 
-The `apply_delta` operation now executes in constant time with predictable cache behavior.
+The `apply_delta` operation executes in constant time with predictable cache behavior.
 
 ### Market Impact Analysis
 
-Before you place a big order, you probably want to know what it'll cost you:
+Simulate order execution before placement:
 
 ```rust
 use polyfill_rs::FillEngine;
@@ -377,11 +363,11 @@ println!("- Fees: ${}", result.fees);
 println!("- Market impact: {}%", result.impact_pct * 100);
 ```
 
-This tells you exactly what would happen without actually placing the order. Super useful for position sizing.
+Simulates execution without placing orders. Useful for position sizing.
 
-### WebSocket Streaming (The Fun Part)
+### WebSocket Streaming
 
-Here's how you connect to live market data. The library handles all the annoying reconnection stuff:
+Connect to live market data with automatic reconnection handling:
 
 ```rust
 use polyfill_rs::{WebSocketStream, StreamManager};
@@ -418,11 +404,11 @@ while let Some(message) = stream.next().await {
 }
 ```
 
-The stream automatically reconnects when it drops. You just keep processing messages.
+Automatic reconnection on connection loss.
 
 ### Example: Simple Spread Trading Bot
 
-Here's a basic bot that looks for wide spreads and tries to capture them:
+Basic bot that identifies and captures wide spreads:
 
 ```rust
 use polyfill_rs::{ClobClient, OrderBookManager, FillEngine};
@@ -460,23 +446,20 @@ impl SpreadBot {
     }
     
     async fn execute_trade(&mut self, token_id: &str) -> Result<()> {
-        // This is where you'd actually place orders
-        // Left as an exercise for the reader :)
+        // Order placement logic
         println!("Would place orders for {}", token_id);
         Ok(())
     }
 }
 ```
 
-The key insight: with fast order book updates, you can check hundreds of tokens for opportunities without the library being the bottleneck.
-
-**Pro tip**: The trading strategy examples in the code include detailed comments about market microstructure, order flow, and risk management techniques.
+Fast order book updates enable checking hundreds of tokens without library bottlenecks. Trading strategy examples include market microstructure, order flow, and risk management techniques.
 
 ## Configuration Tips
 
 ### Order Book Depth Settings
 
-The most important performance knob is how many price levels to track:
+Configure price levels to track:
 
 ```rust
 // For most trading bots: 10-50 levels is plenty
@@ -489,13 +472,11 @@ let book_manager = OrderBookManager::new(100);
 let book_manager = OrderBookManager::new(500);
 ```
 
-Why this matters: Each price level takes memory, but 90% of trading happens in the top 10 levels anyway. More levels = more memory usage for diminishing returns.
-
-*The code comments in `src/book.rs` explain the memory layout and why we chose these specific data structures for different use cases.*
+Memory usage scales with depth. Most trading activity occurs in top 10 levels. See `src/book.rs` for memory layout details.
 
 ### WebSocket Reconnection
 
-The defaults are pretty good, but you can tune them:
+Configurable reconnection parameters:
 
 ```rust
 let reconnect_config = ReconnectConfig {
@@ -511,7 +492,7 @@ let stream = WebSocketStream::new("wss://ws-subscriptions-clob.polymarket.com/ws
 
 ### Memory Usage
 
-If you're tracking lots of tokens, you might want to clean up stale books:
+Clean up stale order books:
 
 ```rust
 // Remove books that haven't updated in 5 minutes
@@ -520,9 +501,7 @@ println!("Cleaned up {} stale order books", removed);
 ```
 
 ### Market Microstructure Compliance
-Automatic tick size validation and price quantization prevent market fragmentation and ensure exchange compatibility. Sub-tick pricing rejection happens at ingress with zero-cost integer modulo operations.
-
-*Tick alignment implementation includes detailed analysis of market maker adverse selection and the role of minimum price increments in maintaining orderly markets.*
+Automatic tick size validation and price quantization ensure exchange compatibility. Sub-tick pricing rejection uses zero-cost integer modulo operations. Tick alignment implementation includes analysis of adverse selection and minimum price increments.
 
 ### Memory Management
-Bounded memory growth through configurable depth limits and automatic stale data eviction. Memory usage scales linearly with active price levels rather than total market depth, preventing memory exhaustion in volatile market conditions.
+Bounded memory growth through configurable depth limits and automatic stale data eviction. Memory scales linearly with active price levels, preventing exhaustion in volatile conditions.

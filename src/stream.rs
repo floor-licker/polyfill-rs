@@ -211,7 +211,10 @@ impl WebSocketStream {
 
     /// Subscribe to market channel with custom features enabled
     /// Custom features include: best_bid_ask, new_market, market_resolved events
-    pub async fn subscribe_market_channel_with_features(&mut self, asset_ids: Vec<String>) -> Result<()> {
+    pub async fn subscribe_market_channel_with_features(
+        &mut self,
+        asset_ids: Vec<String>,
+    ) -> Result<()> {
         let subscription = WssSubscription {
             channel_type: "market".to_string(),
             operation: Some("subscribe".to_string()),
