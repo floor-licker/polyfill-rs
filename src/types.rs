@@ -675,15 +675,28 @@ pub struct WssAuth {
 /// WebSocket subscription request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WssSubscription {
-    /// Authentication information
-    pub auth: WssAuth,
-    /// Array of markets (condition IDs) for USER channel
-    pub markets: Option<Vec<String>>,
-    /// Array of asset IDs (token IDs) for MARKET channel
-    pub asset_ids: Option<Vec<String>>,
-    /// Channel type: "USER" or "MARKET"
+    /// Channel type: "market" or "user"
     #[serde(rename = "type")]
     pub channel_type: String,
+    /// Operation type: "subscribe" or "unsubscribe"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    /// Array of markets (condition IDs) for USER channel
+    #[serde(default)]
+    pub markets: Vec<String>,
+    /// Array of asset IDs (token IDs) for MARKET channel
+    /// Note: Field name is "assets_ids" (with 's') per Polymarket API spec
+    #[serde(rename = "assets_ids", default)]
+    pub asset_ids: Vec<String>,
+    /// Request initial state dump
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_dump: Option<bool>,
+    /// Enable custom features (best_bid_ask, new_market, market_resolved)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_feature_enabled: Option<bool>,
+    /// Authentication information (only for USER channel)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<WssAuth>,
 }
 
 /// WebSocket message types for streaming

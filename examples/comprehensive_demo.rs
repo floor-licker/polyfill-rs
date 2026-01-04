@@ -579,7 +579,7 @@ impl PolyfillDemo {
         info!("=== Demo 8: Streaming Capabilities ===");
 
         // Create a mock WebSocket stream
-        let _stream = WebSocketStream::new("wss://stream.polymarket.com");
+        let _stream = WebSocketStream::new("wss://ws-subscriptions-clob.polymarket.com/ws/market");
 
         info!("Created WebSocket stream");
 

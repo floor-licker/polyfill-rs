@@ -160,12 +160,10 @@ impl WebSocketStream {
         }
 
         // Send subscription message in the format expected by Polymarket
-        let message = serde_json::json!({
-            "auth": subscription.auth,
-            "markets": subscription.markets,
-            "asset_ids": subscription.asset_ids,
-            "type": subscription.channel_type,
-        });
+        // The subscription struct will serialize correctly with proper field names
+        let message = serde_json::to_value(&subscription).map_err(|e| {
+            PolyfillError::parse(format!("Failed to serialize subscription: {}", e), None)
+        })?;
 
         self.send_message(message).await?;
         self.subscriptions.push(subscription.clone());
@@ -183,17 +181,67 @@ impl WebSocketStream {
             .clone();
 
         let subscription = WssSubscription {
-            auth,
-            markets: Some(markets),
-            asset_ids: None,
-            channel_type: "USER".to_string(),
+            channel_type: "user".to_string(),
+            operation: Some("subscribe".to_string()),
+            markets,
+            asset_ids: Vec::new(),
+            initial_dump: Some(true),
+            custom_feature_enabled: None,
+            auth: Some(auth),
         };
 
         self.subscribe_async(subscription).await
     }
 
     /// Subscribe to market channel (order book and trades)
+    /// Market subscriptions do not require authentication
     pub async fn subscribe_market_channel(&mut self, asset_ids: Vec<String>) -> Result<()> {
+        let subscription = WssSubscription {
+            channel_type: "market".to_string(),
+            operation: Some("subscribe".to_string()),
+            markets: Vec::new(),
+            asset_ids,
+            initial_dump: Some(true),
+            custom_feature_enabled: None,
+            auth: None,
+        };
+
+        self.subscribe_async(subscription).await
+    }
+
+    /// Subscribe to market channel with custom features enabled
+    /// Custom features include: best_bid_ask, new_market, market_resolved events
+    pub async fn subscribe_market_channel_with_features(&mut self, asset_ids: Vec<String>) -> Result<()> {
+        let subscription = WssSubscription {
+            channel_type: "market".to_string(),
+            operation: Some("subscribe".to_string()),
+            markets: Vec::new(),
+            asset_ids,
+            initial_dump: Some(true),
+            custom_feature_enabled: Some(true),
+            auth: None,
+        };
+
+        self.subscribe_async(subscription).await
+    }
+
+    /// Unsubscribe from market channel
+    pub async fn unsubscribe_market_channel(&mut self, asset_ids: Vec<String>) -> Result<()> {
+        let subscription = WssSubscription {
+            channel_type: "market".to_string(),
+            operation: Some("unsubscribe".to_string()),
+            markets: Vec::new(),
+            asset_ids,
+            initial_dump: None,
+            custom_feature_enabled: None,
+            auth: None,
+        };
+
+        self.subscribe_async(subscription).await
+    }
+
+    /// Unsubscribe from user channel
+    pub async fn unsubscribe_user_channel(&mut self, markets: Vec<String>) -> Result<()> {
         let auth = self
             .auth
             .as_ref()
@@ -201,40 +249,16 @@ impl WebSocketStream {
             .clone();
 
         let subscription = WssSubscription {
-            auth,
-            markets: None,
-            asset_ids: Some(asset_ids),
-            channel_type: "MARKET".to_string(),
+            channel_type: "user".to_string(),
+            operation: Some("unsubscribe".to_string()),
+            markets,
+            asset_ids: Vec::new(),
+            initial_dump: None,
+            custom_feature_enabled: None,
+            auth: Some(auth),
         };
 
         self.subscribe_async(subscription).await
-    }
-
-    /// Unsubscribe from market data
-    pub async fn unsubscribe_async(&mut self, token_ids: &[String]) -> Result<()> {
-        // Note: Polymarket WebSocket API doesn't seem to have explicit unsubscribe
-        // We'll just remove from our local subscriptions
-        self.subscriptions
-            .retain(|sub| match sub.channel_type.as_str() {
-                "USER" => {
-                    if let Some(markets) = &sub.markets {
-                        !token_ids.iter().any(|id| markets.contains(id))
-                    } else {
-                        true
-                    }
-                },
-                "MARKET" => {
-                    if let Some(asset_ids) = &sub.asset_ids {
-                        !token_ids.iter().any(|id| asset_ids.contains(id))
-                    } else {
-                        true
-                    }
-                },
-                _ => true,
-            });
-
-        info!("Unsubscribed from {} tokens", token_ids.len());
-        Ok(())
     }
 
     /// Handle incoming WebSocket messages

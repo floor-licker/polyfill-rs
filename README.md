@@ -149,7 +149,7 @@ use polyfill_rs::{OrderBookImpl, WebSocketStream};
 
 // Real-time order book with fixed-point optimizations
 let mut book = OrderBookImpl::new("token_id".to_string(), 100);
-let mut stream = WebSocketStream::new("wss://ws-subscriptions-clob.polymarket.com").await?;
+let mut stream = WebSocketStream::new("wss://ws-subscriptions-clob.polymarket.com/ws/market").await?;
 
 // Process thousands of updates per second
 while let Some(update) = stream.next().await {
@@ -386,7 +386,7 @@ Here's how you connect to live market data. The library handles all the annoying
 ```rust
 use polyfill_rs::{WebSocketStream, StreamManager};
 
-let mut stream = WebSocketStream::new("wss://clob.polymarket.com/ws");
+let mut stream = WebSocketStream::new("wss://ws-subscriptions-clob.polymarket.com/ws/market");
 
 // Set up authentication (you'll need API credentials)
 let auth = WssAuth {
@@ -505,7 +505,7 @@ let reconnect_config = ReconnectConfig {
     backoff_multiplier: 2.0,                          // Double delay each time
 };
 
-let stream = WebSocketStream::new("wss://clob.polymarket.com/ws")
+let stream = WebSocketStream::new("wss://ws-subscriptions-clob.polymarket.com/ws/market")
     .with_reconnect_config(reconnect_config);
 ```
 
