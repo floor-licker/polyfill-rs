@@ -54,7 +54,7 @@ impl TestConfig {
         let private_key = self.private_key.as_ref()
             .ok_or_else(|| polyfill_rs::PolyfillError::auth("No private key provided", polyfill_rs::errors::AuthErrorKind::InvalidCredentials))?;
         
-        Ok(ClobClient::with_l1_headers(&self.host, private_key, self.chain_id))
+        Ok(ClobClient::with_l1_headers(&self.host, private_key, self.chain_id, None))
     }
 
     /// Print test configuration (without sensitive data)

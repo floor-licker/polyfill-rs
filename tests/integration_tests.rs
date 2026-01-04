@@ -26,7 +26,7 @@ fn load_env_vars() -> (String, Option<String>, Option<String>, Option<String>) {
 async fn test_real_api_create_derive_api_key() {
     let (private_key, _, _, _) = load_env_vars();
     
-    let client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     
     // Test creating/deriving API key
     let result = client.create_or_derive_api_key(None).await;
@@ -46,7 +46,7 @@ async fn test_real_api_authenticated_order_flow() {
     let (private_key, _, _, _) = load_env_vars();
     
     // Initialize client with L1 headers
-    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     
     // Step 1: Create/derive API credentials
     println!("Step 1: Creating/deriving API credentials...");
@@ -135,7 +135,7 @@ async fn test_real_api_authenticated_order_flow() {
 async fn test_real_api_get_orders() {
     let (private_key, _, _, _) = load_env_vars();
     
-    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     let api_creds = client.create_or_derive_api_key(None).await
         .expect("Failed to create/derive API key");
     client.set_api_creds(api_creds);
@@ -163,7 +163,7 @@ async fn test_real_api_get_orders() {
 async fn test_real_api_get_trades() {
     let (private_key, _, _, _) = load_env_vars();
     
-    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     let api_creds = client.create_or_derive_api_key(None).await
         .expect("Failed to create/derive API key");
     client.set_api_creds(api_creds);
@@ -190,7 +190,7 @@ async fn test_real_api_get_trades() {
 async fn test_real_api_get_balance_allowance() {
     let (private_key, _, _, _) = load_env_vars();
     
-    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     let api_creds = client.create_or_derive_api_key(None).await
         .expect("Failed to create/derive API key");
     client.set_api_creds(api_creds);
@@ -231,7 +231,7 @@ async fn test_real_api_get_balance_allowance() {
 async fn test_real_api_get_api_keys() {
     let (private_key, _, _, _) = load_env_vars();
     
-    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     let api_creds = client.create_or_derive_api_key(None).await
         .expect("Failed to create/derive API key");
     client.set_api_creds(api_creds);
@@ -259,7 +259,7 @@ async fn test_real_api_get_api_keys() {
 async fn test_real_api_get_notifications() {
     let (private_key, _, _, _) = load_env_vars();
     
-    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let mut client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     let api_creds = client.create_or_derive_api_key(None).await
         .expect("Failed to create/derive API key");
     client.set_api_creds(api_creds);
@@ -287,7 +287,7 @@ async fn test_real_api_get_notifications() {
 async fn test_real_api_market_data_endpoints() {
     let (private_key, _, _, _) = load_env_vars();
     
-    let client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     
     println!("Testing market data endpoints (no auth required)...");
     
@@ -336,7 +336,7 @@ async fn test_real_api_market_data_endpoints() {
 async fn test_real_api_batch_endpoints() {
     let (private_key, _, _, _) = load_env_vars();
     
-    let client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID);
+    let client = ClobClient::with_l1_headers(HOST, &private_key, CHAIN_ID, None);
     
     println!("Testing batch endpoints...");
     

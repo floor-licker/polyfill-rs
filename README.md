@@ -296,6 +296,7 @@ let mut client = ClobClient::with_l1_headers(
     "https://clob.polymarket.com",
     "your_private_key",
     137,
+    None,
 );
 
 // Same API calls
