@@ -12,7 +12,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-polyfill-rs = "0.2.2"
+polyfill-rs = "0.2.3"
 ```
 
 Replace your imports:
@@ -120,7 +120,7 @@ All benchmarks use identical testing methodology and are reproducible on any mac
 1. **Update Cargo.toml:**
    ```toml
    # Before: polymarket-rs-client = "0.x.x"
-   polyfill-rs = "0.2.2"
+   polyfill-rs = "0.2.3"
    ```
 
 2. **Update imports:**
@@ -278,7 +278,7 @@ let client = ClobClient::new("https://clob.polymarket.com");
 
 ```toml
 [dependencies]
-polyfill-rs = "0.2.2"
+polyfill-rs = "0.2.3"
 ```
 
 ## Basic Usage
