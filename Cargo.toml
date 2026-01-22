@@ -2,16 +2,16 @@
 name = "polyfill-rs"
 version = "0.2.3"
 edition = "2021"
-authors = ["Julius Tranquilli <julius@example.com>"]
+authors = ["Julius Tranquilli <jtranqs@gmail.com>"]
 description = "The Fastest Polymarket Client On The Market."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/floor-licker/polyfill-rs"
 readme = "README.md"
-keywords = ["polymarket", "trading", "hft", "crypto", "prediction-markets"]
-categories = ["api-bindings", "network-programming", "finance"]
+keywords = ["polymarket", "trading", "prediction-market", "kalshi", "clob", "crypto", "prediction-markets"]
+categories = ["api-bindings", "network-programming", "finance", "prediction-markets", "polymarket", "kalshi", "clob"]
 documentation = "https://docs.rs/polyfill-rs"
 homepage = "https://github.com/floor-licker/polyfill-rs"
-
+license = "MIT OR Apache-2.0"
 [dependencies]
 # Pin base64ct to avoid Edition 2024 requirement
 base64ct = "=1.6.0"
