@@ -335,6 +335,8 @@ mod tests {
             base_delay: std::time::Duration::from_millis(500),
             max_delay: std::time::Duration::from_secs(30),
             backoff_multiplier: 1.5,
+            connect_timeout: std::time::Duration::from_secs(10),
+            heartbeat_timeout: std::time::Duration::from_secs(60),
         };
 
         let transport = WsTransport::new("wss://example.com/ws").with_reconnect_config(config);

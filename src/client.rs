@@ -8,7 +8,7 @@ use crate::errors::{PolyfillError, Result};
 use crate::http_config::{
     create_colocated_client, create_internet_client, create_optimized_client, prewarm_connections,
 };
-use crate::types::{OrderOptions, PostOrder, SignedOrderRequest};
+use crate::types::{OrderOptions, PostOrder, SignedOrderRequest, WssAuth};
 use alloy_primitives::U256;
 use alloy_signer_local::PrivateKeySigner;
 use reqwest::header::HeaderName;
@@ -315,6 +315,38 @@ impl ClobClient {
         self.signer
             .as_ref()
             .map(|s| hex::encode_prefixed(s.address().as_slice()))
+    }
+
+    /// Create WebSocket authentication for authenticated channels
+    ///
+    /// Returns `WssAuth` which can be used with `subscribe_market_channel` or `subscribe_user_channel`
+    /// to receive authenticated WebSocket messages including trades.
+    pub fn create_wss_auth(&self) -> Result<WssAuth> {
+        use alloy_primitives::{hex::encode_prefixed, U256};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let signer = self.signer.as_ref().ok_or_else(|| {
+            PolyfillError::auth("No signer configured. Use with_l1_headers or with_l2_headers.")
+        })?;
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs();
+
+        let nonce = U256::from(timestamp);
+        let timestamp_str = timestamp.to_string();
+
+        // Sign using the same EIP-712 auth message as REST API
+        let signature = crate::auth::sign_clob_auth_message(signer, timestamp_str.clone(), nonce)?;
+        let address = encode_prefixed(signer.address().as_slice());
+
+        Ok(WssAuth {
+            address,
+            signature,
+            timestamp,
+            nonce: nonce.to_string(),
+        })
     }
 
     /// Derive the Polymarket proxy wallet address from the signer's EOA
@@ -713,6 +745,40 @@ impl ClobClient {
             .ok_or_else(|| PolyfillError::parse("Invalid neg risk format", None))?;
 
         Ok(neg_risk)
+    }
+
+    /// Get base fee rate for a token.
+    ///
+    /// This endpoint returns the base_fee for a given token_id.
+    /// For 15-minute markets with fees enabled, this returns a non-zero value.
+    /// For fee-free markets, this returns 0.
+    ///
+    /// Note: For production use, prefer `polyfill_rs::fees::calculate_fee_rate_bps(price)`
+    /// to avoid API latency. This method is primarily for verification purposes.
+    pub async fn get_fee_rate(&self, token_id: &str) -> Result<u32> {
+        let response = self
+            .http_client
+            .get(format!("{}/fee-rate", self.base_url))
+            .query(&[("token_id", token_id)])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to get fee rate",
+            ));
+        }
+
+        let fee_rate_response: Value = response.json().await?;
+
+        // API returns "base_fee" field
+        let base_fee = fee_rate_response["base_fee"]
+            .as_u64()
+            .or_else(|| fee_rate_response["fee_rate_bps"].as_u64())
+            .unwrap_or(0);
+
+        Ok(base_fee as u32)
     }
 
     /// Resolve tick size for an order

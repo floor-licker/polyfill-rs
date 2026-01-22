@@ -99,6 +99,7 @@ pub use crate::types::{
     BookParams,
     ClientConfig,
     ClientResult,
+    FeeRateResponse,
     FillEvent,
     Market,
     MarketSnapshot,
@@ -151,12 +152,17 @@ pub use crate::errors::{PolyfillError, Result};
 // Re-export advanced components
 pub use crate::book::{OrderBook as OrderBookImpl, OrderBookManager};
 pub use crate::decode::Decoder;
-pub use crate::fill::{FillEngine, FillResult};
+pub use crate::fill::{
+    BookUpdate, FillEngine, FillResult, QueueFillEngine, QueueFillStats, QueuedOrder,
+};
 pub use crate::stream::{
     BookChange, BookLevel, BookMessage, LiveDataStream, MarketStream, StreamManager,
     WebSocketStream,
 };
 pub use crate::transport::{RawMessage, WsTransport};
+
+// Re-export fee calculation
+pub use crate::fees::{calculate_fee_rate_bps, calculate_taker_fee, effective_fee_rate, FEE_RATE_BPS_MAKER};
 
 // Re-export utilities
 pub use crate::utils::{crypto, math, rate_limit, retry, time, url};
@@ -171,6 +177,7 @@ pub mod connection_manager;
 pub mod decode;
 pub mod dns_cache;
 pub mod errors;
+pub mod fees;
 pub mod fill;
 pub mod http_config;
 pub mod orders;

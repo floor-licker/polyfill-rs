@@ -1110,6 +1110,13 @@ pub struct NegRiskResponse {
     pub neg_risk: bool,
 }
 
+/// Response from the fee-rate API endpoint
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeeRateResponse {
+    /// Base fee (0 for fee-free markets, non-zero for fee-enabled markets)
+    pub base_fee: u32,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BookParams {
     pub token_id: String,
