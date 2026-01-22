@@ -961,6 +961,17 @@ impl ClobClient {
         order: SignedOrderRequest,
         order_type: OrderType,
     ) -> Result<Value> {
+        self.post_order_with_options(order, order_type, false).await
+    }
+
+    /// Post a signed order with post_only option
+    /// If post_only is true, the order will only rest on the book and reject if it would cross the spread
+    pub async fn post_order_with_options(
+        &self,
+        order: SignedOrderRequest,
+        order_type: OrderType,
+        post_only: bool,
+    ) -> Result<Value> {
         let signer = self
             .signer
             .as_ref()
@@ -972,7 +983,11 @@ impl ClobClient {
 
         // Owner field must reference the credential principal identifier
         // to maintain consistency with the authentication context layer
-        let body = PostOrder::new(order, api_creds.api_key.clone(), order_type);
+        let body = if post_only {
+            PostOrder::with_post_only(order, api_creds.api_key.clone(), order_type, true)
+        } else {
+            PostOrder::new(order, api_creds.api_key.clone(), order_type)
+        };
 
         let headers = create_l2_headers(signer, api_creds, "POST", "/order", Some(&body))?;
         let req = self.create_request_with_headers(Method::POST, "/order", headers.into_iter())

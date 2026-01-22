@@ -552,6 +552,8 @@ pub struct PostOrder {
     pub order: SignedOrderRequest,
     pub owner: String,
     pub order_type: OrderType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_only: Option<bool>,
 }
 
 impl PostOrder {
@@ -560,6 +562,16 @@ impl PostOrder {
             order,
             owner,
             order_type,
+            post_only: None,
+        }
+    }
+
+    pub fn with_post_only(order: SignedOrderRequest, owner: String, order_type: OrderType, post_only: bool) -> Self {
+        Self {
+            order,
+            owner,
+            order_type,
+            post_only: Some(post_only),
         }
     }
 }
