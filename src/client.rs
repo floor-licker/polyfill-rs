@@ -7,6 +7,7 @@ use crate::auth::{create_l1_headers, create_l2_headers};
 use crate::errors::{PolyfillError, Result};
 use crate::http_config::{
     create_colocated_client, create_internet_client, create_optimized_client, prewarm_connections,
+    prewarm_order_endpoint,
 };
 use crate::types::{OrderOptions, PostOrder, SignedOrderRequest, WssAuth};
 use alloy_primitives::U256;
@@ -81,6 +82,10 @@ impl ClobClient {
             .tcp_nodelay(true)
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(std::time::Duration::from_secs(90))
+            // HTTP/2 keep-alive to maintain warm connections
+            .http2_keep_alive_interval(std::time::Duration::from_secs(10))
+            .http2_keep_alive_timeout(std::time::Duration::from_secs(5))
+            .http2_keep_alive_while_idle(true)
             .build()
             .unwrap_or_else(|_| Client::new());
 
@@ -299,12 +304,23 @@ impl ClobClient {
         }
     }
 
-    /// Pre-warm connections to reduce first-request latency
+    /// Pre-warm connections to reduce first-request latency (GET only)
     pub async fn prewarm_connections(&self) -> Result<()> {
         prewarm_connections(&self.http_client, &self.base_url)
             .await
             .map_err(|e| {
                 PolyfillError::network(format!("Failed to prewarm connections: {}", e), e)
+            })?;
+        Ok(())
+    }
+
+    /// Pre-warm the order endpoint specifically for consistent ~330ms order submission latency
+    /// This warms both GET and POST paths to ensure subsequent orders are fast
+    pub async fn prewarm_order_submission(&self) -> Result<()> {
+        prewarm_order_endpoint(&self.http_client, &self.base_url)
+            .await
+            .map_err(|e| {
+                PolyfillError::network(format!("Failed to prewarm order endpoint: {}", e), e)
             })?;
         Ok(())
     }
@@ -782,25 +798,16 @@ impl ClobClient {
     }
 
     /// Resolve tick size for an order
+    /// If tick_size is provided, uses it directly without API validation (fast path)
+    /// If tick_size is None, fetches from API
     async fn resolve_tick_size(
         &self,
         token_id: &str,
         tick_size: Option<Decimal>,
     ) -> Result<Decimal> {
-        let min_tick_size = self.get_tick_size(token_id).await?;
-
         match tick_size {
-            None => Ok(min_tick_size),
-            Some(t) => {
-                if t < min_tick_size {
-                    Err(PolyfillError::validation(format!(
-                        "Tick size {} is smaller than min_tick_size {} for token_id: {}",
-                        t, min_tick_size, token_id
-                    )))
-                } else {
-                    Ok(t)
-                }
-            },
+            Some(t) => Ok(t), // Fast path: trust provided tick_size
+            None => self.get_tick_size(token_id).await,
         }
     }
 
