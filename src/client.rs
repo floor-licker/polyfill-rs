@@ -895,9 +895,11 @@ impl ClobClient {
 
         let response = req.json(&body).send().await?;
         if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let error_body = response.text().await.unwrap_or_else(|_| "No response body".to_string());
             return Err(PolyfillError::api(
-                response.status().as_u16(),
-                "Failed to post order",
+                status,
+                format!("Failed to post order: {}", error_body),
             ));
         }
 
