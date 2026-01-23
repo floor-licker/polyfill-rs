@@ -11,7 +11,7 @@ keywords = ["polymarket", "trading", "prediction-market", "kalshi", "clob", "cry
 categories = ["api-bindings", "network-programming", "finance", "prediction-markets", "polymarket", "kalshi", "clob"]
 documentation = "https://docs.rs/polyfill-rs"
 homepage = "https://github.com/floor-licker/polyfill-rs"
-license = "MIT OR Apache-2.0"
+
 [dependencies]
 # Pin base64ct to avoid Edition 2024 requirement
 base64ct = "=1.6.0"
