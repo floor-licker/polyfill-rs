@@ -9,7 +9,7 @@ use crate::http_config::{
     create_colocated_client, create_internet_client, create_optimized_client, prewarm_connections,
 };
 use crate::types::{OrderOptions, PostOrder, SignedOrderRequest};
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use reqwest::header::HeaderName;
 use reqwest::Client;
@@ -194,6 +194,56 @@ impl ClobClient {
 
         // Initialize infrastructure modules
         let dns_cache = None; // Skip DNS cache for simplicity in this constructor
+        let connection_manager = Some(std::sync::Arc::new(
+            crate::connection_manager::ConnectionManager::new(
+                http_client.clone(),
+                host.to_string(),
+            ),
+        ));
+        let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
+
+        Self {
+            http_client,
+            base_url: host.to_string(),
+            chain_id,
+            signer: Some(signer),
+            api_creds: None,
+            order_builder: Some(order_builder),
+            dns_cache,
+            connection_manager,
+            buffer_pool,
+        }
+    }
+
+    /// Create a client with L1 headers for email/Magic/browser wallets (sig_type = PolyProxy)
+    /// 
+    /// # Arguments
+    /// * `funder_address` - Optional address where USDC is held (Polymarket profile/proxy address)
+    ///                      If None, defaults to the signer's address
+    pub fn with_l1_headers_poly_proxy(
+        host: &str, 
+        private_key: &str, 
+        chain_id: u64,
+        funder_address: Option<&str>,
+    ) -> Self {
+        let signer = private_key
+            .parse::<PrivateKeySigner>()
+            .expect("Invalid private key");
+
+        let funder = funder_address.map(|addr| {
+            addr.parse::<Address>().expect("Invalid funder address")
+        });
+
+        let order_builder = crate::orders::OrderBuilder::new(
+            signer.clone(), 
+            Some(crate::orders::SigType::PolyProxy), 
+            funder
+        );
+
+        let http_client = create_optimized_client().unwrap_or_else(|_| Client::new());
+
+        // Initialize infrastructure modules
+        let dns_cache = None;
         let connection_manager = Some(std::sync::Arc::new(
             crate::connection_manager::ConnectionManager::new(
                 http_client.clone(),
