@@ -512,7 +512,7 @@ pub struct ExtraOrderArgs {
 impl Default for ExtraOrderArgs {
     fn default() -> Self {
         Self {
-            fee_rate_bps: 0,
+            fee_rate_bps: 1000, // Polymarket's current maker fee (10 bps = 0.1%)
             nonce: U256::ZERO,
             taker: "0x0000000000000000000000000000000000000000".to_string(),
         }
