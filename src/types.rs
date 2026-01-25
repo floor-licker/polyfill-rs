@@ -214,6 +214,7 @@ pub enum OrderType {
     GTC,
     FOK,
     GTD,
+    FAK,
 }
 
 impl OrderType {
@@ -222,6 +223,7 @@ impl OrderType {
             OrderType::GTC => "GTC",
             OrderType::FOK => "FOK",
             OrderType::GTD => "GTD",
+            OrderType::FAK => "FAK",
         }
     }
 }
