@@ -263,6 +263,11 @@ impl ClobClient {
         self.api_creds = Some(api_creds);
     }
 
+    /// Get API credentials (if set)
+    pub fn get_api_creds(&self) -> Option<&ApiCreds> {
+        self.api_creds.as_ref()
+    }
+
     /// Set the funder (proxy wallet) address for order signing
     ///
     /// On Polymarket, users trade through proxy wallets. The EOA signs orders
