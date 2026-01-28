@@ -906,6 +906,57 @@ impl ClobClient {
         Ok(response.json::<Value>().await?)
     }
 
+    /// Post multiple orders to the exchange in a single batch request
+    /// 
+    /// This is more efficient than calling `post_order` multiple times as it
+    /// reduces network round trips. The API supports up to 60 orders/sec sustained.
+    /// 
+    /// # Arguments
+    /// * `orders` - Slice of tuples containing (SignedOrderRequest, OrderType)
+    /// 
+    /// # Returns
+    /// * `Result<Value>` - JSON response containing results for each order
+    pub async fn post_orders(
+        &self,
+        orders: &[(SignedOrderRequest, OrderType)],
+    ) -> Result<Value> {
+        if orders.is_empty() {
+            return Ok(Value::Array(vec![]));
+        }
+
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        // Build array of PostOrder objects
+        let body: Vec<PostOrder> = orders
+            .iter()
+            .map(|(order, order_type)| {
+                PostOrder::new(order.clone(), api_creds.api_key.clone(), *order_type)
+            })
+            .collect();
+
+        let headers = create_l2_headers(signer, api_creds, "POST", "/orders", Some(&body))?;
+        let req = self.create_request_with_headers(Method::POST, "/orders", headers.into_iter());
+
+        let response = req.json(&body).send().await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let error_body = response.text().await.unwrap_or_else(|_| "No response body".to_string());
+            return Err(PolyfillError::api(
+                status,
+                format!("Failed to post orders batch: {}", error_body),
+            ));
+        }
+
+        Ok(response.json::<Value>().await?)
+    }
+
     /// Create and post an order in one call
     pub async fn create_and_post_order(&self, order_args: &OrderArgs) -> Result<Value> {
         let order = self.create_order(order_args, None, None, None).await?;
