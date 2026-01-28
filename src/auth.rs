@@ -4,7 +4,7 @@
 //! for secure communication with the Polymarket CLOB API.
 
 use crate::errors::{PolyfillError, Result};
-use crate::types::ApiCredentials;
+use crate::types::{ApiCredentials, WssAuth};
 use alloy_primitives::{hex::encode_prefixed, Address, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -213,6 +213,26 @@ where
         (POLY_API_KEY_HEADER, api_creds.api_key.clone()),
         (POLY_PASS_HEADER, api_creds.passphrase.clone()),
     ]))
+}
+
+/// Create WebSocket authentication for user channel subscription
+///
+/// Generates authentication credentials for subscribing to the user WebSocket channel.
+/// This uses L1-style EIP-712 signing to prove wallet ownership.
+pub fn create_wss_auth(signer: &PrivateKeySigner) -> Result<WssAuth> {
+    let timestamp = get_current_unix_time_secs();
+    let nonce = U256::ZERO;
+
+    // Generate EIP-712 signature for WebSocket auth
+    let signature = sign_clob_auth_message(signer, timestamp.to_string(), nonce)?;
+    let address = encode_prefixed(signer.address().as_slice());
+
+    Ok(WssAuth {
+        address,
+        signature,
+        timestamp,
+        nonce: nonce.to_string(),
+    })
 }
 
 #[cfg(test)]

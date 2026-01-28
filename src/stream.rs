@@ -484,11 +484,44 @@ impl Stream for WebSocketStream {
         // Then check WebSocket connection
         if let Some(connection) = &mut self.connection {
             match connection.poll_next_unpin(cx) {
-                Poll::Ready(Some(Ok(_message))) => {
-                    // Simplified message handling
-                    Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
-                        timestamp: Utc::now(),
-                    })))
+                Poll::Ready(Some(Ok(message))) => {
+                    match message {
+                        tokio_tungstenite::tungstenite::Message::Text(text) => {
+                            debug!("Received WebSocket message: {}", text);
+                            self.stats.messages_received += 1;
+                            self.stats.last_message_time = Some(Utc::now());
+                            
+                            // Parse the message
+                            match self.parse_polymarket_message(&text) {
+                                Ok(stream_msg) => Poll::Ready(Some(Ok(stream_msg))),
+                                Err(e) => {
+                                    warn!("Failed to parse message: {}", e);
+                                    self.stats.errors += 1;
+                                    // Return heartbeat as fallback instead of error
+                                    Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
+                                        timestamp: Utc::now(),
+                                    })))
+                                }
+                            }
+                        },
+                        tokio_tungstenite::tungstenite::Message::Ping(_data) => {
+                            // Respond with pong inline
+                            debug!("Received ping, sending pong");
+                            Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
+                                timestamp: Utc::now(),
+                            })))
+                        },
+                        tokio_tungstenite::tungstenite::Message::Pong(_) => {
+                            debug!("Received pong");
+                            Poll::Pending
+                        },
+                        tokio_tungstenite::tungstenite::Message::Close(_) => {
+                            info!("WebSocket connection closed by server");
+                            self.connection = None;
+                            Poll::Ready(None)
+                        },
+                        _ => Poll::Pending,
+                    }
                 },
                 Poll::Ready(Some(Err(e))) => {
                     error!("WebSocket error: {}", e);
