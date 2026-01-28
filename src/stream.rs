@@ -342,14 +342,25 @@ impl WebSocketStream {
                 Ok(StreamMessage::BookUpdate { data })
             },
             "trade" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse trade: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
+                // Trade messages on user channel might have data at top level or in "data" field
+                let data_field = value.get("data").unwrap_or(&Value::Null);
+                let data: FillEvent = if data_field.is_null() {
+                    // Try parsing the entire message (minus type field)
+                    debug!("TRADE message has null data, raw message: {}", value);
+                    serde_json::from_value(value.clone()).map_err(|e| {
+                        PolyfillError::parse(
+                            format!("Failed to parse trade (top-level): {}", e),
+                            Some(Box::new(e)),
+                        )
+                    })?
+                } else {
+                    serde_json::from_value(data_field.clone()).map_err(|e| {
+                        PolyfillError::parse(
+                            format!("Failed to parse trade: {}", e),
+                            Some(Box::new(e)),
+                        )
+                    })?
+                };
                 Ok(StreamMessage::Trade { data })
             },
             "order_update" => {
