@@ -217,22 +217,14 @@ where
 
 /// Create WebSocket authentication for user channel subscription
 ///
-/// Generates authentication credentials for subscribing to the user WebSocket channel.
-/// This uses L1-style EIP-712 signing to prove wallet ownership.
-pub fn create_wss_auth(signer: &PrivateKeySigner) -> Result<WssAuth> {
-    let timestamp = get_current_unix_time_secs();
-    let nonce = U256::ZERO;
-
-    // Generate EIP-712 signature for WebSocket auth
-    let signature = sign_clob_auth_message(signer, timestamp.to_string(), nonce)?;
-    let address = encode_prefixed(signer.address().as_slice());
-
-    Ok(WssAuth {
-        address,
-        signature,
-        timestamp,
-        nonce: nonce.to_string(),
-    })
+/// Creates WssAuth from existing API credentials. The WebSocket user channel
+/// requires L2 authentication (apiKey, secret, passphrase), not EIP-712 signatures.
+pub fn create_wss_auth(api_creds: &ApiCredentials) -> WssAuth {
+    WssAuth {
+        api_key: api_creds.api_key.clone(),
+        secret: api_creds.secret.clone(),
+        passphrase: api_creds.passphrase.clone(),
+    }
 }
 
 #[cfg(test)]

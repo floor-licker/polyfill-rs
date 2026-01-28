@@ -660,16 +660,18 @@ impl Default for ClientConfig {
 }
 
 /// WebSocket authentication for Polymarket API
+/// 
+/// For the user WebSocket channel, authentication uses L2 API credentials
+/// (apiKey, secret, passphrase) not EIP-712 signatures.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WssAuth {
-    /// User's Ethereum address
-    pub address: String,
-    /// EIP-712 signature
-    pub signature: String,
-    /// Unix timestamp
-    pub timestamp: u64,
-    /// Nonce for replay protection
-    pub nonce: String,
+    /// API key (from derive-api-key endpoint)
+    pub api_key: String,
+    /// API secret (from derive-api-key endpoint)  
+    pub secret: String,
+    /// API passphrase (from derive-api-key endpoint)
+    pub passphrase: String,
 }
 
 /// WebSocket subscription request
