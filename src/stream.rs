@@ -341,26 +341,27 @@ impl WebSocketStream {
                         })?;
                 Ok(StreamMessage::BookUpdate { data })
             },
+            // User channel TRADE message (fill notification) - must come before generic "trade"
+            "trade" if value.get("status").is_some() => {
+                // User channel trade has 'status' field, market channel doesn't
+                let data = serde_json::from_value(value.clone()).map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse user trade: {}", e),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(StreamMessage::UserTrade(data))
+            },
             "trade" => {
-                // Trade messages on user channel might have data at top level or in "data" field
-                let data_field = value.get("data").unwrap_or(&Value::Null);
-                let data: FillEvent = if data_field.is_null() {
-                    // Try parsing the entire message (minus type field)
-                    debug!("TRADE message has null data, raw message: {}", value);
-                    serde_json::from_value(value.clone()).map_err(|e| {
-                        PolyfillError::parse(
-                            format!("Failed to parse trade (top-level): {}", e),
-                            Some(Box::new(e)),
-                        )
-                    })?
-                } else {
-                    serde_json::from_value(data_field.clone()).map_err(|e| {
-                        PolyfillError::parse(
-                            format!("Failed to parse trade: {}", e),
-                            Some(Box::new(e)),
-                        )
-                    })?
-                };
+                // Market channel trade - uses FillEvent format
+                let data =
+                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
+                        .map_err(|e| {
+                            PolyfillError::parse(
+                                format!("Failed to parse trade: {}", e),
+                                Some(Box::new(e)),
+                            )
+                        })?;
                 Ok(StreamMessage::Trade { data })
             },
             "order_update" => {
@@ -374,27 +375,33 @@ impl WebSocketStream {
                         })?;
                 Ok(StreamMessage::OrderUpdate { data })
             },
-            "user_order_update" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse user order update: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::UserOrderUpdate { data })
+            // User channel ORDER events
+            "placement" => {
+                let data = serde_json::from_value(value.clone()).map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse order placement: {}", e),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(StreamMessage::UserOrderPlacement(data))
             },
-            "user_trade" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse user trade: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::UserTrade { data })
+            "update" => {
+                let data = serde_json::from_value(value.clone()).map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse order update: {}", e),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(StreamMessage::UserOrderUpdate(data))
+            },
+            "cancellation" => {
+                let data = serde_json::from_value(value.clone()).map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse order cancellation: {}", e),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(StreamMessage::UserOrderCancellation(data))
             },
             "market_book_update" => {
                 let data =

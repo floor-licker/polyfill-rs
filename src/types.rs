@@ -444,6 +444,72 @@ pub struct FillEvent {
     pub fee: Decimal,
 }
 
+/// Maker order info within a user channel trade message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MakerOrderInfo {
+    pub asset_id: String,
+    pub matched_amount: String,
+    pub order_id: String,
+    pub outcome: String,
+    pub owner: String,
+    pub price: String,
+}
+
+/// User channel TRADE message from Polymarket WebSocket
+/// This is the format returned on fills via the user channel
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserTradeMessage {
+    pub asset_id: String,
+    #[serde(default)]
+    pub event_type: Option<String>,
+    pub id: String,
+    #[serde(default)]
+    pub last_update: Option<String>,
+    #[serde(default)]
+    pub maker_orders: Vec<MakerOrderInfo>,
+    pub market: String,
+    #[serde(default)]
+    pub matchtime: Option<String>,
+    pub outcome: String,
+    pub owner: String,
+    pub price: String,
+    pub side: String,
+    pub size: String,
+    pub status: String,
+    #[serde(default)]
+    pub taker_order_id: Option<String>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub trade_owner: Option<String>,
+    #[serde(rename = "type")]
+    pub message_type: String,
+}
+
+/// User channel ORDER message (PLACEMENT, UPDATE, CANCELLATION)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserOrderMessage {
+    pub asset_id: String,
+    #[serde(default)]
+    pub associate_trades: Option<Vec<String>>,
+    #[serde(default)]
+    pub event_type: Option<String>,
+    pub id: String,
+    pub market: String,
+    #[serde(default)]
+    pub order_owner: Option<String>,
+    pub original_size: String,
+    pub outcome: String,
+    pub owner: String,
+    pub price: String,
+    pub side: String,
+    pub size_matched: String,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(rename = "type")]
+    pub message_type: String, // PLACEMENT, UPDATE, CANCELLATION
+}
+
 /// Order creation parameters
 #[derive(Debug, Clone)]
 pub struct OrderRequest {
@@ -713,11 +779,16 @@ pub enum StreamMessage {
     OrderUpdate { data: Order },
     #[serde(rename = "heartbeat")]
     Heartbeat { timestamp: DateTime<Utc> },
-    /// User channel events
-    #[serde(rename = "user_order_update")]
-    UserOrderUpdate { data: Order },
-    #[serde(rename = "user_trade")]
-    UserTrade { data: FillEvent },
+    /// User channel TRADE event (fill notification)
+    #[serde(rename = "TRADE")]
+    UserTrade(UserTradeMessage),
+    /// User channel ORDER events (PLACEMENT, UPDATE, CANCELLATION)
+    #[serde(rename = "PLACEMENT")]
+    UserOrderPlacement(UserOrderMessage),
+    #[serde(rename = "UPDATE")]
+    UserOrderUpdate(UserOrderMessage),
+    #[serde(rename = "CANCELLATION")]
+    UserOrderCancellation(UserOrderMessage),
     /// Market channel events
     #[serde(rename = "market_book_update")]
     MarketBookUpdate { data: OrderDelta },
