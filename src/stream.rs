@@ -323,12 +323,13 @@ impl WebSocketStream {
             )
         })?;
 
-        // Extract message type
+        // Extract message type (convert to lowercase for case-insensitive matching)
         let message_type = value.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
             PolyfillError::parse("Missing 'type' field in WebSocket message", None)
         })?;
+        let message_type_lower = message_type.to_lowercase();
 
-        match message_type {
+        match message_type_lower.as_str() {
             "book_update" => {
                 let data =
                     serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
