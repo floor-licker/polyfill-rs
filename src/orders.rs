@@ -50,6 +50,9 @@ pub struct OrderBuilder {
 }
 
 /// Rounding configurations for different tick sizes
+/// Note: For BUY orders, maker_amount is USDC (max 2 decimals per API)
+///       For SELL orders, taker_amount is USDC (max 4 decimals per API)
+/// The 'amount' field controls rounding for the computed USDC amount (price * size)
 static ROUNDING_CONFIG: LazyLock<HashMap<Decimal, RoundConfig>> = LazyLock::new(|| {
     HashMap::from([
         (
@@ -57,7 +60,7 @@ static ROUNDING_CONFIG: LazyLock<HashMap<Decimal, RoundConfig>> = LazyLock::new(
             RoundConfig {
                 price: 1,
                 size: 2,
-                amount: 3,
+                amount: 2,  // USDC requires max 2 decimals
             },
         ),
         (
@@ -65,7 +68,7 @@ static ROUNDING_CONFIG: LazyLock<HashMap<Decimal, RoundConfig>> = LazyLock::new(
             RoundConfig {
                 price: 2,
                 size: 2,
-                amount: 4,
+                amount: 2,  // USDC requires max 2 decimals (was 4, causing "invalid amounts" API errors)
             },
         ),
         (
@@ -73,7 +76,7 @@ static ROUNDING_CONFIG: LazyLock<HashMap<Decimal, RoundConfig>> = LazyLock::new(
             RoundConfig {
                 price: 3,
                 size: 2,
-                amount: 5,
+                amount: 2,  // USDC requires max 2 decimals
             },
         ),
         (
@@ -81,7 +84,7 @@ static ROUNDING_CONFIG: LazyLock<HashMap<Decimal, RoundConfig>> = LazyLock::new(
             RoundConfig {
                 price: 4,
                 size: 2,
-                amount: 6,
+                amount: 2,  // USDC requires max 2 decimals
             },
         ),
     ])
