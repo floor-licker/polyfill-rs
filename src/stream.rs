@@ -565,9 +565,15 @@ impl Stream for WebSocketStream {
                                 }
                             }
                         },
-                        tokio_tungstenite::tungstenite::Message::Ping(_data) => {
-                            // Respond with pong inline
+                        tokio_tungstenite::tungstenite::Message::Ping(data) => {
+                            // Actually send pong response (not just log it!)
                             debug!("Received ping, sending pong");
+                            let pong = tokio_tungstenite::tungstenite::Message::Pong(data);
+                            // Use start_send_unpin which is available on Sink
+                            use futures_util::SinkExt;
+                            let _ = connection.start_send_unpin(pong);
+                            // Also poll flush to actually send it
+                            let _ = connection.poll_flush_unpin(cx);
                             Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
                                 timestamp: Utc::now(),
                             })))
