@@ -213,6 +213,7 @@ impl Side {
 pub enum OrderType {
     GTC,
     FOK,
+    FAK,
     GTD,
 }
 
@@ -221,6 +222,7 @@ impl OrderType {
         match self {
             OrderType::GTC => "GTC",
             OrderType::FOK => "FOK",
+            OrderType::FAK => "FAK",
             OrderType::GTD => "GTD",
         }
     }
