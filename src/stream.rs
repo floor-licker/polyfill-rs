@@ -274,12 +274,12 @@ impl WebSocketStream {
             tokio_tungstenite::tungstenite::Message::Text(text) => {
                 debug!("Received WebSocket message: {}", text);
 
-                // Parse the message according to Polymarket's format
-                let stream_message = self.parse_polymarket_message(&text)?;
-
-                // Send to internal channel
-                if let Err(e) = self.tx.send(stream_message) {
-                    error!("Failed to send message to internal channel: {}", e);
+                // Parse the message according to Polymarket's `event_type` format
+                let stream_messages = crate::decode::parse_stream_messages(&text)?;
+                for stream_message in stream_messages {
+                    if let Err(e) = self.tx.send(stream_message) {
+                        error!("Failed to send message to internal channel: {}", e);
+                    }
                 }
 
                 self.stats.messages_received += 1;
@@ -313,115 +313,10 @@ impl WebSocketStream {
         Ok(())
     }
 
-    /// Parse Polymarket WebSocket message format
+    /// Parse Polymarket WebSocket message(s) in `event_type` format.
     #[allow(dead_code)]
-    fn parse_polymarket_message(&self, text: &str) -> Result<StreamMessage> {
-        let value: Value = serde_json::from_str(text).map_err(|e| {
-            PolyfillError::parse(
-                format!("Failed to parse WebSocket message: {}", e),
-                Some(Box::new(e)),
-            )
-        })?;
-
-        // Extract message type
-        let message_type = value.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
-            PolyfillError::parse("Missing 'type' field in WebSocket message", None)
-        })?;
-
-        match message_type {
-            "book_update" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse book update: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::BookUpdate { data })
-            },
-            "trade" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse trade: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::Trade { data })
-            },
-            "order_update" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse order update: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::OrderUpdate { data })
-            },
-            "user_order_update" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse user order update: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::UserOrderUpdate { data })
-            },
-            "user_trade" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse user trade: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::UserTrade { data })
-            },
-            "market_book_update" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse market book update: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::MarketBookUpdate { data })
-            },
-            "market_trade" => {
-                let data =
-                    serde_json::from_value(value.get("data").unwrap_or(&Value::Null).clone())
-                        .map_err(|e| {
-                            PolyfillError::parse(
-                                format!("Failed to parse market trade: {}", e),
-                                Some(Box::new(e)),
-                            )
-                        })?;
-                Ok(StreamMessage::MarketTrade { data })
-            },
-            "heartbeat" => {
-                let timestamp = value
-                    .get("timestamp")
-                    .and_then(|v| v.as_u64())
-                    .map(|ts| chrono::DateTime::from_timestamp(ts as i64, 0).unwrap_or_default())
-                    .unwrap_or_else(Utc::now);
-                Ok(StreamMessage::Heartbeat { timestamp })
-            },
-            _ => {
-                warn!("Unknown message type: {}", message_type);
-                // Return heartbeat as fallback
-                Ok(StreamMessage::Heartbeat {
-                    timestamp: Utc::now(),
-                })
-            },
-        }
+    fn parse_polymarket_messages(&self, text: &str) -> Result<Vec<StreamMessage>> {
+        crate::decode::parse_stream_messages(text)
     }
 
     /// Reconnect with exponential backoff
@@ -476,33 +371,58 @@ impl Stream for WebSocketStream {
     type Item = Result<StreamMessage>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // First check internal channel
-        if let Poll::Ready(Some(message)) = self.rx.poll_recv(cx) {
-            return Poll::Ready(Some(Ok(message)));
-        }
+        loop {
+            // First drain any parsed messages
+            if let Poll::Ready(Some(message)) = self.rx.poll_recv(cx) {
+                return Poll::Ready(Some(Ok(message)));
+            }
 
-        // Then check WebSocket connection
-        if let Some(connection) = &mut self.connection {
+            let Some(connection) = &mut self.connection else {
+                return Poll::Ready(None);
+            };
+
             match connection.poll_next_unpin(cx) {
-                Poll::Ready(Some(Ok(_message))) => {
-                    // Simplified message handling
-                    Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
-                        timestamp: Utc::now(),
-                    })))
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Some(Ok(ws_message))) => match ws_message {
+                    tokio_tungstenite::tungstenite::Message::Text(text) => {
+                        match crate::decode::parse_stream_messages(&text) {
+                            Ok(messages) => {
+                                for msg in messages {
+                                    let _ = self.tx.send(msg);
+                                }
+                                self.stats.messages_received += 1;
+                                self.stats.last_message_time = Some(Utc::now());
+                                continue;
+                            }
+                            Err(e) => {
+                                self.stats.errors += 1;
+                                return Poll::Ready(Some(Err(e)));
+                            }
+                        }
+                    }
+                    tokio_tungstenite::tungstenite::Message::Close(_) => {
+                        info!("WebSocket connection closed by server");
+                        self.connection = None;
+                        return Poll::Ready(None);
+                    }
+                    tokio_tungstenite::tungstenite::Message::Ping(_) => {
+                        // Best-effort: tokio-tungstenite/tungstenite may handle pings internally.
+                        continue;
+                    }
+                    tokio_tungstenite::tungstenite::Message::Pong(_) => continue,
+                    tokio_tungstenite::tungstenite::Message::Binary(_) => continue,
+                    tokio_tungstenite::tungstenite::Message::Frame(_) => continue,
                 },
                 Poll::Ready(Some(Err(e))) => {
                     error!("WebSocket error: {}", e);
                     self.stats.errors += 1;
-                    Poll::Ready(Some(Err(e.into())))
-                },
+                    return Poll::Ready(Some(Err(e.into())));
+                }
                 Poll::Ready(None) => {
                     info!("WebSocket stream ended");
-                    Poll::Ready(None)
-                },
-                Poll::Pending => Poll::Pending,
+                    return Poll::Ready(None);
+                }
             }
-        } else {
-            Poll::Ready(None)
         }
     }
 }
@@ -655,19 +575,19 @@ mod tests {
         let mut stream = MockStream::new();
 
         // Add some test messages
-        stream.add_message(StreamMessage::Heartbeat {
-            timestamp: Utc::now(),
-        });
-        stream.add_message(StreamMessage::BookUpdate {
-            data: OrderDelta {
-                token_id: "test".to_string(),
-                timestamp: Utc::now(),
-                side: Side::BUY,
-                price: rust_decimal_macros::dec!(0.5),
-                size: rust_decimal_macros::dec!(100),
-                sequence: 1,
-            },
-        });
+        stream.add_message(StreamMessage::Book(BookUpdate {
+            asset_id: "1".to_string(),
+            market: "0xabc".to_string(),
+            timestamp: 1_234_567_890,
+            bids: vec![],
+            asks: vec![],
+            hash: None,
+        }));
+        stream.add_message(StreamMessage::PriceChange(PriceChange {
+            market: "0xabc".to_string(),
+            timestamp: 1_234_567_891,
+            price_changes: vec![],
+        }));
 
         assert!(stream.is_connected());
         assert_eq!(stream.get_stats().messages_received, 2);
@@ -680,9 +600,14 @@ mod tests {
         manager.add_stream(mock_stream);
 
         // Test message broadcasting
-        let message = StreamMessage::Heartbeat {
-            timestamp: Utc::now(),
-        };
+        let message = StreamMessage::Book(BookUpdate {
+            asset_id: "1".to_string(),
+            market: "0xabc".to_string(),
+            timestamp: 1_234_567_890,
+            bids: vec![],
+            asks: vec![],
+            hash: None,
+        });
         assert!(manager.broadcast_message(message).is_ok());
     }
 }

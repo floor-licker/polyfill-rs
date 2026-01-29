@@ -101,42 +101,85 @@ impl SnipeStrategy {
     /// Process a market data update
     pub fn process_update(&mut self, message: StreamMessage) -> Result<()> {
         match message {
-            StreamMessage::BookUpdate { data } => {
-                if data.token_id == self.token_id {
-                    self.process_book_update(data)?;
+            StreamMessage::Book(book) => {
+                if book.asset_id == self.token_id {
+                    self.process_book_update(book)?;
                 }
             },
-            StreamMessage::Trade { data } => {
-                if data.token_id == self.token_id {
-                    self.process_trade(data)?;
+            StreamMessage::Trade(trade) => {
+                if trade.asset_id == self.token_id {
+                    self.process_trade(trade)?;
                 }
-            },
-            StreamMessage::Heartbeat { timestamp: _ } => {
-                self.check_stale_quotes()?;
             },
             _ => {},
         }
+
+        // Opportunistically check for staleness on any incoming update.
+        self.check_stale_quotes()?;
         Ok(())
     }
 
     /// Process order book update
-    fn process_book_update(&mut self, delta: OrderDelta) -> Result<()> {
+    fn process_book_update(&mut self, book: BookUpdate) -> Result<()> {
         // Ensure book exists
         self.book_manager.get_or_create_book(&self.token_id)?;
 
-        // Update local order book
-        self.book_manager.apply_delta(delta.clone())?;
+        // Clear the existing book and rebuild from the snapshot.
+        if let Ok(current) = self.book_manager.get_book(&self.token_id) {
+            for level in &current.bids {
+                let _ = self.book_manager.apply_delta(OrderDelta {
+                    token_id: self.token_id.clone(),
+                    timestamp: chrono::Utc::now(),
+                    side: Side::BUY,
+                    price: level.price,
+                    size: Decimal::ZERO,
+                    sequence: book.timestamp,
+                });
+            }
 
-        // Get current book state
-        let book = self.book_manager.get_book(&self.token_id)?;
+            for level in &current.asks {
+                let _ = self.book_manager.apply_delta(OrderDelta {
+                    token_id: self.token_id.clone(),
+                    timestamp: chrono::Utc::now(),
+                    side: Side::SELL,
+                    price: level.price,
+                    size: Decimal::ZERO,
+                    sequence: book.timestamp,
+                });
+            }
+        }
 
-        // Update best prices
-        if let Some(best_bid) = book.bids.first() {
-            self.last_best_bid = Some(best_bid.price);
+        let ts = chrono::DateTime::from_timestamp(
+            (book.timestamp / 1000) as i64,
+            ((book.timestamp % 1000) * 1_000_000) as u32,
+        )
+        .unwrap_or_else(chrono::Utc::now);
+
+        for level in &book.bids {
+            let _ = self.book_manager.apply_delta(OrderDelta {
+                token_id: self.token_id.clone(),
+                timestamp: ts,
+                side: Side::BUY,
+                price: level.price,
+                size: level.size,
+                sequence: book.timestamp,
+            });
         }
-        if let Some(best_ask) = book.asks.first() {
-            self.last_best_ask = Some(best_ask.price);
+
+        for level in &book.asks {
+            let _ = self.book_manager.apply_delta(OrderDelta {
+                token_id: self.token_id.clone(),
+                timestamp: ts,
+                side: Side::SELL,
+                price: level.price,
+                size: level.size,
+                sequence: book.timestamp,
+            });
         }
+
+        // Update best prices directly from the snapshot
+        self.last_best_bid = book.bids.first().map(|l| l.price);
+        self.last_best_ask = book.asks.first().map(|l| l.price);
 
         self.last_update = time::now_secs();
 
@@ -147,17 +190,17 @@ impl SnipeStrategy {
     }
 
     /// Process trade update
-    fn process_trade(&mut self, fill: FillEvent) -> Result<()> {
+    fn process_trade(&mut self, trade: TradeMessage) -> Result<()> {
         info!(
             "Trade: {} {} @ {} (size: {})",
-            fill.side.as_str(),
-            fill.token_id,
-            fill.price,
-            fill.size
+            trade.side.as_str(),
+            trade.asset_id,
+            trade.price,
+            trade.size
         );
 
         // Update statistics
-        self.stats.total_volume += fill.size;
+        self.stats.total_volume += trade.size;
 
         // Calculate P&L if this was our trade
         // (In a real implementation, you'd track your own orders)
@@ -327,24 +370,19 @@ impl MockMarketData {
         let price_change = random_factor * Decimal::from(2) * self.volatility;
         let new_price = self.base_price * (Decimal::from(1) + price_change);
 
-        // Generate order book update
-        let side = if rand::random::<bool>() {
-            Side::BUY
-        } else {
-            Side::SELL
-        };
+        // Generate a simple orderbook snapshot update
         let size = Decimal::from(rand::random::<u64>() % 1000 + 100);
+        let bid = new_price - dec!(0.01);
+        let ask = new_price + dec!(0.01);
 
-        StreamMessage::BookUpdate {
-            data: OrderDelta {
-                token_id: self.token_id.clone(),
-                timestamp: chrono::Utc::now(),
-                side,
-                price: new_price,
-                size,
-                sequence: self.sequence,
-            },
-        }
+        StreamMessage::Book(BookUpdate {
+            asset_id: self.token_id.clone(),
+            market: "0xmock".to_string(),
+            timestamp: time::now_millis(),
+            bids: vec![OrderSummary { price: bid, size }],
+            asks: vec![OrderSummary { price: ask, size }],
+            hash: None,
+        })
     }
 }
 

@@ -659,18 +659,11 @@ impl Default for ClientConfig {
     }
 }
 
-/// WebSocket authentication for Polymarket API
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WssAuth {
-    /// User's Ethereum address
-    pub address: String,
-    /// EIP-712 signature
-    pub signature: String,
-    /// Unix timestamp
-    pub timestamp: u64,
-    /// Nonce for replay protection
-    pub nonce: String,
-}
+/// WebSocket authentication for Polymarket API user channel.
+///
+/// Polymarket's CLOB WebSocket expects the same L2 API credentials used for HTTP calls:
+/// `{ apiKey, secret, passphrase }`.
+pub type WssAuth = ApiCredentials;
 
 /// WebSocket subscription request
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -699,28 +692,247 @@ pub struct WssSubscription {
     pub auth: Option<WssAuth>,
 }
 
-/// WebSocket message types for streaming
+/// WebSocket message types for streaming (official Polymarket `event_type` format).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "event_type")]
 pub enum StreamMessage {
-    #[serde(rename = "book_update")]
-    BookUpdate { data: OrderDelta },
+    /// Full or incremental orderbook update
+    #[serde(rename = "book")]
+    Book(BookUpdate),
+    /// Price change notification (single or batched)
+    #[serde(rename = "price_change")]
+    PriceChange(PriceChange),
+    /// Tick size change notification
+    #[serde(rename = "tick_size_change")]
+    TickSizeChange(TickSizeChange),
+    /// Last trade price update
+    #[serde(rename = "last_trade_price")]
+    LastTradePrice(LastTradePrice),
+    /// Best bid/ask update (requires `custom_feature_enabled`)
+    #[serde(rename = "best_bid_ask")]
+    BestBidAsk(BestBidAsk),
+    /// New market created (requires `custom_feature_enabled`)
+    #[serde(rename = "new_market")]
+    NewMarket(NewMarket),
+    /// Market resolved (requires `custom_feature_enabled`)
+    #[serde(rename = "market_resolved")]
+    MarketResolved(MarketResolved),
+    /// User trade execution (authenticated channel)
     #[serde(rename = "trade")]
-    Trade { data: FillEvent },
-    #[serde(rename = "order_update")]
-    OrderUpdate { data: Order },
-    #[serde(rename = "heartbeat")]
-    Heartbeat { timestamp: DateTime<Utc> },
-    /// User channel events
-    #[serde(rename = "user_order_update")]
-    UserOrderUpdate { data: Order },
-    #[serde(rename = "user_trade")]
-    UserTrade { data: FillEvent },
-    /// Market channel events
-    #[serde(rename = "market_book_update")]
-    MarketBookUpdate { data: OrderDelta },
-    #[serde(rename = "market_trade")]
-    MarketTrade { data: FillEvent },
+    Trade(TradeMessage),
+    /// User order update (authenticated channel)
+    #[serde(rename = "order")]
+    Order(OrderMessage),
+    /// Forward-compatible catch-all for new/unknown event types.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Orderbook update message (full snapshot or delta).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookUpdate {
+    pub asset_id: String,
+    pub market: String,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub timestamp: u64,
+    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    pub bids: Vec<OrderSummary>,
+    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    pub asks: Vec<OrderSummary>,
+    #[serde(default)]
+    pub hash: Option<String>,
+}
+
+/// Unified wire format for `price_change` events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceChange {
+    pub market: String,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub timestamp: u64,
+    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    pub price_changes: Vec<PriceChangeEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceChangeEntry {
+    pub asset_id: String,
+    pub price: Decimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub size: Option<Decimal>,
+    pub side: Side,
+    #[serde(default)]
+    pub hash: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub best_bid: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub best_ask: Option<Decimal>,
+}
+
+/// Tick size change event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TickSizeChange {
+    pub asset_id: String,
+    pub market: String,
+    pub old_tick_size: Decimal,
+    pub new_tick_size: Decimal,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub timestamp: u64,
+}
+
+/// Last trade price update.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastTradePrice {
+    pub asset_id: String,
+    pub market: String,
+    pub price: Decimal,
+    #[serde(default)]
+    pub side: Option<Side>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub size: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub fee_rate_bps: Option<Decimal>,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub timestamp: u64,
+}
+
+/// Best bid/ask update.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BestBidAsk {
+    pub market: String,
+    pub asset_id: String,
+    pub best_bid: Decimal,
+    pub best_ask: Decimal,
+    pub spread: Decimal,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub timestamp: u64,
+}
+
+/// New market created event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewMarket {
+    pub id: String,
+    pub question: String,
+    pub market: String,
+    pub slug: String,
+    pub description: String,
+    #[serde(rename = "assets_ids", alias = "asset_ids")]
+    pub asset_ids: Vec<String>,
+    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    pub outcomes: Vec<String>,
+    #[serde(default)]
+    pub event_message: Option<EventMessage>,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub timestamp: u64,
+}
+
+/// Market resolved event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketResolved {
+    pub id: String,
+    #[serde(default)]
+    pub question: Option<String>,
+    pub market: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(rename = "assets_ids", alias = "asset_ids")]
+    pub asset_ids: Vec<String>,
+    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    pub outcomes: Vec<String>,
+    pub winning_asset_id: String,
+    pub winning_outcome: String,
+    #[serde(default)]
+    pub event_message: Option<EventMessage>,
+    #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
+    pub timestamp: u64,
+}
+
+/// Event message object for market events.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventMessage {
+    pub id: String,
+    pub ticker: String,
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+}
+
+/// User trade execution message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeMessage {
+    pub id: String,
+    pub market: String,
+    pub asset_id: String,
+    pub side: Side,
+    pub size: Decimal,
+    pub price: Decimal,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(rename = "type", default)]
+    pub msg_type: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub last_update: Option<u64>,
+    #[serde(
+        default,
+        alias = "match_time",
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub matchtime: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub timestamp: Option<u64>,
+}
+
+/// User order update message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderMessage {
+    pub id: String,
+    pub market: String,
+    pub asset_id: String,
+    pub side: Side,
+    pub price: Decimal,
+    #[serde(rename = "type", default)]
+    pub msg_type: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub original_size: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub size_matched: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub timestamp: Option<u64>,
+    #[serde(default)]
+    pub associate_trades: Option<Vec<String>>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 /// Subscription parameters for streaming

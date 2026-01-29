@@ -432,44 +432,61 @@ impl Decoder<Market> for RawMarketResponse {
     }
 }
 
-/// WebSocket message parsing
-pub fn parse_stream_message(raw: &str) -> Result<StreamMessage> {
-    let value: Value = serde_json::from_str(raw)?;
+/// WebSocket message parsing (official `event_type` shape).
+///
+/// Polymarket WebSocket servers may send either a single JSON object or a batch array.
+/// This parser is tolerant:
+/// - Unknown/unsupported `event_type`s are ignored.
+/// - Invalid entries inside a batch are skipped (do not fail the whole batch).
+pub fn parse_stream_messages(raw: &str) -> Result<Vec<StreamMessage>> {
+    parse_stream_messages_bytes(raw.as_bytes())
+}
 
-    let msg_type = value["type"]
-        .as_str()
-        .ok_or_else(|| PolyfillError::parse("Missing message type".to_string(), None))?;
+/// See `parse_stream_messages`.
+pub fn parse_stream_messages_bytes(bytes: &[u8]) -> Result<Vec<StreamMessage>> {
+    let value: Value = serde_json::from_slice(bytes)?;
 
-    match msg_type {
-        "book_update" => {
-            let data = value["data"].clone();
-            let delta: OrderDelta = serde_json::from_value(data)?;
-            Ok(StreamMessage::BookUpdate { data: delta })
-        },
-        "trade" => {
-            let data = value["data"].clone();
-            let raw_trade: RawTradeResponse = serde_json::from_value(data)?;
-            let fill = raw_trade.decode()?;
-            Ok(StreamMessage::Trade { data: fill })
-        },
-        "order_update" => {
-            let data = value["data"].clone();
-            let raw_order: RawOrderResponse = serde_json::from_value(data)?;
-            let order = raw_order.decode()?;
-            Ok(StreamMessage::OrderUpdate { data: order })
-        },
-        "heartbeat" => {
-            let timestamp = value["timestamp"]
-                .as_str()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(Utc::now);
-            Ok(StreamMessage::Heartbeat { timestamp })
-        },
-        _ => Err(PolyfillError::parse(
-            format!("Unknown message type: {}", msg_type),
-            None,
-        )),
+    match value {
+        Value::Object(map) => {
+            let event_type = map.get("event_type").and_then(Value::as_str);
+            match event_type {
+                None => Ok(vec![]),
+                Some(_) => {
+                    let msg: StreamMessage = serde_json::from_value(Value::Object(map))?;
+                    match msg {
+                        StreamMessage::Unknown => Ok(vec![]),
+                        other => Ok(vec![other]),
+                    }
+                }
+            }
+        }
+        Value::Array(arr) => Ok(arr
+            .into_iter()
+            .filter_map(|elem| {
+                let obj = elem.as_object()?;
+                let event_type = obj.get("event_type").and_then(Value::as_str)?;
+                // Skip unknown event types early (forward compatibility).
+                match event_type {
+                    "book"
+                    | "price_change"
+                    | "tick_size_change"
+                    | "last_trade_price"
+                    | "best_bid_ask"
+                    | "new_market"
+                    | "market_resolved"
+                    | "trade"
+                    | "order" => {}
+                    _ => return None,
+                }
+
+                match serde_json::from_value::<StreamMessage>(Value::Object(obj.clone())) {
+                    Ok(StreamMessage::Unknown) => None,
+                    Ok(msg) => Some(msg),
+                    Err(_) => None,
+                }
+            })
+            .collect()),
+        _ => Ok(vec![]),
     }
 }
 

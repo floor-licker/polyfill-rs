@@ -26,7 +26,7 @@ use polyfill_rs::{
     types::*,
 
     // Utility functions
-    utils::{address, crypto, math, rate_limit, retry, time, url},
+    utils::{address, math, rate_limit, retry, time, url},
 
     // Configuration
     ClientConfig,
@@ -43,7 +43,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 /// Demo showcasing polyfill-rs functionality
 #[allow(dead_code)]
@@ -592,10 +592,9 @@ impl PolyfillDemo {
             initial_dump: Some(true),
             custom_feature_enabled: None,
             auth: Some(WssAuth {
-                address: "0x1234567890123456789012345678901234567890".to_string(),
-                signature: "mock_signature".to_string(),
-                timestamp: time::now_secs(),
-                nonce: crypto::generate_nonce().to_string(),
+                api_key: "test-api-key".to_string(),
+                secret: "test-secret".to_string(),
+                passphrase: "test-passphrase".to_string(),
             }),
         };
 
@@ -603,33 +602,33 @@ impl PolyfillDemo {
 
         // Simulate receiving stream messages
         let messages = vec![
-            StreamMessage::Heartbeat {
-                timestamp: chrono::Utc::now(),
-            },
-            StreamMessage::BookUpdate {
-                data: OrderDelta {
-                    token_id: "12345".to_string(),
-                    timestamp: chrono::Utc::now(),
-                    side: Side::BUY,
+            StreamMessage::Book(BookUpdate {
+                asset_id: "12345".to_string(),
+                market: "market1".to_string(),
+                timestamp: time::now_millis(),
+                bids: vec![OrderSummary {
                     price: dec!(0.75),
                     size: dec!(100.0),
-                    sequence: 1,
-                },
-            },
-            StreamMessage::Trade {
-                data: FillEvent {
-                    id: "fill1".to_string(),
-                    order_id: "order1".to_string(),
-                    token_id: "12345".to_string(),
-                    side: Side::BUY,
-                    price: dec!(0.75),
+                }],
+                asks: vec![OrderSummary {
+                    price: dec!(0.76),
                     size: dec!(50.0),
-                    timestamp: chrono::Utc::now(),
-                    maker_address: alloy_primitives::Address::ZERO,
-                    taker_address: alloy_primitives::Address::ZERO,
-                    fee: dec!(0.375),
-                },
-            },
+                }],
+                hash: None,
+            }),
+            StreamMessage::Trade(TradeMessage {
+                id: "fill1".to_string(),
+                market: "market1".to_string(),
+                asset_id: "12345".to_string(),
+                side: Side::BUY,
+                size: dec!(50.0),
+                price: dec!(0.75),
+                status: Some("MATCHED".to_string()),
+                msg_type: None,
+                last_update: None,
+                matchtime: None,
+                timestamp: None,
+            }),
         ];
 
         for message in messages {
@@ -638,31 +637,41 @@ impl PolyfillDemo {
 
             // Process message based on type
             match &message {
-                StreamMessage::BookUpdate { data } => {
-                    info!("  Processing book update for token: {}", data.token_id);
-                    if let Err(e) = self.book_manager.apply_delta(data.clone()) {
-                        error!("  Failed to apply book update: {}", e);
-                        self.stats.errors += 1;
+                StreamMessage::Book(book) => {
+                    info!("  Processing book update for asset: {}", book.asset_id);
+                    // This is a demo: apply snapshot levels as deltas.
+                    for level in &book.bids {
+                        let _ = self.book_manager.apply_delta(OrderDelta {
+                            token_id: book.asset_id.clone(),
+                            timestamp: chrono::Utc::now(),
+                            side: Side::BUY,
+                            price: level.price,
+                            size: level.size,
+                            sequence: book.timestamp,
+                        });
                     }
-                },
-                StreamMessage::Trade { data } => {
+                    for level in &book.asks {
+                        let _ = self.book_manager.apply_delta(OrderDelta {
+                            token_id: book.asset_id.clone(),
+                            timestamp: chrono::Utc::now(),
+                            side: Side::SELL,
+                            price: level.price,
+                            size: level.size,
+                            sequence: book.timestamp,
+                        });
+                    }
+                }
+                StreamMessage::Trade(trade) => {
                     info!(
                         "  Processing trade: {} {} @ {}",
-                        data.side.as_str(),
-                        data.size,
-                        data.price
+                        trade.side.as_str(),
+                        trade.size,
+                        trade.price
                     );
-                    if let Err(e) = self.fill_processor.process_fill(data.clone()) {
-                        error!("  Failed to process fill: {}", e);
-                        self.stats.errors += 1;
-                    }
-                },
-                StreamMessage::Heartbeat { timestamp } => {
-                    debug!("  Received heartbeat at: {}", timestamp);
-                },
+                }
                 _ => {
                     info!("  Unhandled message type");
-                },
+                }
             }
         }
 
