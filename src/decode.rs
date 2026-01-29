@@ -108,6 +108,71 @@ pub mod deserializers {
             None => Ok(None),
         }
     }
+
+    /// Deserialize a vec that may be `null` (treat `null` as empty vec).
+    pub fn vec_from_null<'de, D, T>(deserializer: D) -> std::result::Result<Vec<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: serde::Deserialize<'de>,
+    {
+        Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+    }
+
+    /// Deserialize an optional Decimal from string/number/null.
+    ///
+    /// - `null` => `None`
+    /// - `""` => `None`
+    /// - invalid values => error
+    pub fn optional_decimal_from_string<'de, D>(
+        deserializer: D,
+    ) -> std::result::Result<Option<Decimal>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Null => Ok(None),
+            serde_json::Value::String(s) => {
+                let s = s.trim();
+                if s.is_empty() {
+                    Ok(None)
+                } else {
+                    s.parse::<Decimal>()
+                        .map(Some)
+                        .map_err(serde::de::Error::custom)
+                }
+            }
+            serde_json::Value::Number(n) => Decimal::from_str(&n.to_string())
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+            other => Err(serde::de::Error::custom(format!(
+                "Expected decimal as string/number/null, got {other}"
+            ))),
+        }
+    }
+
+    /// Like `optional_decimal_from_string`, but returns `None` on parse errors.
+    pub fn optional_decimal_from_string_default_on_error<'de, D>(
+        deserializer: D,
+    ) -> std::result::Result<Option<Decimal>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Null => Ok(None),
+            serde_json::Value::String(s) => {
+                let s = s.trim();
+                if s.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(s.parse::<Decimal>().ok())
+                }
+            }
+            serde_json::Value::Number(n) => Ok(Decimal::from_str(&n.to_string()).ok()),
+            _ => Ok(None),
+        }
+    }
 }
 
 /// Raw API response types for efficient parsing

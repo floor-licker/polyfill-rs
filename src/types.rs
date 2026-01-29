@@ -1024,14 +1024,25 @@ pub struct BookParams {
 pub struct OrderBookSummary {
     pub market: String,
     pub asset_id: String,
-    pub hash: String,
+    #[serde(default)]
+    pub hash: Option<String>,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub timestamp: u64,
+    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
     pub bids: Vec<OrderSummary>,
+    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
     pub asks: Vec<OrderSummary>,
+    pub min_order_size: Decimal,
+    pub neg_risk: bool,
+    pub tick_size: Decimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string_default_on_error"
+    )]
+    pub last_trade_price: Option<Decimal>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderSummary {
     #[serde(with = "rust_decimal::serde::str")]
     pub price: Decimal,
