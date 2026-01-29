@@ -2709,6 +2709,8 @@ dependencies = [
 [[package]]
 name = "polymarket-rs-client"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c797798ba56ed3bda214f2612afbf26ef3ed7479085645fbdc3329a5b9d5123"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
