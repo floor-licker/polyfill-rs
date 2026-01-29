@@ -323,10 +323,15 @@ impl WebSocketStream {
             )
         })?;
 
-        // Extract message type (convert to lowercase for case-insensitive matching)
-        let message_type = value.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
-            PolyfillError::parse("Missing 'type' field in WebSocket message", None)
-        })?;
+        // Extract message type - check both 'type' (user channel) and 'event_type' (market channel)
+        // Convert to lowercase for case-insensitive matching
+        let message_type = value
+            .get("type")
+            .or_else(|| value.get("event_type"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                PolyfillError::parse("Missing 'type' or 'event_type' field in WebSocket message", None)
+            })?;
         let message_type_lower = message_type.to_lowercase();
 
         match message_type_lower.as_str() {
@@ -432,6 +437,43 @@ impl WebSocketStream {
                     .map(|ts| chrono::DateTime::from_timestamp(ts as i64, 0).unwrap_or_default())
                     .unwrap_or_else(Utc::now);
                 Ok(StreamMessage::Heartbeat { timestamp })
+            },
+            // Market channel events (via event_type field)
+            "book" => {
+                let data = serde_json::from_value(value.clone()).map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse market book: {}", e),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(StreamMessage::MarketBook(data))
+            },
+            "best_bid_ask" => {
+                let data = serde_json::from_value(value.clone()).map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse best_bid_ask: {}", e),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(StreamMessage::BestBidAsk(data))
+            },
+            "last_trade_price" => {
+                let data = serde_json::from_value(value.clone()).map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse last_trade_price: {}", e),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(StreamMessage::LastTradePrice(data))
+            },
+            "price_change" => {
+                let data = serde_json::from_value(value.clone()).map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse price_change: {}", e),
+                        Some(Box::new(e)),
+                    )
+                })?;
+                Ok(StreamMessage::PriceChange(data))
             },
             _ => {
                 warn!("Unknown message type: {}", message_type);

@@ -767,6 +767,70 @@ pub struct WssSubscription {
     pub auth: Option<WssAuth>,
 }
 
+/// Market channel book snapshot (event_type: "book")
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketBookSnapshot {
+    pub asset_id: String,
+    #[serde(default)]
+    pub bids: Vec<PriceLevel>,
+    #[serde(default)]
+    pub asks: Vec<PriceLevel>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub hash: Option<String>,
+}
+
+/// Price level in orderbook
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceLevel {
+    pub price: String,
+    pub size: String,
+}
+
+/// Market channel best bid/ask message (event_type: "best_bid_ask")
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BestBidAskMessage {
+    pub asset_id: String,
+    #[serde(default)]
+    pub bid: Option<String>,
+    #[serde(default)]
+    pub ask: Option<String>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+}
+
+/// Market channel last trade price (event_type: "last_trade_price")
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastTradePriceMessage {
+    pub asset_id: String,
+    pub price: String,
+    #[serde(default)]
+    pub side: Option<String>,
+    #[serde(default)]
+    pub size: Option<String>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub market: Option<String>,
+    #[serde(default)]
+    pub fee_rate_bps: Option<String>,
+}
+
+/// Market channel price change (event_type: "price_change")
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceChangeMessage {
+    pub asset_id: String,
+    #[serde(default)]
+    pub price: Option<String>,
+    #[serde(default)]
+    pub side: Option<String>,
+    #[serde(default)]
+    pub size: Option<String>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+}
+
 /// WebSocket message types for streaming
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -794,6 +858,18 @@ pub enum StreamMessage {
     MarketBookUpdate { data: OrderDelta },
     #[serde(rename = "market_trade")]
     MarketTrade { data: FillEvent },
+    /// Market channel book snapshot (event_type: "book")
+    #[serde(rename = "book")]
+    MarketBook(MarketBookSnapshot),
+    /// Market channel best bid/ask (event_type: "best_bid_ask")
+    #[serde(rename = "best_bid_ask")]
+    BestBidAsk(BestBidAskMessage),
+    /// Market channel last trade price (event_type: "last_trade_price")
+    #[serde(rename = "last_trade_price")]
+    LastTradePrice(LastTradePriceMessage),
+    /// Market channel price change (event_type: "price_change")
+    #[serde(rename = "price_change")]
+    PriceChange(PriceChangeMessage),
 }
 
 /// Subscription parameters for streaming
