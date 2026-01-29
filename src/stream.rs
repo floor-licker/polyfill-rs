@@ -52,6 +52,8 @@ pub struct WebSocketStream {
     stats: StreamStats,
     /// Reconnection configuration
     reconnect_config: ReconnectConfig,
+    /// Flag to track if we need to keep flushing a pong response
+    needs_pong_flush: bool,
 }
 
 /// Stream statistics
@@ -106,6 +108,7 @@ impl WebSocketStream {
                 reconnect_count: 0,
             },
             reconnect_config: ReconnectConfig::default(),
+            needs_pong_flush: false,
         }
     }
 
@@ -537,7 +540,29 @@ impl Stream for WebSocketStream {
     type Item = Result<StreamMessage>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // First check internal channel
+        // First, if we have a pending pong to flush, try to complete it
+        if self.needs_pong_flush {
+            if let Some(connection) = &mut self.connection {
+                use futures_util::SinkExt;
+                match connection.poll_flush_unpin(cx) {
+                    Poll::Ready(Ok(())) => {
+                        debug!("Pending pong flushed successfully");
+                        self.needs_pong_flush = false;
+                    }
+                    Poll::Ready(Err(e)) => {
+                        error!("Pending pong flush error: {}", e);
+                        self.needs_pong_flush = false;
+                    }
+                    Poll::Pending => {
+                        // Still pending, we'll be woken up when ready
+                        // Don't return Pending here - continue to check for messages
+                        // The waker is already registered from the flush call
+                    }
+                }
+            }
+        }
+        
+        // Then check internal channel
         if let Poll::Ready(Some(message)) = self.rx.poll_recv(cx) {
             return Poll::Ready(Some(Ok(message)));
         }
@@ -566,14 +591,29 @@ impl Stream for WebSocketStream {
                             }
                         },
                         tokio_tungstenite::tungstenite::Message::Ping(data) => {
-                            // Actually send pong response (not just log it!)
+                            // Send pong response with proper flush retry
                             debug!("Received ping, sending pong");
                             let pong = tokio_tungstenite::tungstenite::Message::Pong(data);
-                            // Use start_send_unpin which is available on Sink
                             use futures_util::SinkExt;
+                            // Queue the pong message
                             let _ = connection.start_send_unpin(pong);
-                            // Also poll flush to actually send it
-                            let _ = connection.poll_flush_unpin(cx);
+                            // Try to flush - if Pending, set flag to retry on next poll
+                            match connection.poll_flush_unpin(cx) {
+                                Poll::Ready(Ok(())) => {
+                                    debug!("Pong flushed successfully");
+                                    self.needs_pong_flush = false;
+                                }
+                                Poll::Ready(Err(e)) => {
+                                    error!("Pong flush error: {}", e);
+                                    self.needs_pong_flush = false;
+                                }
+                                Poll::Pending => {
+                                    debug!("Pong flush pending, will retry");
+                                    self.needs_pong_flush = true;
+                                    // Re-register waker so we get polled again
+                                    cx.waker().wake_by_ref();
+                                }
+                            }
                             Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
                                 timestamp: Utc::now(),
                             })))
