@@ -590,7 +590,7 @@ impl Stream for WebSocketStream {
                     Poll::Ready(Some(Err(e.into())))
                 },
                 Poll::Ready(None) => {
-                    info!("WebSocket stream ended");
+                    debug!("WebSocket stream ended");
                     Poll::Ready(None)
                 },
                 Poll::Pending => Poll::Pending,
