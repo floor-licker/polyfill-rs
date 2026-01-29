@@ -141,7 +141,7 @@ pub mod deserializers {
                         .map(Some)
                         .map_err(serde::de::Error::custom)
                 }
-            }
+            },
             serde_json::Value::Number(n) => Decimal::from_str(&n.to_string())
                 .map(Some)
                 .map_err(serde::de::Error::custom),
@@ -168,7 +168,7 @@ pub mod deserializers {
                 } else {
                     Ok(s.parse::<Decimal>().ok())
                 }
-            }
+            },
             serde_json::Value::Number(n) => Ok(Decimal::from_str(&n.to_string()).ok()),
             _ => Ok(None),
         }
@@ -457,9 +457,9 @@ pub fn parse_stream_messages_bytes(bytes: &[u8]) -> Result<Vec<StreamMessage>> {
                         StreamMessage::Unknown => Ok(vec![]),
                         other => Ok(vec![other]),
                     }
-                }
+                },
             }
-        }
+        },
         Value::Array(arr) => Ok(arr
             .into_iter()
             .filter_map(|elem| {
@@ -467,15 +467,8 @@ pub fn parse_stream_messages_bytes(bytes: &[u8]) -> Result<Vec<StreamMessage>> {
                 let event_type = obj.get("event_type").and_then(Value::as_str)?;
                 // Skip unknown event types early (forward compatibility).
                 match event_type {
-                    "book"
-                    | "price_change"
-                    | "tick_size_change"
-                    | "last_trade_price"
-                    | "best_bid_ask"
-                    | "new_market"
-                    | "market_resolved"
-                    | "trade"
-                    | "order" => {}
+                    "book" | "price_change" | "tick_size_change" | "last_trade_price"
+                    | "best_bid_ask" | "new_market" | "market_resolved" | "trade" | "order" => {},
                     _ => return None,
                 }
 

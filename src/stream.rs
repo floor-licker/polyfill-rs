@@ -393,22 +393,22 @@ impl Stream for WebSocketStream {
                                 self.stats.messages_received += 1;
                                 self.stats.last_message_time = Some(Utc::now());
                                 continue;
-                            }
+                            },
                             Err(e) => {
                                 self.stats.errors += 1;
                                 return Poll::Ready(Some(Err(e)));
-                            }
+                            },
                         }
-                    }
+                    },
                     tokio_tungstenite::tungstenite::Message::Close(_) => {
                         info!("WebSocket connection closed by server");
                         self.connection = None;
                         return Poll::Ready(None);
-                    }
+                    },
                     tokio_tungstenite::tungstenite::Message::Ping(_) => {
                         // Best-effort: tokio-tungstenite/tungstenite may handle pings internally.
                         continue;
-                    }
+                    },
                     tokio_tungstenite::tungstenite::Message::Pong(_) => continue,
                     tokio_tungstenite::tungstenite::Message::Binary(_) => continue,
                     tokio_tungstenite::tungstenite::Message::Frame(_) => continue,
@@ -417,11 +417,11 @@ impl Stream for WebSocketStream {
                     error!("WebSocket error: {}", e);
                     self.stats.errors += 1;
                     return Poll::Ready(Some(Err(e.into())));
-                }
+                },
                 Poll::Ready(None) => {
                     info!("WebSocket stream ended");
                     return Poll::Ready(None);
-                }
+                },
             }
         }
     }

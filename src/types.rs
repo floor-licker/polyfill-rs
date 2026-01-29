@@ -735,9 +735,15 @@ pub struct BookUpdate {
     pub market: String,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub timestamp: u64,
-    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
     pub bids: Vec<OrderSummary>,
-    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
     pub asks: Vec<OrderSummary>,
     #[serde(default)]
     pub hash: Option<String>,
@@ -749,7 +755,10 @@ pub struct PriceChange {
     pub market: String,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub timestamp: u64,
-    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
     pub price_changes: Vec<PriceChangeEntry>,
 }
 
@@ -832,7 +841,10 @@ pub struct NewMarket {
     pub description: String,
     #[serde(rename = "assets_ids", alias = "asset_ids")]
     pub asset_ids: Vec<String>,
-    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
     pub outcomes: Vec<String>,
     #[serde(default)]
     pub event_message: Option<EventMessage>,
@@ -853,7 +865,10 @@ pub struct MarketResolved {
     pub description: Option<String>,
     #[serde(rename = "assets_ids", alias = "asset_ids")]
     pub asset_ids: Vec<String>,
-    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
     pub outcomes: Vec<String>,
     pub winning_asset_id: String,
     pub winning_outcome: String,
@@ -1240,9 +1255,15 @@ pub struct OrderBookSummary {
     pub hash: Option<String>,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub timestamp: u64,
-    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
     pub bids: Vec<OrderSummary>,
-    #[serde(default, deserialize_with = "crate::decode::deserializers::vec_from_null")]
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
     pub asks: Vec<OrderSummary>,
     pub min_order_size: Decimal,
     pub neg_risk: bool,

@@ -660,7 +660,7 @@ impl PolyfillDemo {
                             sequence: book.timestamp,
                         });
                     }
-                }
+                },
                 StreamMessage::Trade(trade) => {
                     info!(
                         "  Processing trade: {} {} @ {}",
@@ -668,10 +668,10 @@ impl PolyfillDemo {
                         trade.size,
                         trade.price
                     );
-                }
+                },
                 _ => {
                     info!("  Unhandled message type");
-                }
+                },
             }
         }
 

@@ -1942,7 +1942,10 @@ mod tests {
         assert_eq!(book.min_order_size, Decimal::from_str("1").unwrap());
         assert!(!book.neg_risk);
         assert_eq!(book.tick_size, Decimal::from_str("0.01").unwrap());
-        assert_eq!(book.last_trade_price, Some(Decimal::from_str("0.755").unwrap()));
+        assert_eq!(
+            book.last_trade_price,
+            Some(Decimal::from_str("0.755").unwrap())
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
