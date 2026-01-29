@@ -541,7 +541,10 @@ impl ClobClient {
     pub async fn create_or_derive_api_key(&self, nonce: Option<U256>) -> Result<ApiCreds> {
         match self.create_api_key(nonce).await {
             Ok(creds) => Ok(creds),
-            Err(_) => self.derive_api_key(nonce).await,
+            // Only fall back to derive on API status errors (server responded).
+            // Propagate network/parse/internal errors so callers can handle them appropriately.
+            Err(PolyfillError::Api { .. }) => self.derive_api_key(nonce).await,
+            Err(err) => Err(err),
         }
     }
 
@@ -2270,6 +2273,71 @@ mod tests {
         assert!(result.is_ok());
         let api_creds = result.unwrap();
         assert_eq!(api_creds.api_key, "test-api-key-123");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_or_derive_api_key_falls_back_on_api_error() {
+        let mut server = Server::new_async().await;
+
+        // Create fails with a status error -> should fall back to derive.
+        let create_mock = server
+            .mock("POST", "/auth/api-key")
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"error":"key exists"}"#)
+            .create_async()
+            .await;
+
+        let derive_mock = server
+            .mock("GET", "/auth/derive-api-key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"apiKey":"derived-api-key","secret":"derived-secret","passphrase":"derived-pass"}"#,
+            )
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_auth(&server.url());
+        let result = client.create_or_derive_api_key(None).await;
+
+        create_mock.assert_async().await;
+        derive_mock.assert_async().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().api_key, "derived-api-key");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_or_derive_api_key_does_not_fallback_on_non_api_error() {
+        let mut server = Server::new_async().await;
+
+        // Create returns 200 but with invalid JSON -> not an API status error.
+        let create_mock = server
+            .mock("POST", "/auth/api-key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("not-json")
+            .create_async()
+            .await;
+
+        // If we incorrectly fall back, this would be called.
+        let derive_mock = server
+            .mock("GET", "/auth/derive-api-key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"apiKey":"derived-api-key","secret":"derived-secret","passphrase":"derived-pass"}"#,
+            )
+            .expect(0)
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_auth(&server.url());
+        let result = client.create_or_derive_api_key(None).await;
+
+        create_mock.assert_async().await;
+        derive_mock.assert_async().await;
+        assert!(result.is_err());
     }
     #[tokio::test(flavor = "multi_thread")]
     async fn test_get_order_books_batch() {
