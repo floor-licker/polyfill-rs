@@ -463,8 +463,11 @@ pub fn parse_stream_messages_bytes(bytes: &[u8]) -> Result<Vec<StreamMessage>> {
         Value::Array(arr) => Ok(arr
             .into_iter()
             .filter_map(|elem| {
-                let obj = elem.as_object()?;
-                let event_type = obj.get("event_type").and_then(Value::as_str)?;
+                let Value::Object(map) = elem else {
+                    return None;
+                };
+
+                let event_type = map.get("event_type").and_then(Value::as_str)?;
                 // Skip unknown event types early (forward compatibility).
                 match event_type {
                     "book" | "price_change" | "tick_size_change" | "last_trade_price"
@@ -472,7 +475,7 @@ pub fn parse_stream_messages_bytes(bytes: &[u8]) -> Result<Vec<StreamMessage>> {
                     _ => return None,
                 }
 
-                match serde_json::from_value::<StreamMessage>(Value::Object(obj.clone())) {
+                match serde_json::from_value::<StreamMessage>(Value::Object(map)) {
                     Ok(StreamMessage::Unknown) => None,
                     Ok(msg) => Some(msg),
                     Err(_) => None,
