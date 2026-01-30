@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 use chrono::Utc;
-use polyfill_rs::{OrderBookImpl, Side};
+use polyfill_rs::{book::OrderBookManager, OrderBookImpl, Side};
 use rust_decimal::Decimal;
 
 thread_local! {
@@ -162,5 +162,56 @@ fn no_alloc_apply_book_update_existing_levels() {
 
     let guard = NoAllocGuard::new();
     book.apply_book_update(&update).unwrap();
+    guard.assert_no_allocations();
+}
+
+#[test]
+fn no_alloc_book_manager_apply_book_update_existing_levels() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+
+    // Warm up the internal book with initial levels (allocations allowed).
+    manager
+        .apply_delta(polyfill_rs::types::OrderDelta {
+            token_id: asset_id.to_string(),
+            timestamp: chrono::Utc::now(),
+            side: Side::BUY,
+            price: Decimal::from_str("0.75").unwrap(),
+            size: Decimal::from_str("100.0").unwrap(),
+            sequence: 1,
+        })
+        .unwrap();
+    manager
+        .apply_delta(polyfill_rs::types::OrderDelta {
+            token_id: asset_id.to_string(),
+            timestamp: chrono::Utc::now(),
+            side: Side::SELL,
+            price: Decimal::from_str("0.76").unwrap(),
+            size: Decimal::from_str("100.0").unwrap(),
+            sequence: 2,
+        })
+        .unwrap();
+
+    let update = polyfill_rs::types::BookUpdate {
+        asset_id: asset_id.to_string(),
+        market: "0xabc".to_string(),
+        timestamp: 10,
+        bids: vec![polyfill_rs::types::OrderSummary {
+            price: Decimal::from_str("0.75").unwrap(),
+            size: Decimal::from_str("200.0").unwrap(),
+        }],
+        asks: vec![polyfill_rs::types::OrderSummary {
+            price: Decimal::from_str("0.76").unwrap(),
+            size: Decimal::from_str("50.0").unwrap(),
+        }],
+        hash: None,
+    };
+
+    // Warm up TLS access before measuring (defensive).
+    let _ = allocation_count();
+
+    let guard = NoAllocGuard::new();
+    manager.apply_book_update(&update).unwrap();
     guard.assert_no_allocations();
 }

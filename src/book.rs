@@ -781,6 +781,30 @@ impl OrderBookManager {
         book.apply_delta(delta)
     }
 
+    /// Apply a WebSocket `book` update to a managed book.
+    ///
+    /// This is the preferred way to ingest `StreamMessage::Book` updates into
+    /// the in-memory order books (avoids rebuilding snapshots via per-level deltas).
+    pub fn apply_book_update(&self, update: &BookUpdate) -> Result<()> {
+        let mut books = self
+            .books
+            .write()
+            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+
+        if let Some(book) = books.get_mut(update.asset_id.as_str()) {
+            return book.apply_book_update(update);
+        }
+
+        // First time we've seen this token; allocating the key and book is part of warmup.
+        let token_id = update.asset_id.clone();
+        books.insert(token_id.clone(), OrderBook::new(token_id, self.max_depth));
+
+        books
+            .get_mut(update.asset_id.as_str())
+            .ok_or_else(|| PolyfillError::internal_simple("Failed to insert order book"))?
+            .apply_book_update(update)
+    }
+
     /// Get a book snapshot
     /// Returns a copy of the current book state that won't change
     pub fn get_book(&self, token_id: &str) -> Result<crate::types::OrderBook> {
