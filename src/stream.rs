@@ -8,6 +8,7 @@ use crate::types::*;
 use chrono::Utc;
 use futures::{SinkExt, Stream, StreamExt};
 use serde_json::Value;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
@@ -44,10 +45,12 @@ pub struct WebSocketStream {
     auth: Option<WssAuth>,
     /// Current subscriptions
     subscriptions: Vec<WssSubscription>,
-    /// Message sender for internal communication
-    tx: mpsc::UnboundedSender<StreamMessage>,
-    /// Message receiver
-    rx: mpsc::UnboundedReceiver<StreamMessage>,
+    /// Parsed messages awaiting delivery to the caller.
+    ///
+    /// This replaces an internal unbounded channel to avoid per-message
+    /// allocations in the buffering layer and to enforce a bounded backlog.
+    pending: VecDeque<StreamMessage>,
+    pending_capacity: usize,
     /// Connection statistics
     stats: StreamStats,
     /// Reconnection configuration
@@ -60,6 +63,7 @@ pub struct StreamStats {
     pub messages_received: u64,
     pub messages_sent: u64,
     pub errors: u64,
+    pub dropped_messages: u64,
     pub last_message_time: Option<chrono::DateTime<Utc>>,
     pub connection_uptime: std::time::Duration,
     pub reconnect_count: u32,
@@ -88,25 +92,34 @@ impl Default for ReconnectConfig {
 impl WebSocketStream {
     /// Create a new WebSocket stream
     pub fn new(url: &str) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let pending_capacity = 1024;
 
         Self {
             connection: None,
             url: url.to_string(),
             auth: None,
             subscriptions: Vec::new(),
-            tx,
-            rx,
+            pending: VecDeque::with_capacity(pending_capacity),
+            pending_capacity,
             stats: StreamStats {
                 messages_received: 0,
                 messages_sent: 0,
                 errors: 0,
+                dropped_messages: 0,
                 last_message_time: None,
                 connection_uptime: std::time::Duration::ZERO,
                 reconnect_count: 0,
             },
             reconnect_config: ReconnectConfig::default(),
         }
+    }
+
+    fn enqueue(&mut self, message: StreamMessage) {
+        if self.pending.len() >= self.pending_capacity {
+            let _ = self.pending.pop_front();
+            self.stats.dropped_messages += 1;
+        }
+        self.pending.push_back(message);
     }
 
     /// Set authentication credentials
@@ -277,9 +290,7 @@ impl WebSocketStream {
                 // Parse the message according to Polymarket's `event_type` format
                 let stream_messages = crate::decode::parse_stream_messages(&text)?;
                 for stream_message in stream_messages {
-                    if let Err(e) = self.tx.send(stream_message) {
-                        error!("Failed to send message to internal channel: {}", e);
-                    }
+                    self.enqueue(stream_message);
                 }
 
                 self.stats.messages_received += 1;
@@ -372,8 +383,7 @@ impl Stream for WebSocketStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
-            // First drain any parsed messages
-            if let Poll::Ready(Some(message)) = self.rx.poll_recv(cx) {
+            if let Some(message) = self.pending.pop_front() {
                 return Poll::Ready(Some(Ok(message)));
             }
 
@@ -387,12 +397,17 @@ impl Stream for WebSocketStream {
                     tokio_tungstenite::tungstenite::Message::Text(text) => {
                         match crate::decode::parse_stream_messages(&text) {
                             Ok(messages) => {
-                                for msg in messages {
-                                    let _ = self.tx.send(msg);
+                                let mut iter = messages.into_iter();
+                                let Some(first) = iter.next() else {
+                                    continue;
+                                };
+
+                                for msg in iter {
+                                    self.enqueue(msg);
                                 }
                                 self.stats.messages_received += 1;
                                 self.stats.last_message_time = Some(Utc::now());
-                                continue;
+                                return Poll::Ready(Some(Ok(first)));
                             },
                             Err(e) => {
                                 self.stats.errors += 1;
@@ -515,6 +530,7 @@ impl MarketStream for MockStream {
             messages_received: self.messages.len() as u64,
             messages_sent: 0,
             errors: self.messages.iter().filter(|m| m.is_err()).count() as u64,
+            dropped_messages: 0,
             last_message_time: None,
             connection_uptime: std::time::Duration::ZERO,
             reconnect_count: 0,
