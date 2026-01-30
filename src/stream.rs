@@ -8,6 +8,7 @@ use crate::types::*;
 use chrono::Utc;
 use futures::{SinkExt, Stream, StreamExt};
 use serde_json::Value;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
@@ -54,6 +55,8 @@ pub struct WebSocketStream {
     reconnect_config: ReconnectConfig,
     /// Flag to track if we need to keep flushing a pong response
     needs_pong_flush: bool,
+    /// Pending messages from array-formatted snapshot (e.g. initial book snapshot)
+    pending_books: VecDeque<StreamMessage>,
 }
 
 /// Stream statistics
@@ -109,6 +112,7 @@ impl WebSocketStream {
             },
             reconnect_config: ReconnectConfig::default(),
             needs_pong_flush: false,
+            pending_books: VecDeque::new(),
         }
     }
 
@@ -562,6 +566,12 @@ impl Stream for WebSocketStream {
             }
         }
         
+        // Check pending_books queue first (for array-format snapshots like initial book)
+        if let Some(pending_msg) = self.pending_books.pop_front() {
+            debug!("Returning pending book message from queue");
+            return Poll::Ready(Some(Ok(pending_msg)));
+        }
+        
         // Then check internal channel
         if let Poll::Ready(Some(message)) = self.rx.poll_recv(cx) {
             return Poll::Ready(Some(Ok(message)));
@@ -578,6 +588,51 @@ impl Stream for WebSocketStream {
                             self.stats.last_message_time = Some(Utc::now());
                             
                             // Parse the message
+                            // Handle array-formatted messages (e.g. initial book snapshot: [{book1},{book2}])
+                            if text.starts_with('[') {
+                                match serde_json::from_str::<Vec<Value>>(&text) {
+                                    Ok(arr) if !arr.is_empty() => {
+                                        debug!("Parsing array message with {} elements", arr.len());
+                                        let mut first_result = None;
+                                        
+                                        for item in arr {
+                                            // Try to parse each array element as a single message
+                                            let item_str = serde_json::to_string(&item).unwrap_or_default();
+                                            if let Ok(msg) = self.parse_polymarket_message(&item_str) {
+                                                if first_result.is_none() {
+                                                    first_result = Some(msg);
+                                                } else {
+                                                    // Queue additional messages for later delivery
+                                                    self.pending_books.push_back(msg);
+                                                }
+                                            }
+                                        }
+                                        
+                                        if let Some(msg) = first_result {
+                                            return Poll::Ready(Some(Ok(msg)));
+                                        }
+                                        // If no valid messages in array, return heartbeat
+                                        warn!("Array message contained no parseable elements");
+                                        return Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
+                                            timestamp: Utc::now(),
+                                        })));
+                                    }
+                                    Ok(_) => {
+                                        warn!("Received empty array message");
+                                        return Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
+                                            timestamp: Utc::now(),
+                                        })));
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to parse array message: {}", e);
+                                        return Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
+                                            timestamp: Utc::now(),
+                                        })));
+                                    }
+                                }
+                            }
+                            
+                            // Standard single-object message parsing
                             match self.parse_polymarket_message(&text) {
                                 Ok(stream_msg) => Poll::Ready(Some(Ok(stream_msg))),
                                 Err(e) => {
