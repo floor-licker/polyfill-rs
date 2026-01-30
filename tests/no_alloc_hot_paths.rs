@@ -2,9 +2,11 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
 
 use chrono::Utc;
 use polyfill_rs::{OrderBookImpl, Side};
+use rust_decimal::Decimal;
 
 thread_local! {
     static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
@@ -125,5 +127,40 @@ fn no_alloc_apply_delta_fast_existing_level_update() {
     // Updating an existing level should not require heap allocation.
     book.apply_delta_fast(mk_delta(token_hash, Side::BUY, 7500, 2_000_000, 2))
         .unwrap();
+    guard.assert_no_allocations();
+}
+
+#[test]
+fn no_alloc_apply_book_update_existing_levels() {
+    let asset_id = "test_asset_id";
+    let token_hash = token_id_hash(asset_id);
+    let mut book = OrderBookImpl::new(asset_id.to_string(), 100);
+
+    // Allocate during setup: create initial price levels.
+    book.apply_delta_fast(mk_delta(token_hash, Side::BUY, 7500, 1_000_000, 1))
+        .unwrap();
+    book.apply_delta_fast(mk_delta(token_hash, Side::SELL, 7600, 1_000_000, 2))
+        .unwrap();
+
+    let update = polyfill_rs::types::BookUpdate {
+        asset_id: asset_id.to_string(),
+        market: "0xabc".to_string(),
+        timestamp: 10,
+        bids: vec![polyfill_rs::types::OrderSummary {
+            price: Decimal::from_str("0.75").unwrap(),
+            size: Decimal::from_str("200.0").unwrap(),
+        }],
+        asks: vec![polyfill_rs::types::OrderSummary {
+            price: Decimal::from_str("0.76").unwrap(),
+            size: Decimal::from_str("50.0").unwrap(),
+        }],
+        hash: None,
+    };
+
+    // Warm up TLS access before measuring (defensive).
+    let _ = allocation_count();
+
+    let guard = NoAllocGuard::new();
+    book.apply_book_update(&update).unwrap();
     guard.assert_no_allocations();
 }

@@ -396,6 +396,75 @@ impl OrderBook {
         Ok(())
     }
 
+    /// Apply a WebSocket `book` update for this token.
+    ///
+    /// The official Polymarket CLOB WebSocket `book` event contains batches of
+    /// price levels for both sides. Unlike `apply_delta_fast`, this method can
+    /// apply many levels that share the same message timestamp.
+    ///
+    /// Notes:
+    /// - This performs upserts (update/insert/remove) for the provided levels.
+    /// - It does **not** infer removals for levels omitted from the message.
+    /// - Insertions of *new* price levels may allocate (BTreeMap node growth).
+    pub fn apply_book_update(&mut self, update: &BookUpdate) -> Result<()> {
+        if update.asset_id != self.token_id {
+            return Err(PolyfillError::validation("Token ID mismatch"));
+        }
+
+        // Use the exchange-provided timestamp as our monotonic sequence marker.
+        // This is less strict than the REST/legacy delta sequence but works for
+        // ignoring obviously stale book snapshots.
+        if update.timestamp <= self.sequence {
+            return Ok(());
+        }
+
+        self.sequence = update.timestamp;
+        self.timestamp = chrono::DateTime::<Utc>::from_timestamp(update.timestamp as i64, 0)
+            .unwrap_or_else(Utc::now);
+
+        // Apply bids (BUY) and asks (SELL) as level upserts.
+        for level in &update.bids {
+            let price_ticks = decimal_to_price(level.price)
+                .map_err(|_| PolyfillError::validation("Invalid price"))?;
+            let size_units = decimal_to_qty(level.size)
+                .map_err(|_| PolyfillError::validation("Invalid size"))?;
+
+            if let Some(tick_size_ticks) = self.tick_size_ticks {
+                if tick_size_ticks > 0 && !price_ticks.is_multiple_of(tick_size_ticks) {
+                    return Err(PolyfillError::validation("Price not aligned to tick size"));
+                }
+            }
+
+            if size_units == 0 {
+                self.bids.remove(&price_ticks);
+            } else {
+                self.bids.insert(price_ticks, size_units);
+            }
+        }
+
+        for level in &update.asks {
+            let price_ticks = decimal_to_price(level.price)
+                .map_err(|_| PolyfillError::validation("Invalid price"))?;
+            let size_units = decimal_to_qty(level.size)
+                .map_err(|_| PolyfillError::validation("Invalid size"))?;
+
+            if let Some(tick_size_ticks) = self.tick_size_ticks {
+                if tick_size_ticks > 0 && !price_ticks.is_multiple_of(tick_size_ticks) {
+                    return Err(PolyfillError::validation("Price not aligned to tick size"));
+                }
+            }
+
+            if size_units == 0 {
+                self.asks.remove(&price_ticks);
+            } else {
+                self.asks.insert(price_ticks, size_units);
+            }
+        }
+
+        self.trim_depth();
+        Ok(())
+    }
+
     /// Apply a bid-side delta (someone wants to buy) - LEGACY VERSION
     /// If size is 0, it means "remove this price level entirely"
     /// Otherwise, set the total size at this price level
