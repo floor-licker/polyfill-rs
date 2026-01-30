@@ -822,7 +822,9 @@ pub struct LastTradePriceMessage {
 /// Market channel price change (event_type: "price_change")
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceChangeMessage {
-    pub asset_id: String,
+    /// Asset ID - optional as some price_change events don't include it
+    #[serde(default)]
+    pub asset_id: Option<String>,
     #[serde(default)]
     pub price: Option<String>,
     #[serde(default)]
@@ -831,6 +833,9 @@ pub struct PriceChangeMessage {
     pub size: Option<String>,
     #[serde(default)]
     pub timestamp: Option<String>,
+    /// Additional changes array for batch updates
+    #[serde(default)]
+    pub changes: Option<Vec<serde_json::Value>>,
 }
 
 /// WebSocket message types for streaming
