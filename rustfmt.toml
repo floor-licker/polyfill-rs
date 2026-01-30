@@ -1,5 +1,8 @@
 # Rustfmt configuration for polyfill-rs
 # Optimized for readability and consistency
+#
+# Note: This file is kept compatible with stable `rustfmt` so that local dev and
+# CI (`cargo fmt --all -- --check`) behave consistently.
 
 # Basic formatting
 edition = "2021"
@@ -7,52 +10,21 @@ max_width = 100
 tab_spaces = 4
 newline_style = "Unix"
 
-# Indentation
-indent_style = "Block"
 merge_derives = true
 use_small_heuristics = "Default"
 
-# Spacing
-spaces_around_ranges = false
-binop_separator = "Front"
 remove_nested_parens = true
-format_code_in_doc_comments = true
 
-# Imports
-imports_granularity = "Module"
-group_imports = "StdExternalCrate"
 reorder_imports = true
 
-# Comments
-wrap_comments = true
-comment_width = 80
-
-# Match
-match_arm_leading_commas = true
 match_block_trailing_comma = true
-
-# Control flow
-control_brace_style = "AlwaysSameLine"
 
 # Functions
 fn_call_width = 60
 fn_params_layout = "Tall"
 
-# Structs and enums
-struct_field_align_threshold = 0
-enum_discrim_align_threshold = 0
-
 # Arrays and tuples
 array_width = 60
-tuple_width = 60
 
 # Chains
 chain_width = 60
-chain_split_single_child = true
-
-# Other
-format_macro_matchers = true
-format_macro_bodies = true
-format_strings = true
-overflow_delimited_expr = true
-normalize_doc_attributes = true 
