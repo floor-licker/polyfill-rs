@@ -581,13 +581,15 @@ impl Stream for WebSocketStream {
                             match self.parse_polymarket_message(&text) {
                                 Ok(stream_msg) => Poll::Ready(Some(Ok(stream_msg))),
                                 Err(e) => {
-                                    // Truncate message for log readability
-                                    let preview = if text.len() > 200 { 
-                                        format!("{}...", &text[..200]) 
+                                    // Log full message at error level for debugging
+                                    error!("PARSE_FAIL full message: {}", text);
+                                    // Also log shorter version at warn for quick scanning
+                                    let preview = if text.len() > 100 { 
+                                        format!("{}...", &text[..100]) 
                                     } else { 
                                         text.clone() 
                                     };
-                                    warn!("Failed to parse message: {} | raw: {}", e, preview);
+                                    warn!("Failed to parse: {} | preview: {}", e, preview);
                                     self.stats.errors += 1;
                                     // Return heartbeat as fallback instead of error
                                     Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
