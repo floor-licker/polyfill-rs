@@ -146,6 +146,7 @@ pub use crate::book::{OrderBook as OrderBookImpl, OrderBookManager};
 pub use crate::decode::Decoder;
 pub use crate::fill::{FillEngine, FillResult};
 pub use crate::stream::{MarketStream, StreamManager, WebSocketStream};
+pub use crate::ws_hot_path::{WsBookApplyStats, WsBookUpdateProcessor};
 
 // Re-export utilities
 pub use crate::utils::{crypto, math, rate_limit, retry, time, url};
@@ -165,6 +166,7 @@ pub mod orders;
 pub mod stream;
 pub mod types;
 pub mod utils;
+pub mod ws_hot_path;
 
 // Benchmarks
 #[cfg(test)]

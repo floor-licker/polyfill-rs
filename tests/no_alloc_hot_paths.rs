@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 use chrono::Utc;
-use polyfill_rs::{book::OrderBookManager, OrderBookImpl, Side};
+use polyfill_rs::{book::OrderBookManager, OrderBookImpl, Side, WsBookUpdateProcessor};
 use rust_decimal::Decimal;
 
 thread_local! {
@@ -213,5 +213,59 @@ fn no_alloc_book_manager_apply_book_update_existing_levels() {
 
     let guard = NoAllocGuard::new();
     manager.apply_book_update(&update).unwrap();
+    guard.assert_no_allocations();
+}
+
+#[test]
+fn no_alloc_ws_book_update_processor_apply_existing_levels() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+
+    // Warm up the internal book with initial levels (allocations allowed).
+    manager
+        .apply_delta(polyfill_rs::types::OrderDelta {
+            token_id: asset_id.to_string(),
+            timestamp: chrono::Utc::now(),
+            side: Side::BUY,
+            price: Decimal::from_str("0.75").unwrap(),
+            size: Decimal::from_str("100.0").unwrap(),
+            sequence: 1,
+        })
+        .unwrap();
+    manager
+        .apply_delta(polyfill_rs::types::OrderDelta {
+            token_id: asset_id.to_string(),
+            timestamp: chrono::Utc::now(),
+            side: Side::SELL,
+            price: Decimal::from_str("0.76").unwrap(),
+            size: Decimal::from_str("100.0").unwrap(),
+            sequence: 2,
+        })
+        .unwrap();
+
+    let mut processor = WsBookUpdateProcessor::new(1024);
+
+    // Warm up simd-json buffers/tape outside the guarded section.
+    let mut warmup_msg = format!(
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":10,\"bids\":[{{\"price\":\"0.75\",\"size\":\"200.0\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"50.0\"}}]}}"
+    )
+    .into_bytes();
+    processor
+        .process_bytes(warmup_msg.as_mut_slice(), &manager)
+        .unwrap();
+
+    let mut msg = format!(
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":11,\"bids\":[{{\"price\":\"0.75\",\"size\":\"150.0\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"75.0\"}}]}}"
+    )
+    .into_bytes();
+
+    // Warm up TLS access before measuring (defensive).
+    let _ = allocation_count();
+
+    let guard = NoAllocGuard::new();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
     guard.assert_no_allocations();
 }

@@ -396,6 +396,58 @@ impl OrderBook {
         Ok(())
     }
 
+    /// Begin applying a WebSocket `book` update (hot-path oriented).
+    ///
+    /// This is intended for in-place WS processing where we *stream* levels out of a decoded
+    /// message, without constructing intermediate `BookUpdate` structs.
+    ///
+    /// Returns `Ok(true)` if the update should be applied, or `Ok(false)` if the update is stale
+    /// and should be skipped.
+    pub(crate) fn begin_ws_book_update(&mut self, asset_id: &str, timestamp: u64) -> Result<bool> {
+        if asset_id != self.token_id {
+            return Err(PolyfillError::validation("Token ID mismatch"));
+        }
+
+        if timestamp <= self.sequence {
+            return Ok(false);
+        }
+
+        self.sequence = timestamp;
+        self.timestamp =
+            chrono::DateTime::<Utc>::from_timestamp(timestamp as i64, 0).unwrap_or_else(Utc::now);
+
+        Ok(true)
+    }
+
+    /// Apply a single WS `book` level (already converted to internal fixed-point).
+    ///
+    /// Note: Insertions of new price levels may allocate (BTreeMap node growth). In a strict
+    /// zero-alloc hot path, all expected levels must be warmed up ahead of time.
+    pub(crate) fn apply_ws_book_level_fast(
+        &mut self,
+        side: Side,
+        price_ticks: Price,
+        size_units: Qty,
+    ) -> Result<()> {
+        if let Some(tick_size_ticks) = self.tick_size_ticks {
+            if tick_size_ticks > 0 && !price_ticks.is_multiple_of(tick_size_ticks) {
+                return Err(PolyfillError::validation("Price not aligned to tick size"));
+            }
+        }
+
+        match side {
+            Side::BUY => self.apply_bid_delta_fast(price_ticks, size_units),
+            Side::SELL => self.apply_ask_delta_fast(price_ticks, size_units),
+        }
+
+        Ok(())
+    }
+
+    /// Finish applying a WS `book` update.
+    pub(crate) fn finish_ws_book_update(&mut self) {
+        self.trim_depth();
+    }
+
     /// Apply a WebSocket `book` update for this token.
     ///
     /// The official Polymarket CLOB WebSocket `book` event contains batches of
@@ -759,6 +811,30 @@ impl OrderBookManager {
             books.insert(token_id.to_string(), book.clone());
             Ok(book)
         }
+    }
+
+    /// Execute a closure with mutable access to a managed book.
+    ///
+    /// This is useful for hot-path update ingestion where you want to avoid allocating
+    /// intermediate update structs (e.g., applying WS updates directly).
+    pub fn with_book_mut<R>(
+        &self,
+        token_id: &str,
+        f: impl FnOnce(&mut OrderBook) -> Result<R>,
+    ) -> Result<R> {
+        let mut books = self
+            .books
+            .write()
+            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+
+        let book = books.get_mut(token_id).ok_or_else(|| {
+            PolyfillError::market_data(
+                format!("No book found for token: {}", token_id),
+                crate::errors::MarketDataErrorKind::TokenNotFound,
+            )
+        })?;
+
+        f(book)
     }
 
     /// Update a book with a delta
