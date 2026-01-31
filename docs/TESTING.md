@@ -37,15 +37,15 @@ cargo build --examples
 Create a `.env` file or export variables:
 
 ```bash
-# Required for authentication tests
+# Required for ignored real-API tests
 export POLYMARKET_PRIVATE_KEY="your_private_key_here"
 
-# Required for order management tests
+# Optional: API credentials (some tests/tools may use these)
 export POLYMARKET_API_KEY="your_api_key"
 export POLYMARKET_API_SECRET="your_api_secret"
 export POLYMARKET_API_PASSPHRASE="your_passphrase"
 
-# Optional (defaults provided)
+# Optional (defaults provided in test helpers)
 export POLYMARKET_HOST="https://clob.polymarket.com"
 export POLYMARKET_CHAIN_ID="137"
 ```
