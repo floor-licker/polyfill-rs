@@ -34,6 +34,12 @@ impl Default for TestConfig {
 }
 
 impl TestConfig {
+    /// Load a test configuration from environment variables (and a local `.env` file, if present).
+    pub fn from_env() -> Self {
+        dotenvy::dotenv().ok();
+        Self::default()
+    }
+
     /// Check if we have authentication credentials
     pub fn has_auth(&self) -> bool {
         self.private_key.is_some()

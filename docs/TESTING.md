@@ -13,21 +13,21 @@ This document describes how to run tests for polyfill-rs, with a focus on integr
 ### Integration Tests
 - **Location**: `tests/integration_tests.rs`
 - **Purpose**: Verify the client can communicate with the real Polymarket API
-- **Dependencies**: Network connectivity, optional authentication credentials
+- **Dependencies**: Network connectivity + credentials (tests are `#[ignore]` by default)
 - **Speed**: Slower (network calls)
 
 ## Running Tests
 
 ### Quick Start (Basic Tests)
 ```bash
-# Run all unit tests
-cargo test
+# Run unit tests + doc tests (real-API tests are `#[ignore]` by default)
+cargo test --all-features
 
-# Run only integration tests
-cargo test --test integration_tests
+# Run the "no-alloc hot paths" regression tests
+cargo test --all-features --test no_alloc_hot_paths
 
-# Run with verbose output
-cargo test --test integration_tests -- --nocapture
+# Compile-check all examples
+cargo build --examples
 ```
 
 ### Full Integration Testing
@@ -53,11 +53,11 @@ export POLYMARKET_CHAIN_ID="137"
 #### 2. Run Integration Tests
 
 ```bash
-# Using the test runner script
+# Using the test runner script (runs ignored tests that hit the real API)
 ./scripts/run_integration_tests.sh
 
 # Or directly with cargo
-cargo test --test integration_tests -- --nocapture
+cargo test --all-features --test integration_tests -- --ignored --nocapture --test-threads=1
 ```
 
 ## Test Categories
@@ -93,10 +93,9 @@ Performance test passed
   Markets returned: 50
 ```
 
-### Skip Indicators
+### Ignored Indicators (default)
 ```
-Skipping authentication test - no private key provided
-Skipping order management test - missing auth credentials
+test test_real_api_* ... ignored
 ```
 
 ### Failure Indicators
@@ -134,15 +133,13 @@ nslookup clob.polymarket.com
 # Verify private key format
 echo $POLYMARKET_PRIVATE_KEY | wc -c  # Should be 66 characters (0x + 64 hex)
 
-# Test with minimal credentials
-export POLYMARKET_PRIVATE_KEY="0x1234567890123456789012345678901234567890123456789012345678901234"
-cargo test test_authentication
+# Run a small ignored auth smoke-test (requires real credentials)
+cargo test --all-features --test simple_auth_test -- --ignored --nocapture --test-threads=1
 ```
 
 #### Rate Limiting
 ```bash
-# If tests fail due to rate limiting, add delays
-export POLYMARKET_TEST_DELAY=1000  # 1 second between requests
+# If tests fail due to rate limiting, consider adding delays between manual runs.
 ```
 
 ### Debug Mode
@@ -151,25 +148,25 @@ Run tests with detailed logging:
 
 ```bash
 # Enable debug logging
-RUST_LOG=debug cargo test --test integration_tests -- --nocapture
+RUST_LOG=debug cargo test --all-features --test integration_tests -- --ignored --nocapture --test-threads=1
 
 # Enable trace logging for maximum detail
-RUST_LOG=trace cargo test --test integration_tests -- --nocapture
+RUST_LOG=trace cargo test --all-features --test integration_tests -- --ignored --nocapture --test-threads=1
 ```
 
 ## Continuous Integration
 
 ### GitHub Actions
 
-Our CI runs integration tests automatically:
+Our CI runs formatting, clippy, unit tests, docs, security audit, and a separate no-alloc job. Real-API integration tests are `#[ignore]` and are not run in CI.
 
 ```yaml
 # .github/workflows/ci.yml
-- name: Run Integration Tests
-  env:
-    POLYMARKET_HOST: ${{ secrets.POLYMARKET_HOST }}
-    POLYMARKET_CHAIN_ID: ${{ secrets.POLYMARKET_CHAIN_ID }}
-  run: cargo test --test integration_tests
+- name: Run tests (excluding no-alloc hot paths)
+  run: cargo test --all-features -- --skip no_alloc_
+
+- name: Run no-alloc hot path tests
+  run: cargo test --all-features --test no_alloc_hot_paths
 ```
 
 ### Local CI
@@ -180,8 +177,8 @@ Run the same tests locally:
 # Install cargo-nextest for faster test execution
 cargo install cargo-nextest
 
-# Run with nextest
-cargo nextest run --test integration_tests
+# Run with nextest (ignored tests are not run by default)
+cargo nextest run --all-features
 ```
 
 ## Test Coverage
