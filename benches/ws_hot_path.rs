@@ -7,7 +7,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use polyfill_rs::types::BookUpdate;
-use polyfill_rs::{OrderBookManager, OrderSummary, WsBookUpdateProcessor};
+use polyfill_rs::{OrderBookManager, OrderSummary, StreamMessage, WsBookUpdateProcessor};
 use rust_decimal::Decimal;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -92,6 +92,8 @@ fn build_ws_book_template(levels_per_side: usize) -> Vec<u8> {
 
     json.push_str("{\"event_type\":\"book\",\"asset_id\":\"");
     json.push_str(BOOK_ASSET_ID);
+    json.push_str("\",\"market\":\"");
+    json.push_str(BOOK_MARKET);
     json.push_str("\",\"timestamp\":");
     json.push_str(&START_TIMESTAMP.to_string());
     json.push_str(",\"bids\":[");
@@ -132,40 +134,83 @@ fn bench_ws_book_process_bytes(c: &mut Criterion) {
     let mut group = c.benchmark_group("ws_book_hot_path");
 
     for levels_per_side in [1usize, 16, 64] {
-        let books = OrderBookManager::new(levels_per_side * 2);
-        let _ = books.get_or_create_book(BOOK_ASSET_ID).unwrap();
+        let hot_path_books = OrderBookManager::new(levels_per_side * 2);
+        let _ = hot_path_books.get_or_create_book(BOOK_ASSET_ID).unwrap();
 
         // Warm up: ensure all levels exist so the steady-state path doesn't allocate.
         let warmup_update = build_book_update(levels_per_side);
-        books.apply_book_update(&warmup_update).unwrap();
+        hot_path_books.apply_book_update(&warmup_update).unwrap();
 
         let template = build_ws_book_template(levels_per_side);
-        let ts_range = TimestampRange::find(&template);
+        let tape_template = template.clone();
+        let ts_range = TimestampRange::find(&tape_template);
 
-        let mut processor = WsBookUpdateProcessor::new(template.len());
-        let mut warmup_msg = template.clone();
+        let mut processor = WsBookUpdateProcessor::new(tape_template.len());
+        let mut warmup_msg = tape_template.clone();
         processor
-            .process_bytes(warmup_msg.as_mut_slice(), &books)
+            .process_bytes(warmup_msg.as_mut_slice(), &hot_path_books)
             .unwrap();
 
         let counter = AtomicU64::new(START_TIMESTAMP);
 
-        group.throughput(Throughput::Bytes(template.len() as u64));
+        group.throughput(Throughput::Bytes(tape_template.len() as u64));
         group.bench_function(
-            format!("process_bytes_levels_per_side_{levels_per_side}"),
+            format!("tape_process_and_apply_levels_per_side_{levels_per_side}"),
             move |b| {
                 b.iter_batched(
                     || {
-                        let mut msg = template.clone();
+                        let mut msg = tape_template.clone();
                         let ts = counter.fetch_add(1, Ordering::Relaxed) + 1;
                         ts_range.write_fixed_width(msg.as_mut_slice(), ts);
                         msg
                     },
                     |mut msg| {
                         let stats = processor
-                            .process_bytes(black_box(msg.as_mut_slice()), black_box(&books))
+                            .process_bytes(
+                                black_box(msg.as_mut_slice()),
+                                black_box(&hot_path_books),
+                            )
                             .unwrap();
                         black_box(stats);
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+
+        // Baseline: serde_json DOM -> StreamMessage -> BookUpdate -> apply to books.
+        //
+        // This is representative of our "non-hot-path" decoding approach and provides
+        // a direct comparison within the same benchmark.
+        let serde_books = OrderBookManager::new(levels_per_side * 2);
+        let _ = serde_books.get_or_create_book(BOOK_ASSET_ID).unwrap();
+        serde_books.apply_book_update(&warmup_update).unwrap();
+
+        let serde_template = template;
+        let serde_ts_range = TimestampRange::find(&serde_template);
+        let serde_counter = AtomicU64::new(START_TIMESTAMP);
+
+        group.bench_function(
+            format!("serde_decode_and_apply_levels_per_side_{levels_per_side}"),
+            move |b| {
+                b.iter_batched(
+                    || {
+                        let mut msg = serde_template.clone();
+                        let ts = serde_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                        serde_ts_range.write_fixed_width(msg.as_mut_slice(), ts);
+                        msg
+                    },
+                    |msg| {
+                        let messages = polyfill_rs::decode::parse_stream_messages_bytes(black_box(
+                            msg.as_slice(),
+                        ))
+                        .unwrap();
+
+                        for message in messages {
+                            if let StreamMessage::Book(update) = message {
+                                serde_books.apply_book_update(&update).unwrap();
+                            }
+                        }
                     },
                     BatchSize::SmallInput,
                 );
