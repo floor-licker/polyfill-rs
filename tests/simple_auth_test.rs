@@ -18,7 +18,7 @@ async fn test_create_api_key_simple() {
     match result {
         Ok(creds) => {
             println!("Successfully created/derived API key");
-            println!("  API Key: {}", creds.api_key);
+            println!("  API Key created (len={})", creds.api_key.len());
             client.set_api_creds(creds);
 
             // Now try to get orders (requires auth)
@@ -134,7 +134,11 @@ async fn test_get_notifications() {
 
     match result {
         Ok(notifs) => {
-            println!("Authentication successful! Notifications: {:?}", notifs);
+            let count = notifs.as_array().map(|arr| arr.len());
+            match count {
+                Some(n) => println!("Authentication successful! Notifications: {n}"),
+                None => println!("Authentication successful! Notifications received"),
+            }
         },
         Err(e) => {
             let err_str = format!("{:?}", e);

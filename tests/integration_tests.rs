@@ -85,20 +85,23 @@ async fn test_real_api_authenticated_order_flow() {
         .expect("Failed to get midpoint");
     println!("PASS: Current midpoint: {}", midpoint.mid);
 
-    // Step 4: Create and post a small order well away from market price
-    // (so it won't fill immediately)
-    let order_price = if midpoint.mid > dec!(0.5) {
-        dec!(0.01) // Very low buy price, won't fill
+    // Step 4: Create and post a small order well away from market price (so it won't fill immediately).
+    // IMPORTANT: choose side consistently with the price so we don't accidentally create a marketable order.
+    let (side, order_price) = if midpoint.mid > dec!(0.5) {
+        (Side::BUY, dec!(0.01)) // Very low buy price, won't fill
     } else {
-        dec!(0.99) // Very high sell price, won't fill
+        (Side::SELL, dec!(0.99)) // Very high sell price, won't fill
     };
 
-    println!("Step 4: Posting order at price {}...", order_price);
+    println!(
+        "Step 4: Posting {:?} order at price {}...",
+        side, order_price
+    );
     let order_args = OrderArgs {
         token_id: token_id.clone(),
         price: order_price,
-        size: dec!(1.0), // Minimum size
-        side: Side::BUY,
+        size: dec!(1.0), // Small size (auth is the thing we're testing here)
+        side,
     };
 
     let post_result = client.create_and_post_order(&order_args).await;
@@ -126,24 +129,23 @@ async fn test_real_api_authenticated_order_flow() {
             }
         },
         Err(e) => {
-            let err_str = format!("{:?}", e);
-
-            // Check if it's a 401 (authentication failure)
-            if err_str.contains("401") {
-                panic!("FAIL: CRITICAL: 401 Unauthorized error - HMAC authentication is broken!");
-            }
-
-            // Check if it's a 400 with specific validation errors (these are OK)
-            if err_str.contains("400")
-                && (err_str.contains("insufficient")
-                    || err_str.contains("balance")
-                    || err_str.contains("allowance")
-                    || err_str.contains("POLY_AMOUNT_TOO_SMALL"))
-            {
-                println!("PASS: Authentication successful (got expected validation error)");
-                println!("  Error: {}", err_str);
-            } else {
-                panic!("FAIL: Unexpected error: {:?}", e);
+            // The critical failure: did we get a 401 (authentication failure)?
+            match &e {
+                polyfill_rs::PolyfillError::Api { status: 401, .. } => {
+                    panic!(
+                        "FAIL: CRITICAL: 401 Unauthorized error - HMAC authentication is broken!"
+                    );
+                },
+                // Any 4xx other than 401 indicates auth succeeded and we reached server-side validation.
+                polyfill_rs::PolyfillError::Api {
+                    status: 400..=499, ..
+                } => {
+                    println!("PASS: Authentication successful (got expected validation error)");
+                    println!("  Error: {:?}", e);
+                },
+                _ => {
+                    panic!("FAIL: Unexpected error: {:?}", e);
+                },
             }
         },
     }

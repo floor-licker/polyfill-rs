@@ -22,9 +22,12 @@ if [[ -z "${POLYMARKET_PRIVATE_KEY:-}" ]]; then
   fi
 fi
 
-set -x
+ARGS=(--ignored --test-threads=1)
+if [[ "${NO_CAPTURE:-0}" == "1" ]]; then
+  ARGS+=(--nocapture)
+fi
 
 # Run serially to reduce the chance of hitting rate limits.
-cargo test --all-features --test integration_tests -- --ignored --nocapture --test-threads=1
-cargo test --all-features --test simple_auth_test -- --ignored --nocapture --test-threads=1
-cargo test --all-features --test order_posting_test -- --ignored --nocapture --test-threads=1
+cargo test --all-features --test integration_tests -- "${ARGS[@]}"
+cargo test --all-features --test simple_auth_test -- "${ARGS[@]}"
+cargo test --all-features --test order_posting_test -- "${ARGS[@]}"
