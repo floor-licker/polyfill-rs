@@ -29,5 +29,6 @@ fi
 
 # Run serially to reduce the chance of hitting rate limits.
 cargo test --all-features --test integration_tests -- "${ARGS[@]}"
+cargo test --all-features --test ws_integration_tests -- "${ARGS[@]}"
 cargo test --all-features --test simple_auth_test -- "${ARGS[@]}"
 cargo test --all-features --test order_posting_test -- "${ARGS[@]}"
