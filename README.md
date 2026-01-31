@@ -6,7 +6,7 @@
 
 A high-performance drop-in replacement for `polymarket-rs-client` with latency-optimized data structures and zero-allocation hot paths. A 100% API-compatible drop-in replacement for `polymarket-rs-client` with identical method signatures. 
 
-At the time that this project was started, `polymarket-rs-client` was a Polymarket Rust Client with a few GitHub stars, but which seemed to be unmaintained. I took on the task of creating a Rust client which could beat the benchmarks quoted in the README.md of that project, while also maintaining zero alloc hot paths.
+At the time that this project was started, `polymarket-rs-client` was a Polymarket Rust Client with a few GitHub stars, but which seemed to be unmaintained. I took on the task of creating a Rust client which could beat the benchmarks quoted in the README.md of that project, with the added constraint of also maintaining zero alloc hot paths.
 
 I also want to take a moment to clarify what zero-alloc means because I've now recieved double digit messages about this on twitter/x and telegram. In general, zero alloc means either zero alloc in hot paths (which can be a bit more arbitrary) or atlernatively it can mean zero alloc ater init/warm-up, which is the objective of this repository. Succinctly that means that **the per-message handling loop never touches the heap**. 
 
