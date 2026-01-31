@@ -1225,6 +1225,44 @@ pub struct PriceResponse {
     pub price: Decimal,
 }
 
+// ============================================================================
+// PRICE HISTORY (ANALYTICS)
+// ============================================================================
+
+/// Time bucket for the `/prices-history` endpoint.
+///
+/// Note: this endpoint uses a confusing query parameter name (`market`) but expects an
+/// outcome asset id (`token_id` / `asset_id`) in **decimal string** form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PricesHistoryInterval {
+    OneMinute,
+    OneHour,
+    SixHours,
+    OneDay,
+    OneWeek,
+}
+
+impl PricesHistoryInterval {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OneMinute => "1m",
+            Self::OneHour => "1h",
+            Self::SixHours => "6h",
+            Self::OneDay => "1d",
+            Self::OneWeek => "1w",
+        }
+    }
+}
+
+/// Raw response from `/prices-history`.
+///
+/// We intentionally keep `history` entries as `serde_json::Value` because the upstream API has
+/// no stable public schema here and currently may return empty history for many markets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PricesHistoryResponse {
+    pub history: Vec<serde_json::Value>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SpreadResponse {
     #[serde(with = "rust_decimal::serde::str")]

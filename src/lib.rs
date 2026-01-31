@@ -117,6 +117,8 @@ pub use crate::types::{
     OrderSummary,
     OrderType,
     PriceResponse,
+    PricesHistoryInterval,
+    PricesHistoryResponse,
     Rewards,
     Side,
     SimplifiedMarket,

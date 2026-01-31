@@ -460,6 +460,126 @@ impl ClobClient {
         Ok(price)
     }
 
+    fn validate_prices_history_asset_id(asset_id: &str) -> Result<()> {
+        if asset_id.is_empty() {
+            return Err(PolyfillError::validation(
+                "asset_id is required (use the decimal token_id / asset_id)",
+            ));
+        }
+
+        // Common footgun: passing a condition id (0x...) instead of the decimal asset id.
+        if asset_id.starts_with("0x") || asset_id.starts_with("0X") {
+            return Err(PolyfillError::validation(
+                "`/prices-history` expects a decimal token_id/asset_id, not a hex condition_id",
+            ));
+        }
+
+        if !asset_id.as_bytes().iter().all(u8::is_ascii_digit) {
+            return Err(PolyfillError::validation(
+                "asset_id must be a decimal string (token_id / asset_id)",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Get price history for a single outcome (`token_id` / `asset_id`) over a fixed interval.
+    ///
+    /// Important: the upstream API query parameter is named `market`, but it expects the
+    /// decimal outcome asset id (not the hex `condition_id`).
+    pub async fn get_prices_history_interval(
+        &self,
+        asset_id: &str,
+        interval: PricesHistoryInterval,
+        fidelity: Option<u32>,
+    ) -> Result<PricesHistoryResponse> {
+        Self::validate_prices_history_asset_id(asset_id)?;
+
+        let mut request = self
+            .http_client
+            .get(format!("{}/prices-history", self.base_url))
+            .query(&[("market", asset_id), ("interval", interval.as_str())]);
+
+        if let Some(fidelity) = fidelity {
+            request = request.query(&[("fidelity", fidelity)]);
+        }
+
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| {
+                    if body.is_empty() {
+                        "Failed to get prices history".to_string()
+                    } else {
+                        body
+                    }
+                });
+            return Err(PolyfillError::api(status, message));
+        }
+
+        Ok(response.json::<PricesHistoryResponse>().await?)
+    }
+
+    /// Get price history for a single outcome (`token_id` / `asset_id`) over a timestamp range.
+    ///
+    /// `start_ts` and `end_ts` are Unix timestamps (seconds).
+    pub async fn get_prices_history_range(
+        &self,
+        asset_id: &str,
+        start_ts: u64,
+        end_ts: u64,
+        fidelity: Option<u32>,
+    ) -> Result<PricesHistoryResponse> {
+        Self::validate_prices_history_asset_id(asset_id)?;
+
+        if start_ts >= end_ts {
+            return Err(PolyfillError::validation(
+                "start_ts must be < end_ts for prices history",
+            ));
+        }
+
+        let mut request = self
+            .http_client
+            .get(format!("{}/prices-history", self.base_url))
+            .query(&[("market", asset_id)])
+            .query(&[("startTs", start_ts), ("endTs", end_ts)]);
+
+        if let Some(fidelity) = fidelity {
+            request = request.query(&[("fidelity", fidelity)]);
+        }
+
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| {
+                    if body.is_empty() {
+                        "Failed to get prices history".to_string()
+                    } else {
+                        body
+                    }
+                });
+            return Err(PolyfillError::api(status, message));
+        }
+
+        Ok(response.json::<PricesHistoryResponse>().await?)
+    }
+
     /// Get tick size for a token
     pub async fn get_tick_size(&self, token_id: &str) -> Result<Decimal> {
         let response = self
@@ -1723,8 +1843,8 @@ impl ClobClient {
 // Re-export types from the canonical location in types.rs
 pub use crate::types::{
     ExtraOrderArgs, Market, MarketOrderArgs, MarketsResponse, MidpointResponse, NegRiskResponse,
-    OrderBookSummary, OrderSummary, PriceResponse, Rewards, SpreadResponse, TickSizeResponse,
-    Token,
+    OrderBookSummary, OrderSummary, PriceResponse, PricesHistoryInterval, PricesHistoryResponse,
+    Rewards, SpreadResponse, TickSizeResponse, Token,
 };
 
 // Compatibility types that need to stay in client.rs
@@ -1740,7 +1860,7 @@ pub type PolyfillClient = ClobClient;
 #[cfg(test)]
 mod tests {
     use super::{ClobClient, OrderArgs as ClientOrderArgs};
-    use crate::types::Side;
+    use crate::types::{PricesHistoryInterval, Side};
     use crate::{ApiCredentials, PolyfillError};
     use mockito::{Matcher, Server};
     use rust_decimal::Decimal;
@@ -2028,6 +2148,43 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.price, Decimal::from_str("0.76").unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_prices_history_interval_rejects_hex_condition_id() {
+        let client = create_test_client("https://test.example.com");
+        let result = client
+            .get_prices_history_interval("0xdeadbeef", PricesHistoryInterval::OneDay, None)
+            .await;
+        assert!(matches!(result, Err(PolyfillError::Validation { .. })));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_prices_history_interval_success() {
+        let mut server = Server::new_async().await;
+        let mock_response = r#"{"history":[{"t":1}]}"#;
+
+        let mock = server
+            .mock("GET", "/prices-history")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("market".into(), "12345".into()),
+                Matcher::UrlEncoded("interval".into(), "1d".into()),
+                Matcher::UrlEncoded("fidelity".into(), "5".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let response = client
+            .get_prices_history_interval("12345", PricesHistoryInterval::OneDay, Some(5))
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(response.history.len(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]
