@@ -10,6 +10,10 @@ At the time that this project was started, `polymarket-rs-client` was a Polymark
 
 I also want to take a moment to clarify what zero-alloc means because I've now recieved double digit messages about this on twitter/x and telegram. In general, zero alloc means either zero alloc in hot paths (which can be a bit more arbitrary) or atlernatively it can mean zero alloc ater init/warm-up, which is the objective of this repository. Succinctly that means that **the per-message handling loop never touches the heap**. 
 
+Notably order book paths that introduce new allocations by design:
+- First time seeing a token/book (HashMap insert + key clone): `src/book.rs:~788`
+- New price levels (BTreeMap node growth): `src/book.rs:~409`
+
 
 ## Quick Start
 
