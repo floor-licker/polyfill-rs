@@ -208,9 +208,10 @@ impl Side {
 }
 
 /// Order type specifications
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum OrderType {
+    #[default]
     GTC,
     FOK,
     GTD,
@@ -1099,7 +1100,7 @@ pub struct OpenOrder {
     pub asset_id: String,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub expiration: u64,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", alias = "order_type", alias = "orderType", default)]
     pub order_type: OrderType,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub created_at: u64,
