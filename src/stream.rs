@@ -5,6 +5,7 @@
 
 use crate::errors::{PolyfillError, Result};
 use crate::types::*;
+use crate::ws_hot_path::{WsBookApplyStats, WsBookUpdateProcessor};
 use chrono::Utc;
 use futures::{SinkExt, Stream, StreamExt};
 use serde_json::Value;
@@ -378,6 +379,116 @@ impl WebSocketStream {
     }
 }
 
+/// WebSocket stream wrapper that applies `book` updates directly into an [`crate::book::OrderBookManager`].
+///
+/// This bypasses `StreamMessage` decoding (serde/DOM parsing) for the `book` hot path by using
+/// [`WsBookUpdateProcessor`]. Non-`book` WS payloads are ignored.
+///
+/// Note: the underlying WS transport may still allocate when producing `Message::Text(String)`.
+pub struct WebSocketBookApplier<'a> {
+    stream: WebSocketStream,
+    books: &'a crate::book::OrderBookManager,
+    processor: WsBookUpdateProcessor,
+}
+
+impl WebSocketStream {
+    /// Convert this stream into a book-applier stream.
+    ///
+    /// The caller is expected to "warm up" the [`crate::book::OrderBookManager`] by creating books for all
+    /// subscribed asset IDs ahead of time. Missing books are treated as an error.
+    pub fn into_book_applier<'a>(
+        mut self,
+        books: &'a crate::book::OrderBookManager,
+        processor: WsBookUpdateProcessor,
+    ) -> WebSocketBookApplier<'a> {
+        // Drop any pre-parsed messages to avoid mixing the two streaming modes.
+        self.pending.clear();
+        WebSocketBookApplier {
+            stream: self,
+            books,
+            processor,
+        }
+    }
+}
+
+impl<'a> WebSocketBookApplier<'a> {
+    /// Access the underlying WebSocket stream (e.g., for subscribe/unsubscribe calls).
+    pub fn stream_mut(&mut self) -> &mut WebSocketStream {
+        &mut self.stream
+    }
+
+    /// Current WebSocket connection stats.
+    pub fn stream_stats(&self) -> StreamStats {
+        self.stream.stats.clone()
+    }
+
+    /// Access the hot-path processor (e.g., to reuse it across connections).
+    pub fn processor_mut(&mut self) -> &mut WsBookUpdateProcessor {
+        &mut self.processor
+    }
+
+    /// Apply a single WS text payload (useful for custom transports and for testing).
+    pub fn apply_text_message(&mut self, text: String) -> Result<WsBookApplyStats> {
+        let stats = self.processor.process_text(text, self.books)?;
+        self.stream.stats.messages_received += 1;
+        self.stream.stats.last_message_time = Some(Utc::now());
+        Ok(stats)
+    }
+}
+
+impl<'a> Stream for WebSocketBookApplier<'a> {
+    type Item = Result<WsBookApplyStats>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            let Some(connection) = &mut self.stream.connection else {
+                return Poll::Ready(None);
+            };
+
+            match connection.poll_next_unpin(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Some(Ok(msg))) => match msg {
+                    tokio_tungstenite::tungstenite::Message::Text(text) => {
+                        match self.apply_text_message(text) {
+                            Ok(stats) => {
+                                if stats.book_messages == 0 {
+                                    continue;
+                                }
+                                return Poll::Ready(Some(Ok(stats)));
+                            },
+                            Err(e) => {
+                                self.stream.stats.errors += 1;
+                                return Poll::Ready(Some(Err(e)));
+                            },
+                        }
+                    },
+                    tokio_tungstenite::tungstenite::Message::Close(_) => {
+                        info!("WebSocket connection closed by server");
+                        self.stream.connection = None;
+                        return Poll::Ready(None);
+                    },
+                    tokio_tungstenite::tungstenite::Message::Ping(_) => {
+                        // Best-effort: tokio-tungstenite/tungstenite may handle pings internally.
+                        continue;
+                    },
+                    tokio_tungstenite::tungstenite::Message::Pong(_) => continue,
+                    tokio_tungstenite::tungstenite::Message::Binary(_) => continue,
+                    tokio_tungstenite::tungstenite::Message::Frame(_) => continue,
+                },
+                Poll::Ready(Some(Err(e))) => {
+                    error!("WebSocket error: {}", e);
+                    self.stream.stats.errors += 1;
+                    return Poll::Ready(Some(Err(e.into())));
+                },
+                Poll::Ready(None) => {
+                    info!("WebSocket stream ended");
+                    return Poll::Ready(None);
+                },
+            }
+        }
+    }
+}
+
 impl Stream for WebSocketStream {
     type Item = Result<StreamMessage>;
 
@@ -585,6 +696,8 @@ impl StreamManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
 
     #[test]
     fn test_mock_stream() {
@@ -625,5 +738,28 @@ mod tests {
             hash: None,
         });
         assert!(manager.broadcast_message(message).is_ok());
+    }
+
+    #[test]
+    fn test_websocket_book_applier_apply_text_message_updates_book() {
+        let books = crate::book::OrderBookManager::new(64);
+        let _ = books.get_or_create_book("12345").unwrap();
+
+        let processor = WsBookUpdateProcessor::new(1024);
+        let stream = WebSocketStream::new("wss://example.com/ws");
+        let mut applier = stream.into_book_applier(&books, processor);
+
+        let msg = r#"{"event_type":"book","asset_id":"12345","timestamp":1,"bids":[{"price":"0.75","size":"10"}],"asks":[{"price":"0.76","size":"5"}]}"#.to_string();
+        let stats = applier.apply_text_message(msg).unwrap();
+        assert_eq!(stats.book_messages, 1);
+        assert_eq!(stats.book_levels_applied, 2);
+
+        let snapshot = books.get_book("12345").unwrap();
+        assert_eq!(snapshot.bids.len(), 1);
+        assert_eq!(snapshot.asks.len(), 1);
+        assert_eq!(snapshot.bids[0].price, Decimal::from_str("0.75").unwrap());
+        assert_eq!(snapshot.bids[0].size, Decimal::from_str("10").unwrap());
+        assert_eq!(snapshot.asks[0].price, Decimal::from_str("0.76").unwrap());
+        assert_eq!(snapshot.asks[0].size, Decimal::from_str("5").unwrap());
     }
 }

@@ -145,7 +145,7 @@ pub use crate::errors::{PolyfillError, Result};
 pub use crate::book::{OrderBook as OrderBookImpl, OrderBookManager};
 pub use crate::decode::Decoder;
 pub use crate::fill::{FillEngine, FillResult};
-pub use crate::stream::{MarketStream, StreamManager, WebSocketStream};
+pub use crate::stream::{MarketStream, StreamManager, WebSocketBookApplier, WebSocketStream};
 pub use crate::ws_hot_path::{WsBookApplyStats, WsBookUpdateProcessor};
 
 // Re-export utilities

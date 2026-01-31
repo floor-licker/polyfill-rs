@@ -5,7 +5,9 @@ use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 use chrono::Utc;
-use polyfill_rs::{book::OrderBookManager, OrderBookImpl, Side, WsBookUpdateProcessor};
+use polyfill_rs::{
+    book::OrderBookManager, OrderBookImpl, Side, WebSocketStream, WsBookUpdateProcessor,
+};
 use rust_decimal::Decimal;
 
 thread_local! {
@@ -267,5 +269,55 @@ fn no_alloc_ws_book_update_processor_apply_existing_levels() {
     processor
         .process_bytes(msg.as_mut_slice(), &manager)
         .unwrap();
+    guard.assert_no_allocations();
+}
+
+#[test]
+fn no_alloc_websocket_book_applier_apply_text_message_existing_levels() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+
+    // Warm up the internal book with initial levels (allocations allowed).
+    manager
+        .apply_delta(polyfill_rs::types::OrderDelta {
+            token_id: asset_id.to_string(),
+            timestamp: chrono::Utc::now(),
+            side: Side::BUY,
+            price: Decimal::from_str("0.75").unwrap(),
+            size: Decimal::from_str("100.0").unwrap(),
+            sequence: 1,
+        })
+        .unwrap();
+    manager
+        .apply_delta(polyfill_rs::types::OrderDelta {
+            token_id: asset_id.to_string(),
+            timestamp: chrono::Utc::now(),
+            side: Side::SELL,
+            price: Decimal::from_str("0.76").unwrap(),
+            size: Decimal::from_str("100.0").unwrap(),
+            sequence: 2,
+        })
+        .unwrap();
+
+    let processor = WsBookUpdateProcessor::new(1024);
+    let stream = WebSocketStream::new("wss://example.com/ws");
+    let mut applier = stream.into_book_applier(&manager, processor);
+
+    // Warm up simd-json buffers/tape outside the guarded section.
+    let warmup_msg = format!(
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":10,\"bids\":[{{\"price\":\"0.75\",\"size\":\"200.0\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"50.0\"}}]}}"
+    );
+    applier.apply_text_message(warmup_msg).unwrap();
+
+    let msg = format!(
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":11,\"bids\":[{{\"price\":\"0.75\",\"size\":\"150.0\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"75.0\"}}]}}"
+    );
+
+    // Warm up TLS access before measuring (defensive).
+    let _ = allocation_count();
+
+    let guard = NoAllocGuard::new();
+    applier.apply_text_message(msg).unwrap();
     guard.assert_no_allocations();
 }
