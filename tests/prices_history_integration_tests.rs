@@ -43,4 +43,3 @@ async fn test_real_api_get_prices_history_interval_parses() {
 
     panic!("expected at least one active market to return non-empty price history");
 }
-
