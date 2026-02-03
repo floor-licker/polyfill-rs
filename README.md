@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/polyfill-rs/badge.svg)](https://docs.rs/polyfill-rs)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 
-A high-performance drop-in replacement for `polymarket-rs-client` with latency-optimized data structures and zero-allocation hot paths. A 100% API-compatible drop-in replacement for `polymarket-rs-client` with identical method signatures. 
+A high-performance Polymarket Rust client with latency-optimized data structures and zero-allocation hot paths. An API-compatible drop-in replacement for `polymarket-rs-client` with identical method signatures. 
 
 At the time that this project was started, `polymarket-rs-client` was a Polymarket Rust Client with a few GitHub stars, but which seemed to be unmaintained. I took on the task of creating a Rust client which could beat the benchmarks quoted in the README.md of that project, with the added constraint of also maintaining zero alloc hot paths.
 
