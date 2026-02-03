@@ -7,8 +7,8 @@ description = "The Fastest Polymarket Client On The Market."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/floor-licker/polyfill-rs"
 readme = "README.md"
-keywords = ["polymarket", "trading", "prediction-market", "kalshi", "clob", "crypto", "prediction-markets"]
-categories = ["api-bindings", "network-programming", "finance", "prediction-markets", "polymarket", "kalshi", "clob"]
+keywords = ["polymarket", "clob", "trading", "prediction-market", "crypto"]
+categories = ["api-bindings", "network-programming"]
 documentation = "https://docs.rs/polyfill-rs"
 homepage = "https://github.com/floor-licker/polyfill-rs"
 [dependencies]
