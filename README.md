@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-polyfill-rs = "0.2.3"
+polyfill-rs = "0.3.0"
 ```
 
 Replace your imports:
