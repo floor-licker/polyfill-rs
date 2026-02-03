@@ -50,12 +50,12 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 | **Fetch Markets** | **321.6 ms ± 92.9 ms** | 409.3 ms ± 137.6 ms | 1.366 s ± 0.048 s |
 
 
-**Performance vs Competition:**
-- **21.4% faster** than polymarket-rs-client - 87.6ms improvement
-- **32.5% more consistent** than polymarket-rs-client
+**Performance vs polymarket-rs-client:**
+- **21.4% faster** 
+- **32.5% more consistent** 
 - **4.2x faster** than Official Python Client
 
-**Benchmark Methodology:** All benchmarks run side-by-side on the same machine, same network, same time using identical testing methodology (20 iterations, 100ms delay between requests, /simplified-markets endpoint). Best performance achieved with connection keep-alive enabled. See `examples/side_by_side_benchmark.rs` for the complete benchmark implementation.
+**Benchmark Methodology:** All benchmarks run side-by-side on the same machine, same network, same time using 20 iterations, 100ms delay between requests, /simplified-markets endpoint. Best performance achieved with connection keep-alive enabled. See `examples/side_by_side_benchmark.rs` for the complete benchmark implementation.
 
 **Computational Performance (pure CPU, no I/O)**
 
@@ -71,21 +71,6 @@ Run the WS hot-path benchmark locally with `cargo bench --bench ws_hot_path`.
 **Key Performance Optimizations:**
 
 The 21.4% performance improvement comes from SIMD-accelerated JSON parsing (1.77x faster than serde_json), HTTP/2 tuning with 512KB stream windows optimized for 469KB payloads, integrated DNS caching, connection keep-alive, and buffer pooling to reduce allocation overhead.
-
-### Benchmarking Methodology
-
-**Side-by-Side Testing:**
-Both clients tested sequentially on identical infrastructure with the same network state, API endpoint, and parameters (20 iterations, 100ms delays). Side-by-side testing reveals polymarket-rs-client's claimed ±22.9ms variance understates actual ±137.6ms variance by 500%.
-
-**What We Measure:**
-- Real-world API performance with actual network I/O
-- Statistical analysis with multiple runs (mean ± standard deviation)
-- Connection establishment overhead and warm connection performance
-- Variance analysis to measure consistency
-
-### Critical Path Optimizations
-
-Fixed-point arithmetic eliminates floating-point pipeline stalls and decimal parsing overhead. Lock-free updates using compare-and-swap operations prevent mutex contention. Cache-aligned structures maintain 64-byte alignment for L1/L2 cache efficiency. SIMD-friendly data layouts enable batch price level processing.
 
 ### Memory Architecture
 
