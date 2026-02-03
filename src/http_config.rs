@@ -37,7 +37,11 @@ pub fn create_optimized_client() -> Result<Client, reqwest::Error> {
         // Compression - all algorithms enabled by default in reqwest
         .gzip(true) // Ensure gzip is enabled
         // User agent for identification
-        .user_agent("polyfill-rs/0.2.3 (high-frequency-trading)")
+        .user_agent(concat!(
+            "polyfill-rs/",
+            env!("CARGO_PKG_VERSION"),
+            " (high-frequency-trading)"
+        ))
         .build()
 }
 
@@ -62,7 +66,11 @@ pub fn create_colocated_client() -> Result<Client, reqwest::Error> {
         // Disable compression in co-located environments (CPU vs network tradeoff)
         .gzip(false)
         .no_brotli() // Disable brotli compression
-        .user_agent("polyfill-rs/0.2.3 (colocated-hft)")
+        .user_agent(concat!(
+            "polyfill-rs/",
+            env!("CARGO_PKG_VERSION"),
+            " (colocated-hft)"
+        ))
         .build()
 }
 
@@ -83,7 +91,11 @@ pub fn create_internet_client() -> Result<Client, reqwest::Error> {
         .http1_title_case_headers()
         // Enable compression (gzip and brotli are enabled by default)
         .gzip(true)
-        .user_agent("polyfill-rs/0.2.3 (internet-trading)")
+        .user_agent(concat!(
+            "polyfill-rs/",
+            env!("CARGO_PKG_VERSION"),
+            " (internet-trading)"
+        ))
         .build()
 }
 
