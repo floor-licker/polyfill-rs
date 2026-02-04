@@ -58,7 +58,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }
 url = "2.5"
-bytes = "1.0"
+bytes = "1.11.1"
 rand = "0.8"
 
 # Optional WebSocket support for streaming
