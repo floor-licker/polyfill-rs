@@ -26,6 +26,8 @@ pub async fn prewarm_connections(client: &Client, base_url: &str) -> Result<(), 
 /// Benchmarked configuration: 309.3ms vs 349ms baseline (11.4% faster)
 pub fn create_optimized_client() -> Result<Client, reqwest::Error> {
     ClientBuilder::new()
+        // Avoid reading OS proxy settings (can be slow and/or unavailable in some sandboxed envs)
+        .no_proxy()
         // Connection pooling optimizations - aggressive reuse
         .pool_max_idle_per_host(10) // Keep connections alive
         .pool_idle_timeout(Duration::from_secs(90)) // Longer reuse window
@@ -49,6 +51,8 @@ pub fn create_optimized_client() -> Result<Client, reqwest::Error> {
 /// (even more aggressive settings for when you're close to the exchange)
 pub fn create_colocated_client() -> Result<Client, reqwest::Error> {
     ClientBuilder::new()
+        // Avoid reading OS proxy settings (can be slow and/or unavailable in some sandboxed envs)
+        .no_proxy()
         // More aggressive connection pooling
         .pool_max_idle_per_host(20) // More connections
         .pool_idle_timeout(Duration::from_secs(60)) // Longer reuse
@@ -78,6 +82,8 @@ pub fn create_colocated_client() -> Result<Client, reqwest::Error> {
 /// (more conservative settings for internet connections)
 pub fn create_internet_client() -> Result<Client, reqwest::Error> {
     ClientBuilder::new()
+        // Avoid reading OS proxy settings (can be slow and/or unavailable in some sandboxed envs)
+        .no_proxy()
         // Conservative connection pooling
         .pool_max_idle_per_host(5)
         .pool_idle_timeout(Duration::from_secs(90))

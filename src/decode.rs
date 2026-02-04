@@ -173,6 +173,19 @@ pub mod deserializers {
             _ => Ok(None),
         }
     }
+
+    /// Deserialize a Decimal from string/number.
+    ///
+    /// - `""` => error
+    /// - invalid values => error
+    pub fn decimal_from_string<'de, D>(deserializer: D) -> std::result::Result<Decimal, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        optional_decimal_from_string(deserializer)?.ok_or_else(|| {
+            serde::de::Error::custom("Expected decimal as string/number, got null/empty string")
+        })
+    }
 }
 
 /// Raw API response types for efficient parsing

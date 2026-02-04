@@ -1367,6 +1367,286 @@ pub struct Rewards {
     pub reward_epoch: Option<Decimal>,
 }
 
+// ============================================================================
+// CLOB API: Fee Rate + RFQ (Market Maker) Types
+// ============================================================================
+
+/// Fee rate in basis points for a given token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeeRateResponse {
+    pub fee_rate_bps: u32,
+}
+
+/// Create RFQ request (Requester).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqCreateRequest {
+    pub asset_in: String,
+    pub asset_out: String,
+    pub amount_in: String,
+    pub amount_out: String,
+    pub user_type: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqCreateRequestResponse {
+    pub request_id: String,
+    pub expiry: u64,
+}
+
+/// Cancel RFQ request (Requester).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqCancelRequest {
+    pub request_id: String,
+}
+
+/// RFQ request list query parameters.
+#[derive(Debug, Clone, Default)]
+pub struct RfqRequestsParams {
+    pub offset: Option<String>,
+    pub limit: Option<u32>,
+    pub state: Option<String>,
+    pub request_ids: Vec<String>,
+    pub markets: Vec<String>,
+    pub size_min: Option<Decimal>,
+    pub size_max: Option<Decimal>,
+    pub size_usdc_min: Option<Decimal>,
+    pub size_usdc_max: Option<Decimal>,
+    pub price_min: Option<Decimal>,
+    pub price_max: Option<Decimal>,
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
+}
+
+impl RfqRequestsParams {
+    pub fn to_query_params(&self) -> Vec<(String, String)> {
+        let mut params = Vec::new();
+
+        if let Some(x) = &self.offset {
+            params.push(("offset".to_string(), x.clone()));
+        }
+        if let Some(x) = self.limit {
+            params.push(("limit".to_string(), x.to_string()));
+        }
+        if let Some(x) = &self.state {
+            params.push(("state".to_string(), x.clone()));
+        }
+        for x in &self.request_ids {
+            params.push(("requestIds[]".to_string(), x.clone()));
+        }
+        for x in &self.markets {
+            params.push(("markets[]".to_string(), x.clone()));
+        }
+
+        if let Some(x) = self.size_min {
+            params.push(("sizeMin".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.size_max {
+            params.push(("sizeMax".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.size_usdc_min {
+            params.push(("sizeUsdcMin".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.size_usdc_max {
+            params.push(("sizeUsdcMax".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.price_min {
+            params.push(("priceMin".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.price_max {
+            params.push(("priceMax".to_string(), x.to_string()));
+        }
+
+        if let Some(x) = &self.sort_by {
+            params.push(("sortBy".to_string(), x.clone()));
+        }
+        if let Some(x) = &self.sort_dir {
+            params.push(("sortDir".to_string(), x.clone()));
+        }
+
+        params
+    }
+}
+
+/// RFQ request data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqRequestData {
+    pub request_id: String,
+    pub user_address: String,
+    pub proxy_address: String,
+    pub condition: String,
+    pub token: String,
+    pub complement: String,
+    pub side: Side,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub size_in: Decimal,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub size_out: Decimal,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub price: Decimal,
+    pub state: String,
+    pub expiry: u64,
+}
+
+/// Create RFQ quote (Quoter).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqCreateQuote {
+    pub request_id: String,
+    pub asset_in: String,
+    pub asset_out: String,
+    pub amount_in: String,
+    pub amount_out: String,
+    pub user_type: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqCreateQuoteResponse {
+    pub quote_id: String,
+}
+
+/// Cancel RFQ quote (Quoter).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqCancelQuote {
+    pub quote_id: String,
+}
+
+/// RFQ quote list query parameters.
+#[derive(Debug, Clone, Default)]
+pub struct RfqQuotesParams {
+    pub offset: Option<String>,
+    pub limit: Option<u32>,
+    pub state: Option<String>,
+    pub quote_ids: Vec<String>,
+    pub request_ids: Vec<String>,
+    pub markets: Vec<String>,
+    pub size_min: Option<Decimal>,
+    pub size_max: Option<Decimal>,
+    pub size_usdc_min: Option<Decimal>,
+    pub size_usdc_max: Option<Decimal>,
+    pub price_min: Option<Decimal>,
+    pub price_max: Option<Decimal>,
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
+}
+
+impl RfqQuotesParams {
+    pub fn to_query_params(&self) -> Vec<(String, String)> {
+        let mut params = Vec::new();
+
+        if let Some(x) = &self.offset {
+            params.push(("offset".to_string(), x.clone()));
+        }
+        if let Some(x) = self.limit {
+            params.push(("limit".to_string(), x.to_string()));
+        }
+        if let Some(x) = &self.state {
+            params.push(("state".to_string(), x.clone()));
+        }
+        for x in &self.quote_ids {
+            params.push(("quoteIds[]".to_string(), x.clone()));
+        }
+        for x in &self.request_ids {
+            params.push(("requestIds[]".to_string(), x.clone()));
+        }
+        for x in &self.markets {
+            params.push(("markets[]".to_string(), x.clone()));
+        }
+
+        if let Some(x) = self.size_min {
+            params.push(("sizeMin".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.size_max {
+            params.push(("sizeMax".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.size_usdc_min {
+            params.push(("sizeUsdcMin".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.size_usdc_max {
+            params.push(("sizeUsdcMax".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.price_min {
+            params.push(("priceMin".to_string(), x.to_string()));
+        }
+        if let Some(x) = self.price_max {
+            params.push(("priceMax".to_string(), x.to_string()));
+        }
+
+        if let Some(x) = &self.sort_by {
+            params.push(("sortBy".to_string(), x.clone()));
+        }
+        if let Some(x) = &self.sort_dir {
+            params.push(("sortDir".to_string(), x.clone()));
+        }
+
+        params
+    }
+}
+
+/// RFQ quote data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqQuoteData {
+    pub quote_id: String,
+    pub request_id: String,
+    pub user_address: String,
+    pub proxy_address: String,
+    pub condition: String,
+    pub token: String,
+    pub complement: String,
+    pub side: Side,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub size_in: Decimal,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub size_out: Decimal,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub price: Decimal,
+    pub match_type: String,
+    pub state: String,
+}
+
+/// Generic RFQ list response wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RfqListResponse<T> {
+    pub data: Vec<T>,
+    pub next_cursor: Option<String>,
+    pub limit: u32,
+    pub count: u32,
+}
+
+/// RFQ order execution request (used for both accept + approve).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqOrderExecutionRequest {
+    pub request_id: String,
+    pub quote_id: String,
+    pub maker: String,
+    pub signer: String,
+    pub taker: String,
+    pub expiration: u64,
+    pub nonce: String,
+    pub fee_rate_bps: String,
+    pub side: String,
+    pub token_id: String,
+    pub maker_amount: String,
+    pub taker_amount: String,
+    pub signature_type: u8,
+    pub signature: String,
+    pub salt: u64,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RfqApproveOrderResponse {
+    pub trade_ids: Vec<String>,
+}
+
 // For compatibility with reference implementation
 pub type ClientResult<T> = anyhow::Result<T>;
 

@@ -76,13 +76,20 @@ impl ClobClient {
         // Benchmarked optimal configuration: 512KB stream window
         // Results: 309.3ms vs 349ms baseline (11.4% improvement)
         let optimized_client = reqwest::ClientBuilder::new()
+            // Avoid reading OS proxy settings (can be slow and/or unavailable in some sandboxed envs)
+            .no_proxy()
             .http2_adaptive_window(true)
             .http2_initial_stream_window_size(512 * 1024) // 512KB - empirically optimal
             .tcp_nodelay(true)
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .unwrap_or_else(|_| {
+                reqwest::ClientBuilder::new()
+                    .no_proxy()
+                    .build()
+                    .expect("Failed to build reqwest client")
+            });
 
         // Initialize DNS cache and pre-warm it
         let dns_cache = tokio::runtime::Handle::try_current().ok().and_then(|_| {
@@ -134,7 +141,12 @@ impl ClobClient {
 
     /// Create a client optimized for co-located environments
     pub fn new_colocated(host: &str) -> Self {
-        let http_client = create_colocated_client().unwrap_or_else(|_| Client::new());
+        let http_client = create_colocated_client().unwrap_or_else(|_| {
+            reqwest::ClientBuilder::new()
+                .no_proxy()
+                .build()
+                .expect("Failed to build reqwest client")
+        });
 
         let connection_manager = Some(std::sync::Arc::new(
             crate::connection_manager::ConnectionManager::new(
@@ -159,7 +171,12 @@ impl ClobClient {
 
     /// Create a client optimized for internet connections
     pub fn new_internet(host: &str) -> Self {
-        let http_client = create_internet_client().unwrap_or_else(|_| Client::new());
+        let http_client = create_internet_client().unwrap_or_else(|_| {
+            reqwest::ClientBuilder::new()
+                .no_proxy()
+                .build()
+                .expect("Failed to build reqwest client")
+        });
 
         let connection_manager = Some(std::sync::Arc::new(
             crate::connection_manager::ConnectionManager::new(
@@ -190,7 +207,12 @@ impl ClobClient {
 
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
 
-        let http_client = create_optimized_client().unwrap_or_else(|_| Client::new());
+        let http_client = create_optimized_client().unwrap_or_else(|_| {
+            reqwest::ClientBuilder::new()
+                .no_proxy()
+                .build()
+                .expect("Failed to build reqwest client")
+        });
 
         // Initialize infrastructure modules
         let dns_cache = None; // Skip DNS cache for simplicity in this constructor
@@ -228,7 +250,12 @@ impl ClobClient {
 
         let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
 
-        let http_client = create_optimized_client().unwrap_or_else(|_| Client::new());
+        let http_client = create_optimized_client().unwrap_or_else(|_| {
+            reqwest::ClientBuilder::new()
+                .no_proxy()
+                .build()
+                .expect("Failed to build reqwest client")
+        });
 
         // Initialize infrastructure modules
         let dns_cache = None; // Skip DNS cache for simplicity in this constructor
@@ -608,6 +635,30 @@ impl ClobClient {
             .ok_or_else(|| PolyfillError::parse("Invalid tick size format", None))?;
 
         Ok(tick_size)
+    }
+
+    /// Get maker fee rate (in bps) for a token
+    pub async fn get_fee_rate_bps(&self, token_id: &str) -> Result<u32> {
+        let response = self
+            .http_client
+            .get(format!("{}/fee-rate", self.base_url))
+            .query(&[("token_id", token_id)])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to get fee rate",
+            ));
+        }
+
+        let fee_rate: crate::types::FeeRateResponse = response
+            .json()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
+        Ok(fee_rate.fee_rate_bps)
     }
 
     /// Create a new API key
@@ -1722,6 +1773,389 @@ impl ClobClient {
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
     }
 
+    // ============================================================================
+    // RFQ (Market Maker) endpoints
+    // ============================================================================
+
+    /// Create an RFQ request.
+    pub async fn create_rfq_request(
+        &self,
+        request: &crate::types::RfqCreateRequest,
+    ) -> Result<crate::types::RfqCreateRequestResponse> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::POST;
+        let endpoint = "/rfq/request";
+        let headers =
+            create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(request))?;
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to create RFQ request",
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Cancel an RFQ request.
+    pub async fn cancel_rfq_request(&self, request_id: &str) -> Result<()> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::DELETE;
+        let endpoint = "/rfq/request";
+        let body = crate::types::RfqCancelRequest {
+            request_id: request_id.to_string(),
+        };
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to cancel RFQ request",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Get RFQ requests (requester).
+    pub async fn get_rfq_requests(
+        &self,
+        params: Option<&crate::types::RfqRequestsParams>,
+    ) -> Result<crate::types::RfqListResponse<crate::types::RfqRequestData>> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::GET;
+        let endpoint = "/rfq/data/requests";
+        let headers =
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let query_params = params.cloned().unwrap_or_default().to_query_params();
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .query(&query_params)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to get RFQ requests",
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Create an RFQ quote.
+    pub async fn create_rfq_quote(
+        &self,
+        quote: &crate::types::RfqCreateQuote,
+    ) -> Result<crate::types::RfqCreateQuoteResponse> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::POST;
+        let endpoint = "/rfq/quote";
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(quote))?;
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .json(quote)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to create RFQ quote",
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Cancel an RFQ quote.
+    pub async fn cancel_rfq_quote(&self, quote_id: &str) -> Result<()> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::DELETE;
+        let endpoint = "/rfq/quote";
+        let body = crate::types::RfqCancelQuote {
+            quote_id: quote_id.to_string(),
+        };
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to cancel RFQ quote",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Get quotes for the requester.
+    pub async fn get_rfq_requester_quotes(
+        &self,
+        params: Option<&crate::types::RfqQuotesParams>,
+    ) -> Result<crate::types::RfqListResponse<crate::types::RfqQuoteData>> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::GET;
+        let endpoint = "/rfq/data/requester/quotes";
+        let headers =
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let query_params = params.cloned().unwrap_or_default().to_query_params();
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .query(&query_params)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to get RFQ requester quotes",
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get quotes for the quoter.
+    pub async fn get_rfq_quoter_quotes(
+        &self,
+        params: Option<&crate::types::RfqQuotesParams>,
+    ) -> Result<crate::types::RfqListResponse<crate::types::RfqQuoteData>> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::GET;
+        let endpoint = "/rfq/data/quoter/quotes";
+        let headers =
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let query_params = params.cloned().unwrap_or_default().to_query_params();
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .query(&query_params)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to get RFQ quoter quotes",
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Get best quote for a request.
+    pub async fn get_rfq_best_quote(&self, request_id: &str) -> Result<crate::types::RfqQuoteData> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::GET;
+        let endpoint = "/rfq/data/best-quote";
+        let headers =
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .query(&[("requestId", request_id)])
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to get RFQ best quote",
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
+    /// Accept the best quote and post the resulting order.
+    pub async fn accept_rfq_quote(
+        &self,
+        body: &crate::types::RfqOrderExecutionRequest,
+    ) -> Result<()> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::POST;
+        let endpoint = "/rfq/request/accept";
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(body))?;
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to accept RFQ quote",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Approve the accepted quote's order (Quoter).
+    pub async fn approve_rfq_order(
+        &self,
+        body: &crate::types::RfqOrderExecutionRequest,
+    ) -> Result<crate::types::RfqApproveOrderResponse> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::POST;
+        let endpoint = "/rfq/quote/approve";
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(body))?;
+
+        let response = self
+            .create_request_with_headers(method, endpoint, headers.into_iter())
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to approve RFQ order",
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+    }
+
     /// Get sampling markets with pagination
     pub async fn get_sampling_markets(
         &self,
@@ -1860,10 +2294,14 @@ pub type PolyfillClient = ClobClient;
 #[cfg(test)]
 mod tests {
     use super::{ClobClient, OrderArgs as ClientOrderArgs};
-    use crate::types::{PricesHistoryInterval, Side};
+    use crate::types::{
+        PricesHistoryInterval, RfqCreateQuote, RfqCreateRequest, RfqOrderExecutionRequest,
+        RfqQuotesParams, RfqRequestsParams, Side,
+    };
     use crate::{ApiCredentials, PolyfillError};
     use mockito::{Matcher, Server};
     use rust_decimal::Decimal;
+    use serde_json::json;
     use std::str::FromStr;
     use tokio;
 
@@ -1876,6 +2314,22 @@ mod tests {
             base_url,
             "0x1234567890123456789012345678901234567890123456789012345678901234",
             137,
+        )
+    }
+
+    fn create_test_client_with_l2_auth(base_url: &str) -> ClobClient {
+        let api_creds = ApiCredentials {
+            api_key: "test_key".to_string(),
+            // URL-safe base64 so HMAC header generation succeeds.
+            secret: "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1".to_string(),
+            passphrase: "test_passphrase".to_string(),
+        };
+
+        ClobClient::with_l2_headers(
+            base_url,
+            "0x1234567890123456789012345678901234567890123456789012345678901234",
+            137,
+            api_creds,
         )
     }
 
@@ -2571,5 +3025,355 @@ mod tests {
         assert_eq!(default_args.price, Decimal::ZERO);
         assert_eq!(default_args.size, Decimal::ZERO);
         assert_eq!(default_args.side, Side::BUY);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_fee_rate_bps_success() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/fee-rate")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"fee_rate_bps":1000}"#)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let rate = client.get_fee_rate_bps("123").await.unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(rate, 1000);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rfq_endpoints_happy_path() {
+        let mut server = Server::new_async().await;
+
+        // create_rfq_request
+        let create_request = RfqCreateRequest {
+            asset_in: "some_asset_in".to_string(),
+            asset_out: "some_asset_out".to_string(),
+            amount_in: "100".to_string(),
+            amount_out: "200".to_string(),
+            user_type: 0,
+        };
+        let create_request_mock = server
+            .mock("POST", "/rfq/request")
+            .match_body(Matcher::JsonString(
+                json!({
+                    "assetIn": "some_asset_in",
+                    "assetOut": "some_asset_out",
+                    "amountIn": "100",
+                    "amountOut": "200",
+                    "userType": 0
+                })
+                .to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"requestId":"req123","expiry":1744936318}"#)
+            .create_async()
+            .await;
+
+        // cancel_rfq_request
+        let cancel_request_mock = server
+            .mock("DELETE", "/rfq/request")
+            .match_body(Matcher::JsonString(r#"{"requestId":"req123"}"#.to_string()))
+            .with_status(200)
+            .with_body("OK")
+            .create_async()
+            .await;
+
+        // get_rfq_requests
+        let rfq_requests_mock = server
+            .mock("GET", "/rfq/data/requests")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("offset".into(), "MA==".into()),
+                Matcher::UrlEncoded("limit".into(), "10".into()),
+                Matcher::UrlEncoded("state".into(), "active".into()),
+                Matcher::UrlEncoded("requestIds[]".into(), "req123".into()),
+                Matcher::UrlEncoded("markets[]".into(), "some_market".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "data": [{
+                        "requestId": "req123",
+                        "userAddress": "0xabc",
+                        "proxyAddress": "0xdef",
+                        "condition": "some_condition_id",
+                        "token": "some_token_id",
+                        "complement": "some_complement",
+                        "side": "BUY",
+                        "sizeIn": 100,
+                        "sizeOut": 200,
+                        "price": 0.5,
+                        "state": "active",
+                        "expiry": 1744936318
+                    }],
+                    "next_cursor": "MA==",
+                    "limit": 10,
+                    "count": 1
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        // create_rfq_quote
+        let create_quote = RfqCreateQuote {
+            request_id: "req123".to_string(),
+            asset_in: "some_asset_in".to_string(),
+            asset_out: "some_asset_out".to_string(),
+            amount_in: "100".to_string(),
+            amount_out: "200".to_string(),
+            user_type: 0,
+        };
+        let create_quote_mock = server
+            .mock("POST", "/rfq/quote")
+            .match_body(Matcher::JsonString(
+                json!({
+                    "requestId": "req123",
+                    "assetIn": "some_asset_in",
+                    "assetOut": "some_asset_out",
+                    "amountIn": "100",
+                    "amountOut": "200",
+                    "userType": 0
+                })
+                .to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"quoteId":"q123"}"#)
+            .create_async()
+            .await;
+
+        // cancel_rfq_quote
+        let cancel_quote_mock = server
+            .mock("DELETE", "/rfq/quote")
+            .match_body(Matcher::JsonString(r#"{"quoteId":"q123"}"#.to_string()))
+            .with_status(200)
+            .with_body("OK")
+            .create_async()
+            .await;
+
+        // get_rfq_requester_quotes
+        let requester_quotes_mock = server
+            .mock("GET", "/rfq/data/requester/quotes")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("offset".into(), "MA==".into()),
+                Matcher::UrlEncoded("limit".into(), "10".into()),
+                Matcher::UrlEncoded("state".into(), "active".into()),
+                Matcher::UrlEncoded("quoteIds[]".into(), "q123".into()),
+                Matcher::UrlEncoded("requestIds[]".into(), "req123".into()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "data": [{
+                        "quoteId": "q123",
+                        "requestId": "req123",
+                        "userAddress": "0xabc",
+                        "proxyAddress": "0xdef",
+                        "condition": "some_condition_id",
+                        "token": "some_token_id",
+                        "complement": "some_complement",
+                        "side": "BUY",
+                        "sizeIn": 100,
+                        "sizeOut": 200,
+                        "price": 0.5,
+                        "matchType": "matched",
+                        "state": "active"
+                    }],
+                    "next_cursor": "MA==",
+                    "limit": 10,
+                    "count": 1
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        // get_rfq_quoter_quotes
+        let quoter_quotes_mock = server
+            .mock("GET", "/rfq/data/quoter/quotes")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "data": [],
+                    "next_cursor": "MA==",
+                    "limit": 10,
+                    "count": 0
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        // get_rfq_best_quote
+        let best_quote_mock = server
+            .mock("GET", "/rfq/data/best-quote")
+            .match_query(Matcher::UrlEncoded("requestId".into(), "req123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "quoteId": "q123",
+                    "requestId": "req123",
+                    "userAddress": "0xabc",
+                    "proxyAddress": "0xdef",
+                    "condition": "some_condition_id",
+                    "token": "some_token_id",
+                    "complement": "some_complement",
+                    "side": "BUY",
+                    "sizeIn": 100,
+                    "sizeOut": 200,
+                    "price": 0.5,
+                    "matchType": "matched",
+                    "state": "active"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        // accept_rfq_quote
+        let exec = RfqOrderExecutionRequest {
+            request_id: "req123".to_string(),
+            quote_id: "q123".to_string(),
+            maker: "0xmaker".to_string(),
+            signer: "0xsigner".to_string(),
+            taker: "0xtaker".to_string(),
+            expiration: 1_740_000_000,
+            nonce: "123".to_string(),
+            fee_rate_bps: "1000".to_string(),
+            side: "BUY".to_string(),
+            token_id: "123".to_string(),
+            maker_amount: "100".to_string(),
+            taker_amount: "200".to_string(),
+            signature_type: 2,
+            signature: "0xsig".to_string(),
+            salt: 42,
+            owner: "owner".to_string(),
+        };
+
+        let accept_mock = server
+            .mock("POST", "/rfq/request/accept")
+            .match_body(Matcher::JsonString(
+                json!({
+                    "requestId": "req123",
+                    "quoteId": "q123",
+                    "maker": "0xmaker",
+                    "signer": "0xsigner",
+                    "taker": "0xtaker",
+                    "expiration": 1740000000,
+                    "nonce": "123",
+                    "feeRateBps": "1000",
+                    "side": "BUY",
+                    "tokenId": "123",
+                    "makerAmount": "100",
+                    "takerAmount": "200",
+                    "signatureType": 2,
+                    "signature": "0xsig",
+                    "salt": 42,
+                    "owner": "owner"
+                })
+                .to_string(),
+            ))
+            .with_status(200)
+            .with_body("OK")
+            .create_async()
+            .await;
+
+        // approve_rfq_order
+        let approve_mock = server
+            .mock("POST", "/rfq/quote/approve")
+            .match_body(Matcher::JsonString(
+                json!({
+                    "requestId": "req123",
+                    "quoteId": "q123",
+                    "maker": "0xmaker",
+                    "signer": "0xsigner",
+                    "taker": "0xtaker",
+                    "expiration": 1740000000,
+                    "nonce": "123",
+                    "feeRateBps": "1000",
+                    "side": "BUY",
+                    "tokenId": "123",
+                    "makerAmount": "100",
+                    "takerAmount": "200",
+                    "signatureType": 2,
+                    "signature": "0xsig",
+                    "salt": 42,
+                    "owner": "owner"
+                })
+                .to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"tradeIds":["t1","t2"]}"#)
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_l2_auth(&server.url());
+
+        let created = client.create_rfq_request(&create_request).await.unwrap();
+        assert_eq!(created.request_id, "req123");
+        assert_eq!(created.expiry, 1_744_936_318);
+        create_request_mock.assert_async().await;
+
+        client.cancel_rfq_request("req123").await.unwrap();
+        cancel_request_mock.assert_async().await;
+
+        let params = RfqRequestsParams {
+            offset: Some("MA==".to_string()),
+            limit: Some(10),
+            state: Some("active".to_string()),
+            request_ids: vec!["req123".to_string()],
+            markets: vec!["some_market".to_string()],
+            ..Default::default()
+        };
+        let requests = client.get_rfq_requests(Some(&params)).await.unwrap();
+        assert_eq!(requests.data.len(), 1);
+        assert_eq!(requests.data[0].request_id, "req123");
+        rfq_requests_mock.assert_async().await;
+
+        let quote = client.create_rfq_quote(&create_quote).await.unwrap();
+        assert_eq!(quote.quote_id, "q123");
+        create_quote_mock.assert_async().await;
+
+        client.cancel_rfq_quote("q123").await.unwrap();
+        cancel_quote_mock.assert_async().await;
+
+        let quote_params = RfqQuotesParams {
+            offset: Some("MA==".to_string()),
+            limit: Some(10),
+            state: Some("active".to_string()),
+            quote_ids: vec!["q123".to_string()],
+            request_ids: vec!["req123".to_string()],
+            ..Default::default()
+        };
+
+        let requester_quotes = client
+            .get_rfq_requester_quotes(Some(&quote_params))
+            .await
+            .unwrap();
+        assert_eq!(requester_quotes.data.len(), 1);
+        requester_quotes_mock.assert_async().await;
+
+        let quoter_quotes = client.get_rfq_quoter_quotes(None).await.unwrap();
+        assert_eq!(quoter_quotes.data.len(), 0);
+        quoter_quotes_mock.assert_async().await;
+
+        let best = client.get_rfq_best_quote("req123").await.unwrap();
+        assert_eq!(best.quote_id, "q123");
+        best_quote_mock.assert_async().await;
+
+        client.accept_rfq_quote(&exec).await.unwrap();
+        accept_mock.assert_async().await;
+
+        let approved = client.approve_rfq_order(&exec).await.unwrap();
+        assert_eq!(approved.trade_ids, vec!["t1".to_string(), "t2".to_string()]);
+        approve_mock.assert_async().await;
     }
 }
