@@ -102,6 +102,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "requires external DNS/network access"]
     async fn test_dns_cache_resolve() {
         let cache = DnsCache::new().await.unwrap();
         let ips = cache.resolve("clob.polymarket.com").await.unwrap();
@@ -109,6 +110,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external DNS/network access"]
     async fn test_dns_cache_prewarm() {
         let cache = DnsCache::new().await.unwrap();
         cache.prewarm("clob.polymarket.com").await.unwrap();
@@ -116,6 +118,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external DNS/network access"]
     async fn test_dns_cache_clear() {
         let cache = DnsCache::new().await.unwrap();
         cache.prewarm("clob.polymarket.com").await.unwrap();
