@@ -1644,7 +1644,7 @@ impl ClobClient {
     pub async fn update_balance_allowance(
         &self,
         params: Option<crate::types::BalanceAllowanceParams>,
-    ) -> Result<Value> {
+    ) -> Result<()> {
         let signer = self
             .signer
             .as_ref()
@@ -1671,8 +1671,7 @@ impl ClobClient {
         let headers =
             create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
 
-        let response = self
-            .http_client
+        self.http_client
             .request(method, format!("{}{}", self.base_url, endpoint))
             .headers(
                 headers
@@ -1685,10 +1684,7 @@ impl ClobClient {
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
-        response
-            .json::<Value>()
-            .await
-            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+        Ok(())
     }
 
     /// Check if an order is scoring
