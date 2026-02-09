@@ -613,6 +613,8 @@ impl ClobClient {
 
     /// Get tick size for a token
     pub async fn get_tick_size(&self, token_id: &str) -> Result<Decimal> {
+        println!("----------------- getting tick size --------------------");
+
         let response = self
             .http_client
             .get(format!("{}/tick-size", self.base_url))
@@ -910,6 +912,8 @@ impl ClobClient {
             .get_filled_order_options(&order_args.token_id, options)
             .await?;
 
+        println!("create_order_options: {:?}", create_order_options);
+
         let expiration = expiration.unwrap_or(0);
         let extras = extras.unwrap_or_default();
 
@@ -1028,6 +1032,9 @@ impl ClobClient {
         let headers = create_l2_headers(signer, api_creds, "POST", "/order", Some(&body))?;
         let req = self.create_request_with_headers(Method::POST, "/order", headers.into_iter());
 
+        println!("{:?}", body);
+        println!("{:?}", req);
+
         let response = req.json(&body).send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -1046,6 +1053,7 @@ impl ClobClient {
     /// Create and post an order in one call
     pub async fn create_and_post_order(&self, order_args: &OrderArgs) -> Result<Value> {
         let order = self.create_order(order_args, None, None, None).await?;
+        println!("{:?}", order);
         self.post_order(order, OrderType::GTC).await
     }
 

@@ -165,11 +165,16 @@ impl OrderBuilder {
         price: Decimal,
         round_config: &RoundConfig,
     ) -> (u32, u32) {
+        println!("price: {:?}", price);
+
         match side {
             Side::BUY => {
                 let raw_taker_amt = size.round_dp_with_strategy(round_config.size, ToZero);
+                println!("raw_taker_amt: {:?}", raw_taker_amt);
                 let raw_maker_amt = raw_taker_amt * price;
+                println!("raw_maker_amt: {:?}", raw_maker_amt);
                 let raw_maker_amt = self.fix_amount_rounding(raw_maker_amt, round_config);
+                println!("raw_maker_amt: {:?}", raw_maker_amt);
                 (
                     decimal_to_token_u32(raw_maker_amt),
                     decimal_to_token_u32(raw_taker_amt),
@@ -283,12 +288,17 @@ impl OrderBuilder {
             .tick_size
             .ok_or_else(|| PolyfillError::validation("Cannot create order without tick size"))?;
 
+        println!("tick_size: {:?}", tick_size);
+        println!("order_args: {:?}", order_args);
+
         let (maker_amount, taker_amount) = self.get_order_amounts(
             order_args.side,
             order_args.size,
             order_args.price,
             &ROUNDING_CONFIG[&tick_size],
         );
+        println!("maker_amount: {:?}", maker_amount);
+        println!("taker_amount: {:?}", taker_amount);
 
         let neg_risk = options
             .neg_risk
