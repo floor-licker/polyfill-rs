@@ -1376,7 +1376,7 @@ pub struct Rewards {
 /// Fee rate in basis points for a given token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeeRateResponse {
-    pub fee_rate_bps: u32,
+    pub base_fee: u32,
 }
 
 /// Create RFQ request (Requester).

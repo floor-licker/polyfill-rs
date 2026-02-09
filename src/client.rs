@@ -662,7 +662,7 @@ impl ClobClient {
             .json()
             .await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
-        Ok(fee_rate.fee_rate_bps)
+        Ok(fee_rate.base_fee)
     }
 
     /// Create a new API key
@@ -866,16 +866,23 @@ impl ClobClient {
             None => (None, None, None),
         };
 
-        let tick_size = self.resolve_tick_size(token_id, tick_size).await?;
+        let tick_size = match tick_size {
+            Some(nr) => nr,
+            None => self.get_tick_size(token_id).await?,
+        };
         let neg_risk = match neg_risk {
             Some(nr) => nr,
             None => self.get_neg_risk(token_id).await?,
+        };
+        let fee_rate_bps = match fee_rate_bps {
+            Some(nr) => nr,
+            None => self.get_fee_rate_bps(token_id).await?,
         };
 
         Ok(OrderOptions {
             tick_size: Some(tick_size),
             neg_risk: Some(neg_risk),
-            fee_rate_bps,
+            fee_rate_bps: Some(fee_rate_bps),
         })
     }
 
