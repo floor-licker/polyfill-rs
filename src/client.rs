@@ -9,7 +9,7 @@ use crate::http_config::{
     create_colocated_client, create_internet_client, create_optimized_client, prewarm_connections,
 };
 use crate::types::{OrderOptions, PostOrder, SignedOrderRequest};
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use reqwest::header::HeaderName;
 use reqwest::Client;
@@ -242,13 +242,17 @@ impl ClobClient {
         host: &str,
         private_key: &str,
         chain_id: u64,
+        sig_type: Option<crate::orders::SigType>,
+        funder: Option<&str>,
         api_creds: ApiCreds,
     ) -> Self {
         let signer = private_key
             .parse::<PrivateKeySigner>()
             .expect("Invalid private key");
 
-        let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
+        let funder = funder.map(|x| x.parse::<Address>().expect("Invalid funder"));
+
+        let order_builder = crate::orders::OrderBuilder::new(signer.clone(), sig_type, funder);
 
         let http_client = create_optimized_client().unwrap_or_else(|_| {
             reqwest::ClientBuilder::new()
@@ -2325,6 +2329,8 @@ mod tests {
             base_url,
             "0x1234567890123456789012345678901234567890123456789012345678901234",
             137,
+            None,
+            None,
             api_creds,
         )
     }
@@ -2357,6 +2363,8 @@ mod tests {
             "https://test.example.com",
             "0x1234567890123456789012345678901234567890123456789012345678901234",
             137,
+            None,
+            None,
             api_creds.clone(),
         );
 
