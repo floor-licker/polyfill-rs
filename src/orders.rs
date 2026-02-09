@@ -165,12 +165,10 @@ impl OrderBuilder {
         price: Decimal,
         round_config: &RoundConfig,
     ) -> (u32, u32) {
-        let raw_price = price.round_dp_with_strategy(round_config.price, MidpointTowardZero);
-
         match side {
             Side::BUY => {
                 let raw_taker_amt = size.round_dp_with_strategy(round_config.size, ToZero);
-                let raw_maker_amt = raw_taker_amt * raw_price;
+                let raw_maker_amt = raw_taker_amt * price;
                 let raw_maker_amt = self.fix_amount_rounding(raw_maker_amt, round_config);
                 (
                     decimal_to_token_u32(raw_maker_amt),
@@ -179,7 +177,7 @@ impl OrderBuilder {
             },
             Side::SELL => {
                 let raw_maker_amt = size.round_dp_with_strategy(round_config.size, ToZero);
-                let raw_taker_amt = raw_maker_amt * raw_price;
+                let raw_taker_amt = raw_maker_amt * price;
                 let raw_taker_amt = self.fix_amount_rounding(raw_taker_amt, round_config);
 
                 (
