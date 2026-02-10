@@ -498,11 +498,13 @@ pub struct ApiCredentials {
 
 /// Configuration for order creation
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct OrderOptions {
     pub tick_size: Option<Decimal>,
     pub neg_risk: Option<bool>,
     pub fee_rate_bps: Option<u32>,
 }
+
 
 /// Extra arguments for order creation
 #[derive(Debug, Clone)]
