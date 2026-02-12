@@ -55,7 +55,7 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 - **32.5% more consistent** 
 - **4.2x faster** than Official Python Client
 
-**Benchmark Methodology:** All benchmarks run side-by-side on the same machine, same network, same time using 20 iterations, 100ms delay between requests, /simplified-markets endpoint. Best performance achieved with connection keep-alive enabled. See `examples/side_by_side_benchmark.rs` for the complete benchmark implementation.
+**Benchmark Methodology:** All benchmarks run side-by-side on the same machine, same network, same time using 20 iterations, 100ms delay between requests, /simplified-markets endpoint. Best performance achieved with connection keep-alive enabled. See `examples/side_by_side_benchmark.rs` in commit `a63a170`: https://github.com/floor-licker/polyfill-rs/blob/a63a170/examples/side_by_side_benchmark.rs for the complete benchmark implementation.
 
 **Computational Performance (pure CPU, no I/O)**
 

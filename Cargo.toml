@@ -30,10 +30,10 @@ simd-json = "0.13"
 dotenvy = "0.15"
 
 # Ethereum and crypto
-alloy-primitives = "0.8.26"
-alloy-sol-types = { version = "0.8.26", features = ["eip712-serde", "json"] }
-alloy-signer = { version = "0.7", features = ["eip712"] }
-alloy-signer-local = { version = "0.7", features = ["eip712"] }
+alloy-primitives = "1.5"
+alloy-sol-types = { version = "1.5", features = ["eip712-serde", "json"] }
+alloy-signer = { version = "1.6", features = ["eip712"] }
+alloy-signer-local = { version = "1.6", features = ["eip712"] }
 
 # Numeric types
 rust_decimal = { version = "1.36", features = ["serde-with-str"] }
@@ -70,7 +70,6 @@ tokio-test = "0.4"
 mockito = "1.0"
 proptest = "1.0"
 env_logger = "0.10"
-polymarket-rs-client = "0.1.1"
 
 [features]
 default = ["stream"]
