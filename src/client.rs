@@ -1032,10 +1032,66 @@ impl ClobClient {
         Ok(response.json::<Value>().await?)
     }
 
+    /// Post multiple orders to the exchange in a single request
+    pub async fn post_orders(
+        &self,
+        orders: Vec<SignedOrderRequest>,
+        order_type: OrderType,
+    ) -> Result<Value> {
+        if orders.is_empty() {
+            return Err(PolyfillError::validation("orders cannot be empty"));
+        }
+
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let body: Vec<PostOrder> = orders
+            .into_iter()
+            .map(|order| PostOrder::new(order, api_creds.api_key.clone(), order_type))
+            .collect();
+
+        let headers = create_l2_headers(signer, api_creds, "POST", "/orders", Some(&body))?;
+        let req = self.create_request_with_headers(Method::POST, "/orders", headers.into_iter());
+
+        let response = req.json(&body).send().await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            let message = if body.is_empty() {
+                "Failed to post orders".to_string()
+            } else {
+                format!("Failed to post orders: {}", body)
+            };
+            return Err(PolyfillError::api(status, message));
+        }
+
+        Ok(response.json::<Value>().await?)
+    }
+
     /// Create and post an order in one call
     pub async fn create_and_post_order(&self, order_args: &OrderArgs) -> Result<Value> {
         let order = self.create_order(order_args, None, None, None).await?;
         self.post_order(order, OrderType::GTC).await
+    }
+
+    /// Create and post multiple orders in one call
+    pub async fn create_and_post_orders(&self, order_args: &[OrderArgs]) -> Result<Value> {
+        if order_args.is_empty() {
+            return Err(PolyfillError::validation("order_args cannot be empty"));
+        }
+
+        let mut orders = Vec::with_capacity(order_args.len());
+        for args in order_args {
+            orders.push(self.create_order(args, None, None, None).await?);
+        }
+
+        self.post_orders(orders, OrderType::GTC).await
     }
 
     /// Cancel an order
@@ -2872,6 +2928,53 @@ mod tests {
         assert!(result.is_ok());
         let timestamp = result.unwrap();
         assert_eq!(timestamp, 1234567890);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_post_orders_batch_success() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/orders")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"success":true,"orderIDs":["a","b"]}"#)
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_l2_auth(&server.url());
+        let signed_order = crate::types::SignedOrderRequest {
+            salt: 1,
+            maker: "0x0000000000000000000000000000000000000000".to_string(),
+            signer: "0x0000000000000000000000000000000000000000".to_string(),
+            taker: "0x0000000000000000000000000000000000000000".to_string(),
+            token_id: "123".to_string(),
+            maker_amount: "100".to_string(),
+            taker_amount: "50".to_string(),
+            expiration: "0".to_string(),
+            nonce: "0".to_string(),
+            fee_rate_bps: "0".to_string(),
+            side: "BUY".to_string(),
+            signature_type: 0,
+            signature: "0xdeadbeef".to_string(),
+        };
+
+        let result = client
+            .post_orders(
+                vec![signed_order.clone(), signed_order],
+                crate::types::OrderType::GTC,
+            )
+            .await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["success"], true);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_post_orders_batch_empty_validation() {
+        let client = create_test_client_with_l2_auth("https://test.example.com");
+        let result = client.post_orders(Vec::new(), crate::types::OrderType::GTC).await;
+        assert!(matches!(result, Err(PolyfillError::Validation { .. })));
     }
 
     #[tokio::test(flavor = "multi_thread")]
