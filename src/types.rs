@@ -214,6 +214,7 @@ pub enum OrderType {
     #[default]
     GTC,
     FOK,
+    FAK,
     GTD,
 }
 
@@ -222,6 +223,7 @@ impl OrderType {
         match self {
             OrderType::GTC => "GTC",
             OrderType::FOK => "FOK",
+            OrderType::FAK => "FAK",
             OrderType::GTD => "GTD",
         }
     }
@@ -1657,3 +1659,19 @@ pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>;
 pub type ApiCreds = ApiCredentials;
 pub type CreateOrderOptions = OrderOptions;
 pub type OrderArgs = OrderRequest;
+
+#[cfg(test)]
+mod tests {
+    use super::OrderType;
+
+    #[test]
+    fn test_order_type_fak_serde_and_string() {
+        assert_eq!(OrderType::FAK.as_str(), "FAK");
+
+        let json = serde_json::to_string(&OrderType::FAK).unwrap();
+        assert_eq!(json, "\"FAK\"");
+
+        let parsed: OrderType = serde_json::from_str("\"FAK\"").unwrap();
+        assert_eq!(parsed, OrderType::FAK);
+    }
+}

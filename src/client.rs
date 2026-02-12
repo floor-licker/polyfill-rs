@@ -1079,14 +1079,28 @@ impl ClobClient {
         Ok(response.json::<Value>().await?)
     }
 
-    /// Create and post an order in one call
-    pub async fn create_and_post_order(&self, order_args: &OrderArgs) -> Result<Value> {
+    /// Create and post an order in one call with an explicit order type
+    pub async fn create_and_post_order_with_type(
+        &self,
+        order_args: &OrderArgs,
+        order_type: OrderType,
+    ) -> Result<Value> {
         let order = self.create_order(order_args, None, None, None).await?;
-        self.post_order(order, OrderType::GTC).await
+        self.post_order(order, order_type).await
     }
 
-    /// Create and post multiple orders in one call
-    pub async fn create_and_post_orders(&self, order_args: &[OrderArgs]) -> Result<Value> {
+    /// Create and post an order in one call (defaults to GTC)
+    pub async fn create_and_post_order(&self, order_args: &OrderArgs) -> Result<Value> {
+        self.create_and_post_order_with_type(order_args, OrderType::GTC)
+            .await
+    }
+
+    /// Create and post multiple orders in one call with an explicit order type
+    pub async fn create_and_post_orders_with_type(
+        &self,
+        order_args: &[OrderArgs],
+        order_type: OrderType,
+    ) -> Result<Value> {
         if order_args.is_empty() {
             return Err(PolyfillError::validation("order_args cannot be empty"));
         }
@@ -1096,7 +1110,13 @@ impl ClobClient {
             orders.push(self.create_order(args, None, None, None).await?);
         }
 
-        self.post_orders(orders, OrderType::GTC).await
+        self.post_orders(orders, order_type).await
+    }
+
+    /// Create and post multiple orders in one call (defaults to GTC)
+    pub async fn create_and_post_orders(&self, order_args: &[OrderArgs]) -> Result<Value> {
+        self.create_and_post_orders_with_type(order_args, OrderType::GTC)
+            .await
     }
 
     /// Cancel an order
@@ -2394,6 +2414,24 @@ mod tests {
         )
     }
 
+    fn sample_signed_order() -> crate::types::SignedOrderRequest {
+        crate::types::SignedOrderRequest {
+            salt: 1,
+            maker: "0x0000000000000000000000000000000000000000".to_string(),
+            signer: "0x0000000000000000000000000000000000000000".to_string(),
+            taker: "0x0000000000000000000000000000000000000000".to_string(),
+            token_id: "123".to_string(),
+            maker_amount: "100".to_string(),
+            taker_amount: "50".to_string(),
+            expiration: "0".to_string(),
+            nonce: "0".to_string(),
+            fee_rate_bps: "0".to_string(),
+            side: "BUY".to_string(),
+            signature_type: 0,
+            signature: "0xdeadbeef".to_string(),
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_client_creation() {
         let client = create_test_client("https://test.example.com");
@@ -2947,21 +2985,7 @@ mod tests {
             .await;
 
         let client = create_test_client_with_l2_auth(&server.url());
-        let signed_order = crate::types::SignedOrderRequest {
-            salt: 1,
-            maker: "0x0000000000000000000000000000000000000000".to_string(),
-            signer: "0x0000000000000000000000000000000000000000".to_string(),
-            taker: "0x0000000000000000000000000000000000000000".to_string(),
-            token_id: "123".to_string(),
-            maker_amount: "100".to_string(),
-            taker_amount: "50".to_string(),
-            expiration: "0".to_string(),
-            nonce: "0".to_string(),
-            fee_rate_bps: "0".to_string(),
-            side: "BUY".to_string(),
-            signature_type: 0,
-            signature: "0xdeadbeef".to_string(),
-        };
+        let signed_order = sample_signed_order();
 
         let result = client
             .post_orders(
@@ -2986,25 +3010,55 @@ mod tests {
     async fn test_post_orders_batch_too_many_validation() {
         let client = create_test_client_with_l2_auth("https://test.example.com");
         let orders = (0..16)
-            .map(|_| crate::types::SignedOrderRequest {
-                salt: 1,
-                maker: "0x0000000000000000000000000000000000000000".to_string(),
-                signer: "0x0000000000000000000000000000000000000000".to_string(),
-                taker: "0x0000000000000000000000000000000000000000".to_string(),
-                token_id: "123".to_string(),
-                maker_amount: "100".to_string(),
-                taker_amount: "50".to_string(),
-                expiration: "0".to_string(),
-                nonce: "0".to_string(),
-                fee_rate_bps: "0".to_string(),
-                side: "BUY".to_string(),
-                signature_type: 0,
-                signature: "0xdeadbeef".to_string(),
-            })
+            .map(|_| sample_signed_order())
             .collect::<Vec<_>>();
 
         let result = client.post_orders(orders, crate::types::OrderType::GTC).await;
         assert!(matches!(result, Err(PolyfillError::Validation { .. })));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_post_order_supports_fak() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/order")
+            .match_body(Matcher::Regex(r#""orderType":"FAK""#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"success":true,"orderID":"a"}"#)
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_l2_auth(&server.url());
+        let result = client
+            .post_order(sample_signed_order(), crate::types::OrderType::FAK)
+            .await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["success"], true);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_post_orders_supports_fak() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("POST", "/orders")
+            .match_body(Matcher::Regex(r#""orderType":"FAK""#.to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"success":true,"orderID":"a"}]"#)
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_l2_auth(&server.url());
+        let result = client
+            .post_orders(vec![sample_signed_order()], crate::types::OrderType::FAK)
+            .await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()[0]["success"], true);
     }
 
     #[tokio::test(flavor = "multi_thread")]
