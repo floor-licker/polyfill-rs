@@ -14,7 +14,6 @@ use alloy_signer_local::PrivateKeySigner;
 use reqwest::header::HeaderName;
 use reqwest::Client;
 use reqwest::{Method, RequestBuilder};
-use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::str::FromStr;
@@ -623,18 +622,8 @@ impl ClobClient {
             ));
         }
 
-        let tick_size_response: Value = response.json().await?;
-        let tick_size = tick_size_response["minimum_tick_size"]
-            .as_str()
-            .and_then(|s| Decimal::from_str(s).ok())
-            .or_else(|| {
-                tick_size_response["minimum_tick_size"]
-                    .as_f64()
-                    .map(|f| Decimal::from_f64(f).unwrap_or(Decimal::ZERO))
-            })
-            .ok_or_else(|| PolyfillError::parse("Invalid tick size format", None))?;
-
-        Ok(tick_size)
+        let tick_size_response: TickSizeResponse = response.json().await?;
+        Ok(tick_size_response.minimum_tick_size)
     }
 
     /// Get maker fee rate (in bps) for a token
@@ -658,7 +647,7 @@ impl ClobClient {
             .json()
             .await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
-        Ok(fee_rate.fee_rate_bps)
+        Ok(fee_rate.base_fee)
     }
 
     /// Create a new API key
@@ -820,12 +809,8 @@ impl ClobClient {
             ));
         }
 
-        let neg_risk_response: Value = response.json().await?;
-        let neg_risk = neg_risk_response["neg_risk"]
-            .as_bool()
-            .ok_or_else(|| PolyfillError::parse("Invalid neg risk format", None))?;
-
-        Ok(neg_risk)
+        let neg_risk_response: NegRiskResponse = response.json().await?;
+        Ok(neg_risk_response.neg_risk)
     }
 
     /// Resolve tick size for an order
@@ -953,7 +938,7 @@ impl ClobClient {
                 .collect(),
         };
 
-        order_builder.calculate_market_price(&levels, amount)
+        order_builder.calculate_market_price(side, &levels, amount)
     }
 
     /// Create a market order
@@ -974,7 +959,7 @@ impl ClobClient {
 
         let extras = extras.unwrap_or_default();
         let price = self
-            .calculate_market_price(&order_args.token_id, Side::BUY, order_args.amount)
+            .calculate_market_price(&order_args.token_id, order_args.side, order_args.amount)
             .await?;
 
         if !self.is_price_in_range(
@@ -1000,7 +985,7 @@ impl ClobClient {
         &self,
         order: SignedOrderRequest,
         order_type: OrderType,
-    ) -> Result<Value> {
+    ) -> Result<crate::types::PostOrderResponse> {
         let signer = self
             .signer
             .as_ref()
@@ -1029,7 +1014,7 @@ impl ClobClient {
             return Err(PolyfillError::api(status, message));
         }
 
-        Ok(response.json::<Value>().await?)
+        Ok(response.json::<crate::types::PostOrderResponse>().await?)
     }
 
     /// Post multiple orders to the exchange in a single request
@@ -1037,7 +1022,7 @@ impl ClobClient {
         &self,
         orders: Vec<SignedOrderRequest>,
         order_type: OrderType,
-    ) -> Result<Value> {
+    ) -> Result<Vec<crate::types::PostOrderResponse>> {
         if orders.is_empty() {
             return Err(PolyfillError::validation("orders cannot be empty"));
         }
@@ -1076,7 +1061,9 @@ impl ClobClient {
             return Err(PolyfillError::api(status, message));
         }
 
-        Ok(response.json::<Value>().await?)
+        Ok(response
+            .json::<Vec<crate::types::PostOrderResponse>>()
+            .await?)
     }
 
     /// Create and post an order in one call with an explicit order type
@@ -1084,13 +1071,16 @@ impl ClobClient {
         &self,
         order_args: &OrderArgs,
         order_type: OrderType,
-    ) -> Result<Value> {
+    ) -> Result<crate::types::PostOrderResponse> {
         let order = self.create_order(order_args, None, None, None).await?;
         self.post_order(order, order_type).await
     }
 
     /// Create and post an order in one call (defaults to GTC)
-    pub async fn create_and_post_order(&self, order_args: &OrderArgs) -> Result<Value> {
+    pub async fn create_and_post_order(
+        &self,
+        order_args: &OrderArgs,
+    ) -> Result<crate::types::PostOrderResponse> {
         self.create_and_post_order_with_type(order_args, OrderType::GTC)
             .await
     }
@@ -1100,7 +1090,7 @@ impl ClobClient {
         &self,
         order_args: &[OrderArgs],
         order_type: OrderType,
-    ) -> Result<Value> {
+    ) -> Result<Vec<crate::types::PostOrderResponse>> {
         if order_args.is_empty() {
             return Err(PolyfillError::validation("order_args cannot be empty"));
         }
@@ -1114,13 +1104,16 @@ impl ClobClient {
     }
 
     /// Create and post multiple orders in one call (defaults to GTC)
-    pub async fn create_and_post_orders(&self, order_args: &[OrderArgs]) -> Result<Value> {
+    pub async fn create_and_post_orders(
+        &self,
+        order_args: &[OrderArgs],
+    ) -> Result<Vec<crate::types::PostOrderResponse>> {
         self.create_and_post_orders_with_type(order_args, OrderType::GTC)
             .await
     }
 
     /// Cancel an order
-    pub async fn cancel(&self, order_id: &str) -> Result<Value> {
+    pub async fn cancel(&self, order_id: &str) -> Result<crate::types::CancelOrdersResponse> {
         let signer = self
             .signer
             .as_ref()
@@ -1143,11 +1136,16 @@ impl ClobClient {
             ));
         }
 
-        Ok(response.json::<Value>().await?)
+        Ok(response
+            .json::<crate::types::CancelOrdersResponse>()
+            .await?)
     }
 
     /// Cancel multiple orders
-    pub async fn cancel_orders(&self, order_ids: &[String]) -> Result<Value> {
+    pub async fn cancel_orders(
+        &self,
+        order_ids: &[String],
+    ) -> Result<crate::types::CancelOrdersResponse> {
         let signer = self
             .signer
             .as_ref()
@@ -1168,11 +1166,13 @@ impl ClobClient {
             ));
         }
 
-        Ok(response.json::<Value>().await?)
+        Ok(response
+            .json::<crate::types::CancelOrdersResponse>()
+            .await?)
     }
 
     /// Cancel all orders
-    pub async fn cancel_all(&self) -> Result<Value> {
+    pub async fn cancel_all(&self) -> Result<crate::types::CancelOrdersResponse> {
         let signer = self
             .signer
             .as_ref()
@@ -1182,7 +1182,7 @@ impl ClobClient {
             .as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
-        let headers = create_l2_headers::<Value>(signer, api_creds, "DELETE", "/cancel-all", None)?;
+        let headers = create_l2_headers::<()>(signer, api_creds, "DELETE", "/cancel-all", None)?;
         let req =
             self.create_request_with_headers(Method::DELETE, "/cancel-all", headers.into_iter());
 
@@ -1194,7 +1194,9 @@ impl ClobClient {
             ));
         }
 
-        Ok(response.json::<Value>().await?)
+        Ok(response
+            .json::<crate::types::CancelOrdersResponse>()
+            .await?)
     }
 
     /// Get open orders with optional filtering
@@ -1292,7 +1294,7 @@ impl ClobClient {
         &self,
         trade_params: Option<&crate::types::TradeParams>,
         next_cursor: Option<&str>,
-    ) -> Result<Vec<Value>> {
+    ) -> Result<Vec<crate::types::TradeResponse>> {
         let signer = self
             .signer
             .as_ref()
@@ -1348,7 +1350,14 @@ impl ClobClient {
             next_cursor = new_cursor;
 
             let results = resp["data"].clone();
-            output.push(results);
+            let trades = serde_json::from_value::<Vec<crate::types::TradeResponse>>(results)
+                .map_err(|e| {
+                    PolyfillError::parse(
+                        format!("Failed to parse data from trades response: {}", e),
+                        None,
+                    )
+                })?;
+            output.extend(trades);
         }
 
         Ok(output)
@@ -1646,7 +1655,7 @@ impl ClobClient {
         &self,
         market: Option<&str>,
         asset_id: Option<&str>,
-    ) -> Result<Value> {
+    ) -> Result<crate::types::CancelOrdersResponse> {
         let signer = self
             .signer
             .as_ref()
@@ -1680,7 +1689,7 @@ impl ClobClient {
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
         response
-            .json::<Value>()
+            .json::<crate::types::CancelOrdersResponse>()
             .await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
     }
@@ -1802,12 +1811,12 @@ impl ClobClient {
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
-        let result: Value = response
+        let result: crate::types::OrderScoringResponse = response
             .json()
             .await
             .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
 
-        Ok(result["scoring"].as_bool().unwrap_or(false))
+        Ok(result.scoring)
     }
 
     /// Check if multiple orders are scoring
@@ -2357,9 +2366,11 @@ impl ClobClient {
 
 // Re-export types from the canonical location in types.rs
 pub use crate::types::{
-    ExtraOrderArgs, Market, MarketOrderArgs, MarketsResponse, MidpointResponse, NegRiskResponse,
-    OrderBookSummary, OrderSummary, PriceResponse, PricesHistoryInterval, PricesHistoryResponse,
-    Rewards, SpreadResponse, TickSizeResponse, Token,
+    CancelOrdersResponse, ExtraOrderArgs, MakerOrder, Market, MarketOrderArgs, MarketsResponse,
+    MidpointResponse, NegRiskResponse, OrderBookSummary, OrderScoringResponse, OrderSummary,
+    PostOrderResponse, PriceHistoryPoint, PriceResponse, PricesHistoryInterval,
+    PricesHistoryResponse, Rewards, SpreadResponse, TickSizeResponse, Token, TradeResponse,
+    TraderSide,
 };
 
 // Compatibility types that need to stay in client.rs
@@ -2715,7 +2726,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_get_prices_history_interval_success() {
         let mut server = Server::new_async().await;
-        let mock_response = r#"{"history":[{"t":1}]}"#;
+        let mock_response = r#"{"history":[{"t":1,"p":"0.52"}]}"#;
 
         let mock = server
             .mock("GET", "/prices-history")
@@ -2738,6 +2749,8 @@ mod tests {
 
         mock.assert_async().await;
         assert_eq!(response.history.len(), 1);
+        assert_eq!(response.history[0].t, 1);
+        assert_eq!(response.history[0].p, Decimal::from_str("0.52").unwrap());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2980,7 +2993,7 @@ mod tests {
             .mock("POST", "/orders")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"success":true,"orderIDs":["a","b"]}"#)
+            .with_body(r#"[{"success":true,"orderID":"a"},{"success":true,"orderID":"b"}]"#)
             .create_async()
             .await;
 
@@ -2996,24 +3009,28 @@ mod tests {
 
         mock.assert_async().await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap()["success"], true);
+        let orders = result.unwrap();
+        assert_eq!(orders.len(), 2);
+        assert!(orders.iter().all(|o| o.success));
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_post_orders_batch_empty_validation() {
         let client = create_test_client_with_l2_auth("https://test.example.com");
-        let result = client.post_orders(Vec::new(), crate::types::OrderType::GTC).await;
+        let result = client
+            .post_orders(Vec::new(), crate::types::OrderType::GTC)
+            .await;
         assert!(matches!(result, Err(PolyfillError::Validation { .. })));
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_post_orders_batch_too_many_validation() {
         let client = create_test_client_with_l2_auth("https://test.example.com");
-        let orders = (0..16)
-            .map(|_| sample_signed_order())
-            .collect::<Vec<_>>();
+        let orders = (0..16).map(|_| sample_signed_order()).collect::<Vec<_>>();
 
-        let result = client.post_orders(orders, crate::types::OrderType::GTC).await;
+        let result = client
+            .post_orders(orders, crate::types::OrderType::GTC)
+            .await;
         assert!(matches!(result, Err(PolyfillError::Validation { .. })));
     }
 
@@ -3036,7 +3053,7 @@ mod tests {
 
         mock.assert_async().await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap()["success"], true);
+        assert!(result.unwrap().success);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3058,7 +3075,7 @@ mod tests {
 
         mock.assert_async().await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap()[0]["success"], true);
+        assert!(result.unwrap()[0].success);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3222,7 +3239,7 @@ mod tests {
             .match_query(Matcher::UrlEncoded("token_id".into(), "123".into()))
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"fee_rate_bps":1000}"#)
+            .with_body(r#"{"base_fee":1000}"#)
             .create_async()
             .await;
 

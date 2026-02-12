@@ -41,9 +41,9 @@ async fn test_post_order_authentication() {
             println!("  Response: {:?}", response);
 
             // Try to cancel it if we got an order ID
-            if let Some(order_id) = response.get("orderID").and_then(|v| v.as_str()) {
+            if !response.order_id.is_empty() {
                 println!("\nStep 3: Canceling order...");
-                match client.cancel(order_id).await {
+                match client.cancel(&response.order_id).await {
                     Ok(_) => println!("Order canceled successfully"),
                     Err(e) => println!("Cancel failed (order might have expired): {:?}", e),
                 }

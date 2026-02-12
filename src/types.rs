@@ -191,6 +191,21 @@ pub enum Side {
     SELL = 1,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum TraderSide {
+    Taker,
+    Maker,
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+impl Default for TraderSide {
+    fn default() -> Self {
+        Self::Unknown("UNKNOWN".to_string())
+    }
+}
+
 impl Side {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -526,6 +541,8 @@ impl Default for ExtraOrderArgs {
 #[derive(Debug, Clone)]
 pub struct MarketOrderArgs {
     pub token_id: String,
+    pub side: Side,
+    /// Quote amount for buys, base token amount for sells.
     pub amount: Decimal,
 }
 
@@ -1108,6 +1125,131 @@ pub struct OpenOrder {
     pub created_at: u64,
 }
 
+/// Response from posting a single order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostOrderResponse {
+    #[serde(default)]
+    pub error_msg: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string_default_on_error"
+    )]
+    pub making_amount: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string_default_on_error"
+    )]
+    pub taking_amount: Option<Decimal>,
+    #[serde(rename = "orderID")]
+    pub order_id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    pub success: bool,
+    #[serde(default, alias = "transactionsHashes")]
+    pub transaction_hashes: Vec<String>,
+    #[serde(default)]
+    pub trade_ids: Vec<String>,
+}
+
+/// Response from cancel endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelOrdersResponse {
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
+    pub canceled: Vec<String>,
+    #[serde(default, alias = "not_canceled")]
+    pub not_canceled: std::collections::HashMap<String, String>,
+}
+
+/// Trade item returned by `/data/trades`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TradeResponse {
+    pub id: String,
+    #[serde(default)]
+    pub taker_order_id: Option<String>,
+    pub market: String,
+    pub asset_id: String,
+    pub side: Side,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub size: Decimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub fee_rate_bps: Option<Decimal>,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub price: Decimal,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub match_time: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub last_update: Option<u64>,
+    #[serde(default)]
+    pub outcome: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub bucket_index: Option<u64>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub maker_address: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
+    pub maker_orders: Vec<MakerOrder>,
+    #[serde(default)]
+    pub transaction_hash: Option<String>,
+    #[serde(default)]
+    pub trader_side: TraderSide,
+    #[serde(default, alias = "err_msg")]
+    pub error_msg: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MakerOrder {
+    pub order_id: String,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub maker_address: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub matched_amount: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub price: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub fee_rate_bps: Option<Decimal>,
+    #[serde(default)]
+    pub asset_id: Option<String>,
+    #[serde(default)]
+    pub outcome: Option<String>,
+    #[serde(default)]
+    pub side: Option<Side>,
+}
+
 /// Balance allowance information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceAllowance {
@@ -1256,30 +1398,40 @@ impl PricesHistoryInterval {
     }
 }
 
-/// Raw response from `/prices-history`.
+/// A single price-history datapoint from `/prices-history`.
 ///
-/// We intentionally keep `history` entries as `serde_json::Value` because the upstream API has
-/// no stable public schema here and currently may return empty history for many markets.
+/// Mirrors the official Polymarket SDK shape (`t`, `p`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceHistoryPoint {
+    pub t: i64,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub p: Decimal,
+}
+
+/// Response from `/prices-history`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricesHistoryResponse {
-    pub history: Vec<serde_json::Value>,
+    pub history: Vec<PriceHistoryPoint>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SpreadResponse {
-    #[serde(with = "rust_decimal::serde::str")]
     pub spread: Decimal,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct TickSizeResponse {
-    #[serde(with = "rust_decimal::serde::str")]
     pub minimum_tick_size: Decimal,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct NegRiskResponse {
     pub neg_risk: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderScoringResponse {
+    pub scoring: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1376,7 +1528,7 @@ pub struct Rewards {
 /// Fee rate in basis points for a given token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeeRateResponse {
-    pub fee_rate_bps: u32,
+    pub base_fee: u32,
 }
 
 /// Create RFQ request (Requester).
