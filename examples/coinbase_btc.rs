@@ -15,8 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Connecting to Coinbase WebSocket...");
 
-    let mut stream = CoinbaseStream::new(vec!["BTC-USD".to_string()])
-        .with_max_depth(50); // Keep top 50 levels
+    let mut stream = CoinbaseStream::new(vec!["BTC-USD".to_string()]).with_max_depth(50); // Keep top 50 levels
 
     stream.connect().await?;
     // Use subscribe_batch() for unauthenticated access (50ms batches)
@@ -40,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             snapshot.bids.len(),
                             snapshot.asks.len()
                         );
-                    }
+                    },
                     Message::L2Update(_) => {
                         update_count += 1;
 
@@ -52,7 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 if let (Some(bid), Some(ask)) = (best_bid, best_ask) {
                                     let spread = &ask.price - &bid.price;
-                                    let spread_bps = (&spread / &bid.price) * rust_decimal::Decimal::from(10000);
+                                    let spread_bps =
+                                        (&spread / &bid.price) * rust_decimal::Decimal::from(10000);
 
                                     println!(
                                         "BTC-USD | Bid: ${:.2} ({:.4}) | Ask: ${:.2} ({:.4}) | Spread: ${:.2} ({:.1} bps) | Updates: {} | Rate: {:.0}/s",
@@ -69,22 +69,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             last_print = Instant::now();
                         }
-                    }
+                    },
                     Message::Heartbeat(_) => {
                         // Heartbeats keep the connection alive
-                    }
+                    },
                     Message::Subscriptions(subs) => {
                         println!("Confirmed subscriptions: {:?}", subs.channels);
-                    }
+                    },
                     Message::Error(err) => {
                         eprintln!("Error from Coinbase: {} ({:?})", err.message, err.reason);
-                    }
+                    },
                 }
-            }
+            },
             Err(e) => {
                 eprintln!("Stream error: {}", e);
                 break;
-            }
+            },
         }
 
         // Run for 10 seconds then exit

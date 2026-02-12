@@ -82,11 +82,11 @@ impl WsTransport {
     }
 
     /// Connect to the WebSocket server with a custom timeout
-    pub async fn connect_with_timeout(
-        &mut self,
-        timeout: std::time::Duration,
-    ) -> Result<()> {
-        info!("Connecting to WebSocket at {} (timeout: {:?})", self.url, timeout);
+    pub async fn connect_with_timeout(&mut self, timeout: std::time::Duration) -> Result<()> {
+        info!(
+            "Connecting to WebSocket at {} (timeout: {:?})",
+            self.url, timeout
+        );
 
         let connect_future = tokio_tungstenite::connect_async(&self.url);
 
@@ -189,13 +189,13 @@ impl WsTransport {
                     self.stats.last_message_time = Some(Utc::now());
                     self.last_activity = Some(std::time::Instant::now());
                     return Some(Ok(RawMessage::Text(text)));
-                }
+                },
                 Some(Ok(WsMessage::Binary(data))) => {
                     self.stats.messages_received += 1;
                     self.stats.last_message_time = Some(Utc::now());
                     self.last_activity = Some(std::time::Instant::now());
                     return Some(Ok(RawMessage::Binary(data)));
-                }
+                },
                 Some(Ok(WsMessage::Ping(data))) => {
                     debug!("Received ping, sending pong");
                     self.last_activity = Some(std::time::Instant::now());
@@ -203,28 +203,28 @@ impl WsTransport {
                         error!("Failed to send pong: {}", e);
                     }
                     continue;
-                }
+                },
                 Some(Ok(WsMessage::Pong(_))) => {
                     debug!("Received pong");
                     self.last_activity = Some(std::time::Instant::now());
                     continue;
-                }
+                },
                 Some(Ok(WsMessage::Close(_))) => {
                     info!("WebSocket connection closed by server");
                     self.connection = None;
                     return None;
-                }
+                },
                 Some(Ok(WsMessage::Frame(_))) => {
                     continue;
-                }
+                },
                 Some(Err(e)) => {
                     self.stats.errors += 1;
                     return Some(Err(e.into()));
-                }
+                },
                 None => {
                     self.connection = None;
                     return None;
-                }
+                },
             }
         }
     }
@@ -247,7 +247,7 @@ impl WsTransport {
                     info!("Successfully reconnected");
                     self.stats.reconnect_count += 1;
                     return Ok(());
-                }
+                },
                 Err(e) => {
                     error!("Reconnection attempt {} failed: {}", retries + 1, e);
                     retries += 1;
@@ -259,7 +259,7 @@ impl WsTransport {
                             self.reconnect_config.max_delay,
                         );
                     }
-                }
+                },
             }
         }
 
@@ -309,9 +309,7 @@ impl WsTransport {
     ///
     /// This is needed for Stream trait implementations that need to poll
     /// the connection directly. Use with care - prefer `recv()` for most cases.
-    pub fn connection_mut(
-        &mut self,
-    ) -> Option<&mut WsStream> {
+    pub fn connection_mut(&mut self) -> Option<&mut WsStream> {
         self.connection.as_mut()
     }
 }

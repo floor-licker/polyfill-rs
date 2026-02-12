@@ -547,7 +547,9 @@ pub struct FillProcessorStats {
 // QUEUE-BASED FILL SIMULATION ENGINE
 // ============================================================================
 
-use crate::types::{decimal_to_price, decimal_to_qty, price_to_decimal, qty_to_decimal, Price, Qty};
+use crate::types::{
+    decimal_to_price, decimal_to_qty, price_to_decimal, qty_to_decimal, Price, Qty,
+};
 
 /// State for a single queued order being tracked
 #[derive(Debug, Clone)]
@@ -859,8 +861,12 @@ impl FillEngine {
 
         // Check if order is marketable (crossing)
         let is_crossing = match order.side {
-            Side::BUY => book.best_ask().map_or(false, |ask| order.price >= ask.price),
-            Side::SELL => book.best_bid().map_or(false, |bid| order.price <= bid.price),
+            Side::BUY => book
+                .best_ask()
+                .map_or(false, |ask| order.price >= ask.price),
+            Side::SELL => book
+                .best_bid()
+                .map_or(false, |bid| order.price <= bid.price),
         };
 
         if !is_crossing {
@@ -1119,8 +1125,8 @@ mod tests {
             "test_token".to_string(),
             Side::BUY,
             dec!(0.50),
-            dec!(10),   // order size
-            dec!(100),  // queue_ahead
+            dec!(10),  // order size
+            dec!(100), // queue_ahead
         )
         .unwrap();
 
@@ -1133,7 +1139,7 @@ mod tests {
         // But best_ask is still above our price (0.55), so no trade-through
         let update = BookUpdate {
             token_id: "test_token".to_string(),
-            best_bid: Some(4900), // 0.49
+            best_bid: Some(4900),                     // 0.49
             best_ask: Some(5500), // 0.55 - above our buy limit, no trade-through
             sizes_at_prices: vec![(5000, 1_000_000)], // 100 at 0.50
             timestamp: Utc::now(),
@@ -1142,7 +1148,10 @@ mod tests {
         let fills = engine.on_book_update(&update);
 
         // No fills because no trade-through
-        assert!(fills.is_empty(), "Should have no fills without trade-through");
+        assert!(
+            fills.is_empty(),
+            "Should have no fills without trade-through"
+        );
 
         // But queue_ahead should have decreased
         let order = engine.get_order("order1").unwrap();

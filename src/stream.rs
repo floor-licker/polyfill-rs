@@ -223,7 +223,10 @@ impl WebSocketStream {
         });
 
         self.send_message(message).await?;
-        info!("Subscribed to public orderbook for {} assets", asset_ids.len());
+        info!(
+            "Subscribed to public orderbook for {} assets",
+            asset_ids.len()
+        );
         Ok(())
     }
 
@@ -389,7 +392,8 @@ impl WebSocketStream {
         // Resubscribe to all previous subscriptions
         let subscriptions = self.subscriptions.clone();
         for subscription in subscriptions {
-            self.send_message(serde_json::to_value(subscription)?).await?;
+            self.send_message(serde_json::to_value(subscription)?)
+                .await?;
         }
 
         Ok(())
@@ -413,16 +417,16 @@ impl Stream for WebSocketStream {
                     Poll::Ready(Some(Ok(StreamMessage::Heartbeat {
                         timestamp: Utc::now(),
                     })))
-                }
+                },
                 Poll::Ready(Some(Err(e))) => {
                     error!("WebSocket error: {}", e);
                     self.transport.stats_mut().errors += 1;
                     Poll::Ready(Some(Err(e.into())))
-                }
+                },
                 Poll::Ready(None) => {
                     info!("WebSocket stream ended");
                     Poll::Ready(None)
-                }
+                },
                 Poll::Pending => Poll::Pending,
             }
         } else {
@@ -543,7 +547,8 @@ impl LiveDataStream {
 
     /// Subscribe to a price feed (simplified API)
     pub async fn subscribe_price(&mut self, topic: LiveTopic, symbol: Symbol) -> Result<()> {
-        self.subscribe(LiveDataSubscription::price(topic, symbol)).await
+        self.subscribe(LiveDataSubscription::price(topic, symbol))
+            .await
     }
 
     /// Unsubscribe from topics
@@ -638,11 +643,11 @@ impl LiveDataStream {
             Some(Ok(RawMessage::Text(text))) => {
                 self.last_message_instant = Some(std::time::Instant::now());
                 Some(self.parse_message(&text))
-            }
+            },
             Some(Ok(RawMessage::Binary(_))) => {
                 // Ignore binary messages, recurse
                 Box::pin(self.next_message()).await
-            }
+            },
             Some(Err(e)) => Some(Err(e)),
             None => None,
         }
@@ -699,7 +704,7 @@ impl Stream for LiveDataStream {
             match &mut self.connection_state {
                 ConnectionState::Failed => {
                     return Poll::Ready(None);
-                }
+                },
 
                 ConnectionState::Reconnecting(future) => {
                     match future.as_mut().poll(cx) {
@@ -710,15 +715,15 @@ impl Stream for LiveDataStream {
                             self.last_message_instant = Some(std::time::Instant::now());
                             self.connection_state = ConnectionState::Connected;
                             continue;
-                        }
+                        },
                         Poll::Ready(Err(e)) => {
                             error!("Reconnection failed permanently: {}", e);
                             self.connection_state = ConnectionState::Failed;
                             return Poll::Ready(Some(Err(e)));
-                        }
+                        },
                         Poll::Pending => return Poll::Pending,
                     }
-                }
+                },
 
                 ConnectionState::Connected => {
                     // First check internal channel
@@ -727,10 +732,14 @@ impl Stream for LiveDataStream {
                     }
 
                     // Check for staleness
-                    let heartbeat_timeout = self.staleness_threshold
+                    let heartbeat_timeout = self
+                        .staleness_threshold
                         .unwrap_or(self.transport.reconnect_config().heartbeat_timeout);
                     if self.transport.is_stale(heartbeat_timeout) {
-                        warn!("Connection stale (no activity for {:?}), triggering reconnect", heartbeat_timeout);
+                        warn!(
+                            "Connection stale (no activity for {:?}), triggering reconnect",
+                            heartbeat_timeout
+                        );
                         self.transport.disconnect();
                         self.start_reconnect();
                         continue;
@@ -739,7 +748,9 @@ impl Stream for LiveDataStream {
                     // Check WebSocket connection via transport
                     if let Some(connection) = self.transport.connection_mut() {
                         match connection.poll_next_unpin(cx) {
-                            Poll::Ready(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text)))) => {
+                            Poll::Ready(Some(Ok(
+                                tokio_tungstenite::tungstenite::Message::Text(text),
+                            ))) => {
                                 // Skip empty messages
                                 if text.is_empty() {
                                     cx.waker().wake_by_ref();
@@ -750,46 +761,54 @@ impl Stream for LiveDataStream {
                                 self.transport.reset_activity();
                                 self.last_message_instant = Some(std::time::Instant::now());
                                 return Poll::Ready(Some(self.parse_message(&text)));
-                            }
-                            Poll::Ready(Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(data)))) => {
+                            },
+                            Poll::Ready(Some(Ok(
+                                tokio_tungstenite::tungstenite::Message::Ping(data),
+                            ))) => {
                                 // Handle ping - send pong
                                 self.transport.reset_activity();
                                 if let Some(conn) = self.transport.connection_mut() {
                                     let pong = tokio_tungstenite::tungstenite::Message::Pong(data);
-                                    let _ = futures::executor::block_on(futures::SinkExt::send(conn, pong));
+                                    let _ = futures::executor::block_on(futures::SinkExt::send(
+                                        conn, pong,
+                                    ));
                                 }
                                 cx.waker().wake_by_ref();
                                 return Poll::Pending;
-                            }
-                            Poll::Ready(Some(Ok(tokio_tungstenite::tungstenite::Message::Pong(_)))) => {
+                            },
+                            Poll::Ready(Some(Ok(
+                                tokio_tungstenite::tungstenite::Message::Pong(_),
+                            ))) => {
                                 self.transport.reset_activity();
                                 cx.waker().wake_by_ref();
                                 return Poll::Pending;
-                            }
-                            Poll::Ready(Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))) => {
+                            },
+                            Poll::Ready(Some(Ok(
+                                tokio_tungstenite::tungstenite::Message::Close(_),
+                            ))) => {
                                 info!("LiveData WebSocket connection closed by server, triggering reconnect");
                                 self.transport.disconnect();
                                 self.start_reconnect();
                                 continue;
-                            }
+                            },
                             Poll::Ready(Some(Ok(_))) => {
                                 // Ignore other messages, wake to poll again
                                 cx.waker().wake_by_ref();
                                 return Poll::Pending;
-                            }
+                            },
                             Poll::Ready(Some(Err(e))) => {
                                 warn!("WebSocket error: {}, triggering reconnect", e);
                                 self.transport.stats_mut().errors += 1;
                                 self.transport.disconnect();
                                 self.start_reconnect();
                                 continue;
-                            }
+                            },
                             Poll::Ready(None) => {
                                 info!("WebSocket stream ended, triggering reconnect");
                                 self.transport.disconnect();
                                 self.start_reconnect();
                                 continue;
-                            }
+                            },
                             Poll::Pending => return Poll::Pending,
                         }
                     } else {
@@ -798,7 +817,7 @@ impl Stream for LiveDataStream {
                         self.start_reconnect();
                         continue;
                     }
-                }
+                },
             }
         }
     }

@@ -123,10 +123,7 @@ impl CoinbaseStream {
         self.send_message(&subscribe).await?;
         self.use_batch = false;
 
-        info!(
-            "Subscribed to level2 channel for {:?}",
-            self.product_ids
-        );
+        info!("Subscribed to level2 channel for {:?}", self.product_ids);
         Ok(())
     }
 
@@ -218,11 +215,7 @@ impl CoinbaseStream {
     }
 
     /// Apply an l2update to the local orderbook
-    fn apply_l2update(
-        &mut self,
-        product_id: &str,
-        changes: &[(Side, u32, i64)],
-    ) {
+    fn apply_l2update(&mut self, product_id: &str, changes: &[(Side, u32, i64)]) {
         if let Some(book) = self.books.get_mut(product_id) {
             for &(side, price, size) in changes {
                 book.apply_level_fast(side, price, size);
@@ -237,16 +230,14 @@ impl CoinbaseStream {
         let message = parse_message(&mut bytes)?;
 
         match &message {
-            Message::Snapshot(snapshot) => {
-                match snapshot_to_fast(snapshot) {
-                    Ok(fast) => {
-                        self.apply_snapshot(&fast.product_id, &fast.bids, &fast.asks);
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse snapshot: {}", e);
-                    }
-                }
-            }
+            Message::Snapshot(snapshot) => match snapshot_to_fast(snapshot) {
+                Ok(fast) => {
+                    self.apply_snapshot(&fast.product_id, &fast.bids, &fast.asks);
+                },
+                Err(e) => {
+                    warn!("Failed to parse snapshot: {}", e);
+                },
+            },
             Message::L2Update(update) => {
                 // Only apply if we have a snapshot
                 if self.has_snapshot(&update.product_id) {
@@ -258,10 +249,10 @@ impl CoinbaseStream {
                                 .map(|d| (d.side, d.price, d.size))
                                 .collect();
                             self.apply_l2update(&fast.product_id, &changes);
-                        }
+                        },
                         Err(e) => {
                             warn!("Failed to parse l2update: {}", e);
-                        }
+                        },
                     }
                 } else {
                     debug!(
@@ -269,16 +260,16 @@ impl CoinbaseStream {
                         update.product_id
                     );
                 }
-            }
+            },
             Message::Heartbeat(_) => {
                 debug!("Received heartbeat");
-            }
+            },
             Message::Subscriptions(subs) => {
                 info!("Subscribed to channels: {:?}", subs.channels);
-            }
+            },
             Message::Error(err) => {
                 error!("Coinbase error: {} ({:?})", err.message, err.reason);
-            }
+            },
         }
 
         self.transport.stats_mut().messages_received += 1;
@@ -327,7 +318,11 @@ impl CoinbaseStream {
                 Subscribe::level2(product_ids.clone())
             };
             transport.send(&subscribe).await?;
-            info!("Resubscribed to {} channel for {:?}", if use_batch { "level2_batch" } else { "level2" }, product_ids);
+            info!(
+                "Resubscribed to {} channel for {:?}",
+                if use_batch { "level2_batch" } else { "level2" },
+                product_ids
+            );
 
             Ok(ReconnectResult { transport })
         });
@@ -347,7 +342,7 @@ impl Stream for CoinbaseStream {
             match &mut self.connection_state {
                 ConnectionState::Failed => {
                     return Poll::Ready(None);
-                }
+                },
 
                 ConnectionState::Reconnecting(future) => {
                     match future.as_mut().poll(cx) {
@@ -361,15 +356,15 @@ impl Stream for CoinbaseStream {
                             }
                             self.connection_state = ConnectionState::Connected;
                             continue;
-                        }
+                        },
                         Poll::Ready(Err(e)) => {
                             error!("Coinbase reconnection failed permanently: {}", e);
                             self.connection_state = ConnectionState::Failed;
                             return Poll::Ready(Some(Err(e)));
-                        }
+                        },
                         Poll::Pending => return Poll::Pending,
                     }
-                }
+                },
 
                 ConnectionState::Connected => {
                     // First check internal channel
@@ -398,54 +393,55 @@ impl Stream for CoinbaseStream {
                                             Ok(None) => {
                                                 cx.waker().wake_by_ref();
                                                 return Poll::Pending;
-                                            }
+                                            },
                                             Err(e) => {
                                                 self.transport.stats_mut().errors += 1;
                                                 return Poll::Ready(Some(Err(e)));
-                                            }
+                                            },
                                         }
-                                    }
+                                    },
                                     tokio_tungstenite::tungstenite::Message::Ping(data) => {
                                         // Respond with pong
                                         self.transport.reset_activity();
                                         if let Some(conn) = self.transport.connection_mut() {
-                                            let pong = tokio_tungstenite::tungstenite::Message::Pong(data);
+                                            let pong =
+                                                tokio_tungstenite::tungstenite::Message::Pong(data);
                                             // Note: This is blocking but pong is small
                                             let _ = futures::executor::block_on(conn.send(pong));
                                         }
                                         cx.waker().wake_by_ref();
                                         return Poll::Pending;
-                                    }
+                                    },
                                     tokio_tungstenite::tungstenite::Message::Pong(_) => {
                                         self.transport.reset_activity();
                                         cx.waker().wake_by_ref();
                                         return Poll::Pending;
-                                    }
+                                    },
                                     tokio_tungstenite::tungstenite::Message::Close(_) => {
                                         info!("Coinbase WebSocket connection closed by server, triggering reconnect");
                                         self.transport.disconnect();
                                         self.start_reconnect();
                                         continue;
-                                    }
+                                    },
                                     _ => {
                                         cx.waker().wake_by_ref();
                                         return Poll::Pending;
-                                    }
+                                    },
                                 }
-                            }
+                            },
                             Poll::Ready(Some(Err(e))) => {
                                 warn!("Coinbase WebSocket error: {}, triggering reconnect", e);
                                 self.transport.stats_mut().errors += 1;
                                 self.transport.disconnect();
                                 self.start_reconnect();
                                 continue;
-                            }
+                            },
                             Poll::Ready(None) => {
                                 info!("Coinbase WebSocket stream ended, triggering reconnect");
                                 self.transport.disconnect();
                                 self.start_reconnect();
                                 continue;
-                            }
+                            },
                             Poll::Pending => return Poll::Pending,
                         }
                     } else {
@@ -454,7 +450,7 @@ impl Stream for CoinbaseStream {
                         self.start_reconnect();
                         continue;
                     }
-                }
+                },
             }
         }
     }

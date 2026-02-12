@@ -46,11 +46,11 @@ async fn main() -> Result<()> {
     match setup_authenticated_client().await {
         Ok(auth_client) => {
             test_order_submission(&auth_client).await?;
-        }
+        },
         Err(e) => {
             warn!("Skipping order submission test: {}", e);
             warn!("Set PRIVATE_KEY environment variable to enable order testing");
-        }
+        },
     }
 
     info!("\nFee test completed successfully!");
@@ -70,11 +70,12 @@ async fn verify_fee_calculations(client: &ClobClient) -> Result<()> {
     for market in markets.data.iter() {
         // Check if this is a 15-minute crypto market
         let q = market.question.to_lowercase();
-        let is_15min = q.contains("bitcoin") && q.contains("up or down") &&
-            ((q.contains(":00") && q.contains(":15")) ||
-             (q.contains(":15") && q.contains(":30")) ||
-             (q.contains(":30") && q.contains(":45")) ||
-             (q.contains(":45") && q.contains(":00")));
+        let is_15min = q.contains("bitcoin")
+            && q.contains("up or down")
+            && ((q.contains(":00") && q.contains(":15"))
+                || (q.contains(":15") && q.contains(":30"))
+                || (q.contains(":30") && q.contains(":45"))
+                || (q.contains(":45") && q.contains(":00")));
 
         if !market.active || market.closed || !is_15min {
             continue;
@@ -119,10 +120,10 @@ async fn verify_fee_calculations(client: &ClobClient) -> Result<()> {
                             api_fee_rate,
                         ));
                     }
-                }
+                },
                 Err(e) => {
                     warn!("  Failed to get fee rate for {}: {}", token.token_id, e);
-                }
+                },
             }
 
             // Limit to avoid too many API calls
@@ -189,8 +190,7 @@ async fn verify_fee_calculations(client: &ClobClient) -> Result<()> {
 
 /// Set up authenticated client for order submission
 async fn setup_authenticated_client() -> std::result::Result<ClobClient, String> {
-    let private_key = std::env::var("PRIVATE_KEY")
-        .map_err(|_| "PRIVATE_KEY not set")?;
+    let private_key = std::env::var("PRIVATE_KEY").map_err(|_| "PRIVATE_KEY not set")?;
 
     // Create client with L1 headers for order signing
     let mut client = ClobClient::with_l1_headers(
@@ -261,9 +261,11 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     let best_ask = &order_book.asks[0];
     let best_bid = order_book.bids.first();
 
-    info!("  Order book: best_ask={}, best_bid={:?}",
-          best_ask.price,
-          best_bid.map(|b| b.price));
+    info!(
+        "  Order book: best_ask={}, best_bid={:?}",
+        best_ask.price,
+        best_bid.map(|b| b.price)
+    );
 
     // Get tick size
     let tick_size = client.get_tick_size(GREENLAND_YES_TOKEN).await?;
@@ -282,12 +284,7 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
         best_ask.price - tick_size * dec!(10)
     };
 
-    let maker_order_args = OrderArgs::new(
-        GREENLAND_YES_TOKEN,
-        maker_price,
-        min_size,
-        Side::BUY,
-    );
+    let maker_order_args = OrderArgs::new(GREENLAND_YES_TOKEN, maker_price, min_size, Side::BUY);
 
     // Create order with fee_rate_bps = 0 (maker)
     let maker_extras = polyfill_rs::types::ExtraOrderArgs {
@@ -301,7 +298,10 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     {
         Ok(signed_order) => {
             info!("    Created maker order: salt={}", signed_order.salt);
-            info!("    fee_rate_bps in signed order: {}", signed_order.fee_rate_bps);
+            info!(
+                "    fee_rate_bps in signed order: {}",
+                signed_order.fee_rate_bps
+            );
 
             match client.post_order(signed_order, OrderType::GTC).await {
                 Ok(result) => {
@@ -316,17 +316,17 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
                     } else {
                         info!("    Maker order result: {:?}", result);
                     }
-                }
+                },
                 Err(e) => {
                     error!("    Failed to post maker order: {}", e);
                     return Err(e);
-                }
+                },
             }
-        }
+        },
         Err(e) => {
             error!("    Failed to create maker order: {}", e);
             return Err(e);
-        }
+        },
     }
 
     // Test 2: Taker order (crossing, taking liquidity)
@@ -334,14 +334,12 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
 
     let taker_price = best_ask.price;
     let taker_fee_rate = calculate_fee_rate_bps(taker_price);
-    info!("    Price: {}, calculated fee_rate_bps: {}", taker_price, taker_fee_rate);
-
-    let taker_order_args = OrderArgs::new(
-        GREENLAND_YES_TOKEN,
-        taker_price,
-        min_size,
-        Side::BUY,
+    info!(
+        "    Price: {}, calculated fee_rate_bps: {}",
+        taker_price, taker_fee_rate
     );
+
+    let taker_order_args = OrderArgs::new(GREENLAND_YES_TOKEN, taker_price, min_size, Side::BUY);
 
     // Create order with calculated fee_rate_bps (taker)
     let taker_extras = polyfill_rs::types::ExtraOrderArgs {
@@ -355,29 +353,35 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     {
         Ok(signed_order) => {
             info!("    Created taker order: salt={}", signed_order.salt);
-            info!("    fee_rate_bps in signed order: {}", signed_order.fee_rate_bps);
+            info!(
+                "    fee_rate_bps in signed order: {}",
+                signed_order.fee_rate_bps
+            );
 
             // For taker orders, use FOK (Fill-or-Kill) to ensure immediate execution
             match client.post_order(signed_order, OrderType::FOK).await {
                 Ok(result) => {
                     if let Some(order_id) = result.get("orderID").and_then(|v| v.as_str()) {
-                        let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let status = result
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
                         info!("    Taker order result: id={}, status={}", order_id, status);
                     } else {
                         info!("    Taker order result: {:?}", result);
                     }
-                }
+                },
                 Err(e) => {
                     // FOK orders may be rejected if liquidity insufficient
                     warn!("    Taker order not executed: {}", e);
                     warn!("    This may be expected if liquidity is insufficient for FOK");
-                }
+                },
             }
-        }
+        },
         Err(e) => {
             error!("    Failed to create taker order: {}", e);
             return Err(e);
-        }
+        },
     }
 
     info!("\nOrder submission tests completed!");

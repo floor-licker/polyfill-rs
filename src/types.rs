@@ -208,9 +208,10 @@ impl Side {
 }
 
 /// Order type specifications
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum OrderType {
+    #[default]
     GTC,
     FOK,
     GTD,
@@ -568,12 +569,35 @@ impl PostOrder {
         }
     }
 
-    pub fn with_post_only(order: SignedOrderRequest, owner: String, order_type: OrderType, post_only: bool) -> Self {
+    pub fn with_post_only(
+        order: SignedOrderRequest,
+        owner: String,
+        order_type: OrderType,
+        post_only: bool,
+    ) -> Self {
         Self {
             order,
             owner,
             order_type,
             post_only: Some(post_only),
+        }
+    }
+}
+
+/// Arguments for posting orders via the batch endpoint (`POST /orders`).
+#[derive(Debug, Clone)]
+pub struct PostOrderArgs {
+    pub order: SignedOrderRequest,
+    pub order_type: OrderType,
+    pub post_only: bool,
+}
+
+impl PostOrderArgs {
+    pub fn new(order: SignedOrderRequest, order_type: OrderType, post_only: bool) -> Self {
+        Self {
+            order,
+            order_type,
+            post_only,
         }
     }
 }
@@ -982,7 +1006,7 @@ pub struct OpenOrder {
     pub asset_id: String,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub expiration: u64,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub order_type: OrderType,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub created_at: u64,

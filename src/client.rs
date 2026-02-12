@@ -9,7 +9,7 @@ use crate::http_config::{
     create_colocated_client, create_internet_client, create_optimized_client, prewarm_connections,
     prewarm_order_endpoint,
 };
-use crate::types::{OrderOptions, PostOrder, SignedOrderRequest, WssAuth};
+use crate::types::{OrderOptions, PostOrder, PostOrderArgs, SignedOrderRequest, WssAuth};
 use alloy_primitives::U256;
 use alloy_signer_local::PrivateKeySigner;
 use reqwest::header::HeaderName;
@@ -278,9 +278,8 @@ impl ClobClient {
     /// * `sig_type` - Signature type: 1 for PolyProxy, 2 for PolyGnosisSafe
     pub fn set_funder(&mut self, funder: &str, sig_type: u8) {
         if let Some(signer) = &self.signer {
-            let funder_address: alloy_primitives::Address = funder
-                .parse()
-                .expect("Invalid funder address");
+            let funder_address: alloy_primitives::Address =
+                funder.parse().expect("Invalid funder address");
             let sig_type = match sig_type {
                 1 => Some(crate::orders::SigType::PolyProxy),
                 2 => Some(crate::orders::SigType::PolyGnosisSafe),
@@ -995,7 +994,8 @@ impl ClobClient {
         };
 
         let headers = create_l2_headers(signer, api_creds, "POST", "/order", Some(&body))?;
-        let req = self.create_request_with_headers(Method::POST, "/order", headers.into_iter())
+        let req = self
+            .create_request_with_headers(Method::POST, "/order", headers.into_iter())
             .header("Accept", "application/json")
             .header("Origin", "https://polymarket.com")
             .header("Referer", "https://polymarket.com/");
@@ -1007,6 +1007,56 @@ impl ClobClient {
             return Err(PolyfillError::api(
                 status,
                 &format!("Failed to post order: {}", error_body),
+            ));
+        }
+
+        Ok(response.json::<Value>().await?)
+    }
+
+    /// Post multiple signed orders in one request.
+    ///
+    /// This uses the CLOB batch endpoint (`POST /orders`) and returns
+    /// the raw JSON payload so callers can inspect per-order outcomes.
+    pub async fn post_orders(&self, args: &[PostOrderArgs]) -> Result<Value> {
+        if args.is_empty() {
+            return Ok(Value::Array(Vec::new()));
+        }
+
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let body: Vec<PostOrder> = args
+            .iter()
+            .map(|a| {
+                PostOrder::with_post_only(
+                    a.order.clone(),
+                    api_creds.api_key.clone(),
+                    a.order_type,
+                    a.post_only,
+                )
+            })
+            .collect();
+
+        let headers = create_l2_headers(signer, api_creds, "POST", "/orders", Some(&body))?;
+        let req = self
+            .create_request_with_headers(Method::POST, "/orders", headers.into_iter())
+            .header("Accept", "application/json")
+            .header("Origin", "https://polymarket.com")
+            .header("Referer", "https://polymarket.com/");
+
+        let response = req.json(&body).send().await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(PolyfillError::api(
+                status,
+                &format!("Failed to post orders: {}", error_body),
             ));
         }
 

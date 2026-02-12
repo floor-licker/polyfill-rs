@@ -18,9 +18,8 @@ use std::str::FromStr;
 /// Note: BTC prices can be large (~$100k) but still fit in u32 ticks
 /// Max representable: $429,496.7295 (sufficient for BTC)
 pub fn parse_price(s: &str) -> Result<Price> {
-    let decimal = Decimal::from_str(s).map_err(|e| {
-        PolyfillError::parse(format!("Invalid price '{}': {}", s, e), None)
-    })?;
+    let decimal = Decimal::from_str(s)
+        .map_err(|e| PolyfillError::parse(format!("Invalid price '{}': {}", s, e), None))?;
     decimal_to_price(decimal)
         .map_err(|e| PolyfillError::parse(format!("Price conversion failed: {}", e), None))
 }
@@ -30,9 +29,8 @@ pub fn parse_price(s: &str) -> Result<Price> {
 /// Coinbase sends sizes as strings like "0.00123456"
 /// We convert to our internal representation (4 decimal places)
 pub fn parse_size(s: &str) -> Result<Qty> {
-    let decimal = Decimal::from_str(s).map_err(|e| {
-        PolyfillError::parse(format!("Invalid size '{}': {}", s, e), None)
-    })?;
+    let decimal = Decimal::from_str(s)
+        .map_err(|e| PolyfillError::parse(format!("Invalid size '{}': {}", s, e), None))?;
     decimal_to_qty(decimal)
         .map_err(|e| PolyfillError::parse(format!("Size conversion failed: {}", e), None))
 }
@@ -56,10 +54,9 @@ pub fn parse_message(bytes: &mut [u8]) -> Result<Message> {
         Ok(v) => v,
         Err(_) => {
             // Fallback to serde_json
-            serde_json::from_slice(bytes).map_err(|e| {
-                PolyfillError::parse(format!("JSON parse error: {}", e), None)
-            })?
-        }
+            serde_json::from_slice(bytes)
+                .map_err(|e| PolyfillError::parse(format!("JSON parse error: {}", e), None))?
+        },
     };
 
     parse_message_value(value)
@@ -74,35 +71,30 @@ pub fn parse_message_value(value: Value) -> Result<Message> {
 
     match type_str {
         "snapshot" => {
-            let snapshot: Snapshot = serde_json::from_value(value).map_err(|e| {
-                PolyfillError::parse(format!("Invalid snapshot: {}", e), None)
-            })?;
+            let snapshot: Snapshot = serde_json::from_value(value)
+                .map_err(|e| PolyfillError::parse(format!("Invalid snapshot: {}", e), None))?;
             Ok(Message::Snapshot(snapshot))
-        }
+        },
         "l2update" => {
-            let update: L2Update = serde_json::from_value(value).map_err(|e| {
-                PolyfillError::parse(format!("Invalid l2update: {}", e), None)
-            })?;
+            let update: L2Update = serde_json::from_value(value)
+                .map_err(|e| PolyfillError::parse(format!("Invalid l2update: {}", e), None))?;
             Ok(Message::L2Update(update))
-        }
+        },
         "heartbeat" => {
-            let heartbeat: Heartbeat = serde_json::from_value(value).map_err(|e| {
-                PolyfillError::parse(format!("Invalid heartbeat: {}", e), None)
-            })?;
+            let heartbeat: Heartbeat = serde_json::from_value(value)
+                .map_err(|e| PolyfillError::parse(format!("Invalid heartbeat: {}", e), None))?;
             Ok(Message::Heartbeat(heartbeat))
-        }
+        },
         "subscriptions" => {
-            let subs: Subscriptions = serde_json::from_value(value).map_err(|e| {
-                PolyfillError::parse(format!("Invalid subscriptions: {}", e), None)
-            })?;
+            let subs: Subscriptions = serde_json::from_value(value)
+                .map_err(|e| PolyfillError::parse(format!("Invalid subscriptions: {}", e), None))?;
             Ok(Message::Subscriptions(subs))
-        }
+        },
         "error" => {
-            let err: ErrorMessage = serde_json::from_value(value).map_err(|e| {
-                PolyfillError::parse(format!("Invalid error message: {}", e), None)
-            })?;
+            let err: ErrorMessage = serde_json::from_value(value)
+                .map_err(|e| PolyfillError::parse(format!("Invalid error message: {}", e), None))?;
             Ok(Message::Error(err))
-        }
+        },
         _ => {
             // Unknown message type - treat as heartbeat to avoid breaking
             Ok(Message::Heartbeat(Heartbeat {
@@ -110,7 +102,7 @@ pub fn parse_message_value(value: Value) -> Result<Message> {
                 sequence: None,
                 time: None,
             }))
-        }
+        },
     }
 }
 
@@ -126,7 +118,7 @@ pub fn snapshot_to_fast(snapshot: &Snapshot) -> Result<FastSnapshot> {
     for (price_str, size_str) in &snapshot.bids {
         match (parse_price(price_str), parse_size(size_str)) {
             (Ok(price), Ok(size)) => bids.push((price, size)),
-            _ => {} // Skip invalid/extreme prices silently
+            _ => {}, // Skip invalid/extreme prices silently
         }
     }
 
@@ -134,7 +126,7 @@ pub fn snapshot_to_fast(snapshot: &Snapshot) -> Result<FastSnapshot> {
     for (price_str, size_str) in &snapshot.asks {
         match (parse_price(price_str), parse_size(size_str)) {
             (Ok(price), Ok(size)) => asks.push((price, size)),
-            _ => {} // Skip invalid/extreme prices silently
+            _ => {}, // Skip invalid/extreme prices silently
         }
     }
 
@@ -152,11 +144,15 @@ pub fn snapshot_to_fast(snapshot: &Snapshot) -> Result<FastSnapshot> {
 pub fn l2update_to_fast(update: &L2Update) -> Result<FastL2Update> {
     let mut changes = Vec::with_capacity(update.changes.len());
     for (side_str, price_str, size_str) in &update.changes {
-        match (parse_side(side_str), parse_price(price_str), parse_size(size_str)) {
+        match (
+            parse_side(side_str),
+            parse_price(price_str),
+            parse_size(size_str),
+        ) {
             (Ok(side), Ok(price), Ok(size)) => {
                 changes.push(FastDelta { side, price, size });
-            }
-            _ => {} // Skip invalid/extreme prices silently
+            },
+            _ => {}, // Skip invalid/extreme prices silently
         }
     }
 

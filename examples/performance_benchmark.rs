@@ -150,24 +150,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .send()
             .await
             .map_err(|e| {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                )) as Box<dyn std::error::Error>
+                Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
             })?;
 
         let json: serde_json::Value = response.json().await.map_err(|e| {
-            Box::new(std::io::Error::other(
-                e.to_string(),
-            )) as Box<dyn std::error::Error>
+            Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
         })?;
 
         // Just verify we got data
         if json["data"].as_array().is_some() {
             Ok(json)
         } else {
-            Err(Box::new(std::io::Error::other(
-                "Invalid response",
-            )) as Box<dyn std::error::Error>)
+            Err(Box::new(std::io::Error::other("Invalid response")) as Box<dyn std::error::Error>)
         }
     })
     .await;
@@ -187,24 +181,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .send()
             .await
             .map_err(|e| {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                )) as Box<dyn std::error::Error>
+                Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
             })?;
 
         let json: serde_json::Value = response.json().await.map_err(|e| {
-            Box::new(std::io::Error::other(
-                e.to_string(),
-            )) as Box<dyn std::error::Error>
+            Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
         })?;
 
         // Just verify we got data
         if json["data"].as_array().is_some() {
             Ok(json)
         } else {
-            Err(Box::new(std::io::Error::other(
-                "Invalid response",
-            )) as Box<dyn std::error::Error>)
+            Err(Box::new(std::io::Error::other("Invalid response")) as Box<dyn std::error::Error>)
         }
     })
     .await;
@@ -224,15 +212,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .send()
             .await
             .map_err(|e| {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                )) as Box<dyn std::error::Error>
+                Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
             })?;
 
         let json1: serde_json::Value = response1.json().await.map_err(|e| {
-            Box::new(std::io::Error::other(
-                e.to_string(),
-            )) as Box<dyn std::error::Error>
+            Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
         })?;
 
         let response2 = client
@@ -244,15 +228,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .send()
             .await
             .map_err(|e| {
-                Box::new(std::io::Error::other(
-                    e.to_string(),
-                )) as Box<dyn std::error::Error>
+                Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
             })?;
 
         let json2: serde_json::Value = response2.json().await.map_err(|e| {
-            Box::new(std::io::Error::other(
-                e.to_string(),
-            )) as Box<dyn std::error::Error>
+            Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
         })?;
 
         // Count markets

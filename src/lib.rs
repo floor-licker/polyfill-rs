@@ -101,6 +101,11 @@ pub use crate::types::{
     ClientResult,
     FeeRateResponse,
     FillEvent,
+    // Live data types
+    LiveDataMessage,
+    LiveDataRequest,
+    LiveDataSubscription,
+    LiveTopic,
     Market,
     MarketSnapshot,
     MarketsResponse,
@@ -117,13 +122,16 @@ pub use crate::types::{
     OrderStatus,
     OrderSummary,
     OrderType,
+    PostOrderArgs,
     PriceResponse,
+    PriceUpdate,
     Rewards,
     Side,
     SimplifiedMarket,
     SimplifiedMarketsResponse,
     SpreadResponse,
     StreamMessage,
+    Symbol,
     TickSizeResponse,
     Token,
     TokenPrice,
@@ -131,13 +139,6 @@ pub use crate::types::{
     WssAuth,
     WssChannelType,
     WssSubscription,
-    // Live data types
-    LiveDataMessage,
-    LiveDataRequest,
-    LiveDataSubscription,
-    LiveTopic,
-    PriceUpdate,
-    Symbol,
 };
 
 // Re-export client
@@ -162,7 +163,9 @@ pub use crate::stream::{
 pub use crate::transport::{RawMessage, WsTransport};
 
 // Re-export fee calculation
-pub use crate::fees::{calculate_fee_rate_bps, calculate_taker_fee, effective_fee_rate, FEE_RATE_BPS_MAKER};
+pub use crate::fees::{
+    calculate_fee_rate_bps, calculate_taker_fee, effective_fee_rate, FEE_RATE_BPS_MAKER,
+};
 
 // Re-export utilities
 pub use crate::utils::{crypto, math, rate_limit, retry, time, url};
