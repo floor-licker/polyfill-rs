@@ -1041,6 +1041,11 @@ impl ClobClient {
         if orders.is_empty() {
             return Err(PolyfillError::validation("orders cannot be empty"));
         }
+        if orders.len() > 15 {
+            return Err(PolyfillError::validation(
+                "orders cannot exceed 15 items per batch",
+            ));
+        }
 
         let signer = self
             .signer
@@ -2974,6 +2979,31 @@ mod tests {
     async fn test_post_orders_batch_empty_validation() {
         let client = create_test_client_with_l2_auth("https://test.example.com");
         let result = client.post_orders(Vec::new(), crate::types::OrderType::GTC).await;
+        assert!(matches!(result, Err(PolyfillError::Validation { .. })));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_post_orders_batch_too_many_validation() {
+        let client = create_test_client_with_l2_auth("https://test.example.com");
+        let orders = (0..16)
+            .map(|_| crate::types::SignedOrderRequest {
+                salt: 1,
+                maker: "0x0000000000000000000000000000000000000000".to_string(),
+                signer: "0x0000000000000000000000000000000000000000".to_string(),
+                taker: "0x0000000000000000000000000000000000000000".to_string(),
+                token_id: "123".to_string(),
+                maker_amount: "100".to_string(),
+                taker_amount: "50".to_string(),
+                expiration: "0".to_string(),
+                nonce: "0".to_string(),
+                fee_rate_bps: "0".to_string(),
+                side: "BUY".to_string(),
+                signature_type: 0,
+                signature: "0xdeadbeef".to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        let result = client.post_orders(orders, crate::types::OrderType::GTC).await;
         assert!(matches!(result, Err(PolyfillError::Validation { .. })));
     }
 
