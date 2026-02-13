@@ -206,6 +206,36 @@ impl Default for TraderSide {
     }
 }
 
+/// Trade lifecycle status (Matched → Mined → Confirmed).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TradeMessageStatus {
+    #[serde(alias = "matched", alias = "MATCHED")]
+    Matched,
+    #[serde(alias = "mined", alias = "MINED")]
+    Mined,
+    #[serde(alias = "confirmed", alias = "CONFIRMED")]
+    Confirmed,
+    /// Forward-compatible catch-all for unknown statuses.
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+impl Default for TradeMessageStatus {
+    fn default() -> Self {
+        Self::Unknown("UNKNOWN".to_string())
+    }
+}
+
+/// Trade message type discriminator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TradeMessageType {
+    #[serde(alias = "trade", alias = "TRADE")]
+    Trade,
+    /// Forward-compatible catch-all.
+    #[serde(untagged)]
+    Unknown(String),
+}
+
 impl Side {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -908,7 +938,7 @@ pub struct EventMessage {
     pub description: String,
 }
 
-/// User trade execution message.
+/// User trade execution message (authenticated WebSocket channel).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeMessage {
     pub id: String,
@@ -917,10 +947,11 @@ pub struct TradeMessage {
     pub side: Side,
     pub size: Decimal,
     pub price: Decimal,
+    /// Trade lifecycle status (Matched → Mined → Confirmed).
     #[serde(default)]
-    pub status: Option<String>,
+    pub status: TradeMessageStatus,
     #[serde(rename = "type", default)]
-    pub msg_type: Option<String>,
+    pub msg_type: Option<TradeMessageType>,
     #[serde(
         default,
         deserialize_with = "crate::decode::deserializers::optional_number_from_string"
@@ -937,6 +968,36 @@ pub struct TradeMessage {
         deserialize_with = "crate::decode::deserializers::optional_number_from_string"
     )]
     pub timestamp: Option<u64>,
+    /// Outcome (e.g. "Yes" / "No").
+    #[serde(default)]
+    pub outcome: Option<String>,
+    /// API key of the event owner.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// API key of the trade owner.
+    #[serde(default)]
+    pub trade_owner: Option<String>,
+    /// Taker order ID.
+    #[serde(default)]
+    pub taker_order_id: Option<String>,
+    /// Maker order details.
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
+    pub maker_orders: Vec<MakerOrder>,
+    /// Fee rate in basis points.
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub fee_rate_bps: Option<Decimal>,
+    /// On-chain transaction hash.
+    #[serde(default)]
+    pub transaction_hash: Option<String>,
+    /// Whether user was maker or taker.
+    #[serde(default)]
+    pub trader_side: Option<TraderSide>,
 }
 
 /// User order update message.
