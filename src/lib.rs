@@ -158,6 +158,10 @@ pub use crate::types::{
 // Re-export client
 pub use crate::client::{ClobClient, PolyfillClient};
 
+// Re-export order signing types (for proxy wallet support)
+pub use crate::orders::SigType;
+pub use alloy_primitives::Address;
+
 // Re-export compatibility types (for easy migration from polymarket-rs-client)
 pub use crate::client::OrderArgs;
 

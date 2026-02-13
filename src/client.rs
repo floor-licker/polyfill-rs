@@ -9,14 +9,13 @@ use crate::http_config::{
     create_colocated_client, create_internet_client, create_optimized_client, prewarm_connections,
 };
 use crate::types::{OrderOptions, PostOrder, SignedOrderRequest};
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use reqwest::header::HeaderName;
 use reqwest::Client;
 use reqwest::{Method, RequestBuilder};
 use rust_decimal::Decimal;
 use serde_json::Value;
-use std::str::FromStr;
 
 // Re-export types for compatibility
 pub use crate::types::{ApiCredentials as ApiCreds, OrderType, Side};
@@ -237,17 +236,23 @@ impl ClobClient {
     }
 
     /// Create a client with L2 headers (for API key authentication)
+    ///
+    /// `sig_type` and `funder` are optional parameters for proxy wallet support.
+    /// When using a Polymarket proxy wallet, pass `SigType::PolyProxy` and the
+    /// proxy wallet address as `funder`.
     pub fn with_l2_headers(
         host: &str,
         private_key: &str,
         chain_id: u64,
         api_creds: ApiCreds,
+        sig_type: Option<crate::orders::SigType>,
+        funder: Option<Address>,
     ) -> Self {
         let signer = private_key
             .parse::<PrivateKeySigner>()
             .expect("Invalid private key");
 
-        let order_builder = crate::orders::OrderBuilder::new(signer.clone(), None, None);
+        let order_builder = crate::orders::OrderBuilder::new(signer.clone(), sig_type, funder);
 
         let http_client = create_optimized_client().unwrap_or_else(|_| {
             reqwest::ClientBuilder::new()
@@ -1199,19 +1204,15 @@ impl ClobClient {
             .await?)
     }
 
-    /// Get open orders with optional filtering
+    /// Fetch a single page of orders.
     ///
-    /// This retrieves all open orders for the authenticated user. You can filter by:
-    /// - Order ID (exact match)
-    /// - Asset/Token ID (all orders for a specific token)
-    /// - Market ID (all orders for a specific market)
-    ///
-    /// The response includes order status, fill information, and timestamps.
-    pub async fn get_orders(
+    /// Returns `(page_data, next_cursor)`. `next_cursor` is `None` when there are
+    /// no more pages.
+    pub async fn get_orders_page(
         &self,
         params: Option<&crate::types::OpenOrderParams>,
         next_cursor: Option<&str>,
-    ) -> Result<Vec<crate::types::OpenOrder>> {
+    ) -> Result<(Vec<crate::types::OpenOrder>, Option<String>)> {
         let signer = self
             .signer
             .as_ref()
@@ -1231,53 +1232,146 @@ impl ClobClient {
             Some(p) => p.to_query_params(),
         };
 
-        let mut next_cursor = next_cursor.unwrap_or("MA==").to_string(); // INITIAL_CURSOR
+        let cursor = next_cursor.unwrap_or("MA==");
+
+        let req = self
+            .http_client
+            .request(method.clone(), format!("{}{}", self.base_url, endpoint))
+            .query(&query_params)
+            .query(&[("next_cursor", cursor)]);
+
+        let r = headers
+            .into_iter()
+            .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
+
+        let resp = r
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?
+            .json::<Value>()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
+
+        let new_cursor = resp["next_cursor"]
+            .as_str()
+            .ok_or_else(|| PolyfillError::parse("Failed to parse next cursor".to_string(), None))?
+            .to_owned();
+
+        let results = resp["data"].clone();
+        let orders =
+            serde_json::from_value::<Vec<crate::types::OpenOrder>>(results).map_err(|e| {
+                PolyfillError::parse(
+                    format!("Failed to parse data from order response: {}", e),
+                    None,
+                )
+            })?;
+
+        let next = if new_cursor == "LTE=" {
+            None
+        } else {
+            Some(new_cursor)
+        };
+
+        Ok((orders, next))
+    }
+
+    /// Get open orders with optional filtering
+    ///
+    /// This retrieves all open orders for the authenticated user. You can filter by:
+    /// - Order ID (exact match)
+    /// - Asset/Token ID (all orders for a specific token)
+    /// - Market ID (all orders for a specific market)
+    ///
+    /// The response includes order status, fill information, and timestamps.
+    pub async fn get_orders(
+        &self,
+        params: Option<&crate::types::OpenOrderParams>,
+        next_cursor: Option<&str>,
+    ) -> Result<Vec<crate::types::OpenOrder>> {
+        let mut cursor = next_cursor.map(|s| s.to_owned());
         let mut output = Vec::new();
 
-        while next_cursor != "LTE=" {
-            // END_CURSOR
-            let req = self
-                .http_client
-                .request(method.clone(), format!("{}{}", self.base_url, endpoint))
-                .query(&query_params)
-                .query(&[("next_cursor", &next_cursor)]);
-
-            let r = headers
-                .clone()
-                .into_iter()
-                .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
-
-            let resp = r
-                .send()
-                .await
-                .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?
-                .json::<Value>()
-                .await
-                .map_err(|e| {
-                    PolyfillError::parse(format!("Failed to parse response: {}", e), None)
-                })?;
-
-            let new_cursor = resp["next_cursor"]
-                .as_str()
-                .ok_or_else(|| {
-                    PolyfillError::parse("Failed to parse next cursor".to_string(), None)
-                })?
-                .to_owned();
-
-            next_cursor = new_cursor;
-
-            let results = resp["data"].clone();
-            let orders =
-                serde_json::from_value::<Vec<crate::types::OpenOrder>>(results).map_err(|e| {
-                    PolyfillError::parse(
-                        format!("Failed to parse data from order response: {}", e),
-                        None,
-                    )
-                })?;
-            output.extend(orders);
+        loop {
+            let (page, next) = self.get_orders_page(params, cursor.as_deref()).await?;
+            output.extend(page);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
         }
 
         Ok(output)
+    }
+
+    /// Fetch a single page of trades.
+    ///
+    /// Returns `(page_data, next_cursor)`. `next_cursor` is `None` when there are
+    /// no more pages.
+    pub async fn get_trades_page(
+        &self,
+        params: Option<&crate::types::TradeParams>,
+        next_cursor: Option<&str>,
+    ) -> Result<(Vec<crate::types::TradeResponse>, Option<String>)> {
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
+        let api_creds = self
+            .api_creds
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
+
+        let method = Method::GET;
+        let endpoint = "/data/trades";
+        let headers =
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+
+        let query_params = match params {
+            None => Vec::new(),
+            Some(p) => p.to_query_params(),
+        };
+
+        let cursor = next_cursor.unwrap_or("MA==");
+
+        let req = self
+            .http_client
+            .request(method.clone(), format!("{}{}", self.base_url, endpoint))
+            .query(&query_params)
+            .query(&[("next_cursor", cursor)]);
+
+        let r = headers
+            .into_iter()
+            .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
+
+        let resp = r
+            .send()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?
+            .json::<Value>()
+            .await
+            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))?;
+
+        let new_cursor = resp["next_cursor"]
+            .as_str()
+            .ok_or_else(|| PolyfillError::parse("Failed to parse next cursor".to_string(), None))?
+            .to_owned();
+
+        let results = resp["data"].clone();
+        let trades =
+            serde_json::from_value::<Vec<crate::types::TradeResponse>>(results).map_err(|e| {
+                PolyfillError::parse(
+                    format!("Failed to parse data from trades response: {}", e),
+                    None,
+                )
+            })?;
+
+        let next = if new_cursor == "LTE=" {
+            None
+        } else {
+            Some(new_cursor)
+        };
+
+        Ok((trades, next))
     }
 
     /// Get trade history with optional filtering
@@ -1295,69 +1389,18 @@ impl ClobClient {
         trade_params: Option<&crate::types::TradeParams>,
         next_cursor: Option<&str>,
     ) -> Result<Vec<crate::types::TradeResponse>> {
-        let signer = self
-            .signer
-            .as_ref()
-            .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
-        let api_creds = self
-            .api_creds
-            .as_ref()
-            .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
-
-        let method = Method::GET;
-        let endpoint = "/data/trades";
-        let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
-
-        let query_params = match trade_params {
-            None => Vec::new(),
-            Some(p) => p.to_query_params(),
-        };
-
-        let mut next_cursor = next_cursor.unwrap_or("MA==").to_string(); // INITIAL_CURSOR
+        let mut cursor = next_cursor.map(|s| s.to_owned());
         let mut output = Vec::new();
 
-        while next_cursor != "LTE=" {
-            // END_CURSOR
-            let req = self
-                .http_client
-                .request(method.clone(), format!("{}{}", self.base_url, endpoint))
-                .query(&query_params)
-                .query(&[("next_cursor", &next_cursor)]);
-
-            let r = headers
-                .clone()
-                .into_iter()
-                .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
-
-            let resp = r
-                .send()
-                .await
-                .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?
-                .json::<Value>()
-                .await
-                .map_err(|e| {
-                    PolyfillError::parse(format!("Failed to parse response: {}", e), None)
-                })?;
-
-            let new_cursor = resp["next_cursor"]
-                .as_str()
-                .ok_or_else(|| {
-                    PolyfillError::parse("Failed to parse next cursor".to_string(), None)
-                })?
-                .to_owned();
-
-            next_cursor = new_cursor;
-
-            let results = resp["data"].clone();
-            let trades = serde_json::from_value::<Vec<crate::types::TradeResponse>>(results)
-                .map_err(|e| {
-                    PolyfillError::parse(
-                        format!("Failed to parse data from trades response: {}", e),
-                        None,
-                    )
-                })?;
-            output.extend(trades);
+        loop {
+            let (page, next) = self
+                .get_trades_page(trade_params, cursor.as_deref())
+                .await?;
+            output.extend(page);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
         }
 
         Ok(output)
@@ -2422,6 +2465,8 @@ mod tests {
             "0x1234567890123456789012345678901234567890123456789012345678901234",
             137,
             api_creds,
+            None,
+            None,
         )
     }
 
@@ -2472,6 +2517,8 @@ mod tests {
             "0x1234567890123456789012345678901234567890123456789012345678901234",
             137,
             api_creds.clone(),
+            None,
+            None,
         );
 
         assert_eq!(client.base_url, "https://test.example.com");
