@@ -1,10 +1,8 @@
 //! Side-by-side benchmark comparing polyfill-rs vs polymarket-rs-client
 //!
-//! To run this benchmark, uncomment the polymarket-rs-client dependency in Cargo.toml:
-//! ```toml
-//! [dev-dependencies]
-//! polymarket-rs-client = { path = "external/polymarket-rs-client" }
-//! ```
+//! To run this benchmark:
+//! 1. Add a compatible `polymarket-rs-client` dependency in `Cargo.toml`.
+//! 2. Run with `cargo run --example side_by_side_benchmark --features side-by-side-benchmark`.
 
 use std::time::Instant;
 
