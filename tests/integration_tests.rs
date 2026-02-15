@@ -112,9 +112,9 @@ async fn test_real_api_authenticated_order_flow() {
             println!("PASS: Order posted successfully!");
 
             // Step 5: Cancel the order
-            if let Some(order_id) = response.get("orderID").and_then(|v| v.as_str()) {
-                println!("Step 5: Canceling order {}...", order_id);
-                let cancel_result = client.cancel(order_id).await;
+            if !response.order_id.is_empty() {
+                println!("Step 5: Canceling order {}...", response.order_id);
+                let cancel_result = client.cancel(&response.order_id).await;
                 assert!(
                     cancel_result.is_ok(),
                     "Failed to cancel order: {:?}",

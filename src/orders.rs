@@ -193,32 +193,48 @@ impl OrderBuilder {
     /// Get order amounts for a market order
     fn get_market_order_amounts(
         &self,
+        side: Side,
         amount: Decimal,
         price: Decimal,
         round_config: &RoundConfig,
     ) -> (u32, u32) {
-        let raw_maker_amt = amount.round_dp_with_strategy(round_config.size, ToZero);
         let raw_price = price.round_dp_with_strategy(round_config.price, MidpointTowardZero);
-
-        let raw_taker_amt = raw_maker_amt / raw_price;
-        let raw_taker_amt = self.fix_amount_rounding(raw_taker_amt, round_config);
-
-        (
-            decimal_to_token_u32(raw_maker_amt),
-            decimal_to_token_u32(raw_taker_amt),
-        )
+        match side {
+            Side::BUY => {
+                let raw_maker_amt = amount.round_dp_with_strategy(round_config.size, ToZero);
+                let raw_taker_amt = raw_maker_amt / raw_price;
+                let raw_taker_amt = self.fix_amount_rounding(raw_taker_amt, round_config);
+                (
+                    decimal_to_token_u32(raw_maker_amt),
+                    decimal_to_token_u32(raw_taker_amt),
+                )
+            },
+            Side::SELL => {
+                let raw_maker_amt = amount.round_dp_with_strategy(round_config.size, ToZero);
+                let raw_taker_amt = raw_maker_amt * raw_price;
+                let raw_taker_amt = self.fix_amount_rounding(raw_taker_amt, round_config);
+                (
+                    decimal_to_token_u32(raw_maker_amt),
+                    decimal_to_token_u32(raw_taker_amt),
+                )
+            },
+        }
     }
 
     /// Calculate market price from order book levels
     pub fn calculate_market_price(
         &self,
+        side: Side,
         positions: &[crate::types::BookLevel],
         amount_to_match: Decimal,
     ) -> Result<Decimal> {
         let mut sum = Decimal::ZERO;
 
         for level in positions {
-            sum += level.size * level.price;
+            sum += match side {
+                Side::BUY => level.size * level.price,
+                Side::SELL => level.size,
+            };
             if sum >= amount_to_match {
                 return Ok(level.price);
             }
@@ -246,8 +262,12 @@ impl OrderBuilder {
             .tick_size
             .ok_or_else(|| PolyfillError::validation("Cannot create order without tick size"))?;
 
-        let (maker_amount, taker_amount) =
-            self.get_market_order_amounts(order_args.amount, price, &ROUNDING_CONFIG[&tick_size]);
+        let (maker_amount, taker_amount) = self.get_market_order_amounts(
+            order_args.side,
+            order_args.amount,
+            price,
+            &ROUNDING_CONFIG[&tick_size],
+        );
 
         let neg_risk = options
             .neg_risk
@@ -262,7 +282,7 @@ impl OrderBuilder {
 
         self.build_signed_order(
             order_args.token_id.clone(),
-            Side::BUY,
+            order_args.side,
             chain_id,
             exchange_address,
             maker_amount,
@@ -436,5 +456,66 @@ mod tests {
             assert!(seed > 0);
             assert!(seed < u64::MAX);
         }
+    }
+
+    #[test]
+    fn test_calculate_market_price_respects_side_amount_semantics() {
+        let signer: PrivateKeySigner =
+            "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .parse()
+                .unwrap();
+        let builder = OrderBuilder::new(signer, None, None);
+
+        let levels = vec![
+            crate::types::BookLevel {
+                price: Decimal::from_str("0.50").unwrap(),
+                size: Decimal::from_str("10").unwrap(),
+            },
+            crate::types::BookLevel {
+                price: Decimal::from_str("0.55").unwrap(),
+                size: Decimal::from_str("10").unwrap(),
+            },
+        ];
+
+        // BUY amounts are quote-denominated: need 6 USDC -> first level (10 * 0.50 = 5) is not enough.
+        let buy_price = builder
+            .calculate_market_price(Side::BUY, &levels, Decimal::from_str("6").unwrap())
+            .unwrap();
+        assert_eq!(buy_price, Decimal::from_str("0.55").unwrap());
+
+        // SELL amounts are base-denominated: need 6 tokens -> first level (size 10) is enough.
+        let sell_price = builder
+            .calculate_market_price(Side::SELL, &levels, Decimal::from_str("6").unwrap())
+            .unwrap();
+        assert_eq!(sell_price, Decimal::from_str("0.50").unwrap());
+    }
+
+    #[test]
+    fn test_create_market_order_uses_input_side() {
+        let signer: PrivateKeySigner =
+            "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .parse()
+                .unwrap();
+        let builder = OrderBuilder::new(signer, None, None);
+
+        let order = builder
+            .create_market_order(
+                137,
+                &MarketOrderArgs {
+                    token_id: "123".to_string(),
+                    side: Side::SELL,
+                    amount: Decimal::from_str("5").unwrap(),
+                },
+                Decimal::from_str("0.40").unwrap(),
+                &ExtraOrderArgs::default(),
+                &OrderOptions {
+                    tick_size: Some(Decimal::from_str("0.01").unwrap()),
+                    neg_risk: Some(false),
+                    fee_rate_bps: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(order.side, "SELL");
     }
 }

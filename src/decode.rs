@@ -663,4 +663,153 @@ mod tests {
         let results: Vec<serde_json::Value> = decoder.parse_json_stream(data).unwrap();
         assert_eq!(results.len(), 2);
     }
+
+    #[test]
+    fn test_trade_message_full_payload() {
+        use crate::types::{StreamMessage, TradeMessageStatus, TradeMessageType, TraderSide};
+
+        let json = r#"{
+            "event_type": "trade",
+            "id": "trade-001",
+            "market": "0xabc123",
+            "asset_id": "asset-xyz",
+            "side": "BUY",
+            "size": "100.5",
+            "price": "0.65",
+            "status": "MATCHED",
+            "type": "TRADE",
+            "last_update": "1700000000",
+            "match_time": "1700000001",
+            "timestamp": "1700000002",
+            "outcome": "Yes",
+            "owner": "owner-key-123",
+            "trade_owner": "trader-key-456",
+            "taker_order_id": "taker-order-789",
+            "maker_orders": [
+                {
+                    "order_id": "maker-order-1",
+                    "owner": "maker-owner-1",
+                    "matched_amount": "50.25",
+                    "price": "0.65",
+                    "asset_id": "asset-xyz",
+                    "outcome": "Yes"
+                }
+            ],
+            "fee_rate_bps": "2.5",
+            "transaction_hash": "0xdeadbeef",
+            "trader_side": "TAKER"
+        }"#;
+
+        let msgs = parse_stream_messages(json).unwrap();
+        assert_eq!(msgs.len(), 1);
+
+        let StreamMessage::Trade(trade) = &msgs[0] else {
+            panic!("expected Trade variant");
+        };
+
+        assert_eq!(trade.id, "trade-001");
+        assert_eq!(trade.market, "0xabc123");
+        assert_eq!(trade.asset_id, "asset-xyz");
+        assert_eq!(trade.side, Side::BUY);
+        assert_eq!(trade.size, Decimal::from_str("100.5").unwrap());
+        assert_eq!(trade.price, Decimal::from_str("0.65").unwrap());
+        assert_eq!(trade.status, TradeMessageStatus::Matched);
+        assert_eq!(trade.msg_type, Some(TradeMessageType::Trade));
+        assert_eq!(trade.last_update, Some(1700000000));
+        assert_eq!(trade.matchtime, Some(1700000001));
+        assert_eq!(trade.timestamp, Some(1700000002));
+        assert_eq!(trade.outcome.as_deref(), Some("Yes"));
+        assert_eq!(trade.owner.as_deref(), Some("owner-key-123"));
+        assert_eq!(trade.trade_owner.as_deref(), Some("trader-key-456"));
+        assert_eq!(trade.taker_order_id.as_deref(), Some("taker-order-789"));
+        assert_eq!(trade.maker_orders.len(), 1);
+        assert_eq!(trade.maker_orders[0].order_id, "maker-order-1");
+        assert_eq!(trade.fee_rate_bps, Some(Decimal::from_str("2.5").unwrap()));
+        assert_eq!(trade.transaction_hash.as_deref(), Some("0xdeadbeef"));
+        assert_eq!(trade.trader_side, Some(TraderSide::Taker));
+    }
+
+    #[test]
+    fn test_trade_message_minimal_payload() {
+        use crate::types::StreamMessage;
+
+        // Only mandatory fields — all new optional fields absent.
+        let json = r#"{
+            "event_type": "trade",
+            "id": "trade-minimal",
+            "market": "0xdef",
+            "asset_id": "asset-min",
+            "side": "SELL",
+            "size": "10",
+            "price": "0.50"
+        }"#;
+
+        let msgs = parse_stream_messages(json).unwrap();
+        assert_eq!(msgs.len(), 1);
+
+        let StreamMessage::Trade(trade) = &msgs[0] else {
+            panic!("expected Trade variant");
+        };
+
+        assert_eq!(trade.id, "trade-minimal");
+        assert_eq!(trade.side, Side::SELL);
+        // All optional fields should be None / empty / default.
+        assert!(trade.msg_type.is_none());
+        assert!(trade.outcome.is_none());
+        assert!(trade.owner.is_none());
+        assert!(trade.trade_owner.is_none());
+        assert!(trade.taker_order_id.is_none());
+        assert!(trade.maker_orders.is_empty());
+        assert!(trade.fee_rate_bps.is_none());
+        assert!(trade.transaction_hash.is_none());
+        assert!(trade.trader_side.is_none());
+    }
+
+    #[test]
+    fn test_trade_message_status_lifecycle() {
+        use crate::types::{StreamMessage, TradeMessageStatus};
+
+        for (status_str, expected) in [
+            ("MATCHED", TradeMessageStatus::Matched),
+            ("matched", TradeMessageStatus::Matched),
+            ("Matched", TradeMessageStatus::Matched),
+            ("MINED", TradeMessageStatus::Mined),
+            ("mined", TradeMessageStatus::Mined),
+            ("CONFIRMED", TradeMessageStatus::Confirmed),
+            ("confirmed", TradeMessageStatus::Confirmed),
+        ] {
+            let json = format!(
+                r#"{{
+                    "event_type": "trade",
+                    "id": "t1", "market": "m", "asset_id": "a",
+                    "side": "BUY", "size": "1", "price": "0.5",
+                    "status": "{status_str}"
+                }}"#
+            );
+            let msgs = parse_stream_messages(&json).unwrap();
+            let StreamMessage::Trade(trade) = &msgs[0] else {
+                panic!("expected Trade");
+            };
+            assert_eq!(trade.status, expected, "failed for status_str={status_str}");
+        }
+    }
+
+    #[test]
+    fn test_trade_message_null_maker_orders() {
+        use crate::types::StreamMessage;
+
+        // API sometimes sends `null` instead of `[]`.
+        let json = r#"{
+            "event_type": "trade",
+            "id": "t1", "market": "m", "asset_id": "a",
+            "side": "BUY", "size": "1", "price": "0.5",
+            "maker_orders": null
+        }"#;
+
+        let msgs = parse_stream_messages(json).unwrap();
+        let StreamMessage::Trade(trade) = &msgs[0] else {
+            panic!("expected Trade");
+        };
+        assert!(trade.maker_orders.is_empty());
+    }
 }
