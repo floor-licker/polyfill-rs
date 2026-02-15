@@ -1,10 +1,7 @@
-//! Side-by-side benchmark comparing polyfill-rs vs polymarket-rs-client
+//! Side-by-side benchmark comparing polyfill-rs vs a plain reqwest baseline.
 //!
-//! To run this benchmark, uncomment the polymarket-rs-client dependency in Cargo.toml:
-//! ```toml
-//! [dev-dependencies]
-//! polymarket-rs-client = { path = "external/polymarket-rs-client" }
-//! ```
+//! Run with:
+//! `cargo run --example side_by_side_benchmark --features side-by-side-benchmark`
 
 use std::time::Instant;
 
@@ -21,33 +18,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - 20 iterations each");
     println!("  - 100ms delay between requests\n");
 
-    // Test 1: polymarket-rs-client
+    // Test 1: baseline reqwest
     println!("══════════════════════════════════════");
-    println!("Test 1: polymarket-rs-client");
+    println!("Test 1: baseline reqwest");
     println!("══════════════════════════════════════");
 
-    let their_client = polymarket_rs_client::ClobClient::new("https://clob.polymarket.com");
+    let baseline_http = reqwest::Client::new();
 
     let mut their_times = Vec::new();
     for i in 1..=20 {
         let start = Instant::now();
-        match their_client.get_simplified_markets(Some("MA==")).await {
-            Ok(_markets) => {
-                let elapsed = start.elapsed();
-                their_times.push(elapsed);
+        match baseline_http
+            .get("https://clob.polymarket.com/simplified-markets?next_cursor=MA==")
+            .send()
+            .await
+        {
+            Ok(response) => match response.json::<serde_json::Value>().await {
+                Ok(_json) => {
+                    let elapsed = start.elapsed();
+                    their_times.push(elapsed);
 
-                if i <= 3 || i > 17 {
-                    println!(
-                        "  Request {:2}: {:.1} ms",
-                        i,
-                        elapsed.as_micros() as f64 / 1000.0
-                    );
-                } else if i == 4 {
-                    println!("  ...");
-                }
+                    if i <= 3 || i > 17 {
+                        println!(
+                            "  Request {:2}: {:.1} ms",
+                            i,
+                            elapsed.as_micros() as f64 / 1000.0
+                        );
+                    } else if i == 4 {
+                        println!("  ...");
+                    }
+                },
+                Err(e) => {
+                    println!("  Request {:2}: PARSE ERROR - {}", i, e);
+                },
             },
             Err(e) => {
-                println!("  Request {:2}: ERROR - {}", i, e);
+                println!("  Request {:2}: NETWORK ERROR - {}", i, e);
             },
         }
 
@@ -139,13 +145,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("                   HONEST RESULTS                      ");
     println!("═══════════════════════════════════════════════════════\n");
 
-    println!("polymarket-rs-client:");
+    println!("baseline reqwest:");
     println!("  Mean:     {:.1} ms ± {:.1} ms", their_mean, their_std);
     println!("  Median:   {:.1} ms", their_median);
     println!("  Range:    {:.1} - {:.1} ms", their_min, their_max);
     println!("  Variance: {:.1}%", (their_std / their_mean) * 100.0);
     println!("  Success:  {}/20 requests", their_times.len());
-    println!("\n  (They claimed in README: 404.5 ms ± 22.9 ms)");
 
     println!("\n");
     println!("polyfill-rs (with keep-alive):");
@@ -172,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         } else {
             println!(
-                "❌ polymarket-rs-client is {:.1}% faster ({:.1} ms faster)",
+                "❌ baseline reqwest is {:.1}% faster ({:.1} ms faster)",
                 pct, diff
             );
         }
@@ -184,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n\nVariance Analysis:");
     println!("────────────────────────────────────────────────────");
     println!(
-        "  polymarket-rs-client: ±{:.1} ms ({:.1}% variance)",
+        "  baseline reqwest: ±{:.1} ms ({:.1}% variance)",
         their_std,
         (their_std / their_mean) * 100.0
     );
@@ -200,42 +205,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  ✅ polyfill-rs is {:.1}% more consistent", improvement);
     } else {
         let diff = ((our_std - their_std) / their_std) * 100.0;
-        println!("  ⚠️  polymarket-rs-client is {:.1}% more consistent", diff);
+        println!("  ⚠️  baseline reqwest is {:.1}% more consistent", diff);
     }
-
-    // Claims validation
-    println!("\n\nClaims Validation:");
-    println!("────────────────────────────────────────────────────");
-
-    let their_claimed_mean = 404.5;
-    let their_claimed_std = 22.9;
-    let our_claimed_mean = 368.6;
-    let our_claimed_std = 67.1;
-
-    let their_mean_diff = ((their_mean - their_claimed_mean).abs() / their_claimed_mean) * 100.0;
-    let their_std_diff = ((their_std - their_claimed_std).abs() / their_claimed_std) * 100.0;
-    let our_mean_diff = ((our_mean - our_claimed_mean).abs() / our_claimed_mean) * 100.0;
-    let our_std_diff = ((our_std - our_claimed_std).abs() / our_claimed_std) * 100.0;
-
-    println!("polymarket-rs-client claimed vs actual:");
-    println!(
-        "  Mean:     {:.1} ms vs {:.1} ms ({:.1}% difference)",
-        their_claimed_mean, their_mean, their_mean_diff
-    );
-    println!(
-        "  Variance: ±{:.1} ms vs ±{:.1} ms ({:.1}% difference)",
-        their_claimed_std, their_std, their_std_diff
-    );
-
-    println!("\npolyfill-rs claimed vs actual:");
-    println!(
-        "  Mean:     {:.1} ms vs {:.1} ms ({:.1}% difference)",
-        our_claimed_mean, our_mean, our_mean_diff
-    );
-    println!(
-        "  Variance: ±{:.1} ms vs ±{:.1} ms ({:.1}% difference)",
-        our_claimed_std, our_std, our_std_diff
-    );
 
     Ok(())
 }
