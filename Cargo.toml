@@ -30,8 +30,8 @@ simd-json = "0.13"
 dotenvy = "0.15"
 
 # Ethereum and crypto
-alloy-primitives = "1.5"
-alloy-sol-types = { version = "1.5", features = ["eip712-serde", "json"] }
+alloy-primitives = "1.6"
+alloy-sol-types = { version = "1.6", features = ["eip712-serde", "json"] }
 alloy-signer = { version = "1.6", features = ["eip712"] }
 alloy-signer-local = { version = "1.6", features = ["eip712"] }
 
