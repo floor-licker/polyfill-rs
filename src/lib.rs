@@ -97,10 +97,12 @@ pub use crate::types::{
     BatchPriceRequest,
     BatchPriceResponse,
     BookParams,
+    CancelOrdersResponse,
     ClientConfig,
     ClientResult,
     FeeRateResponse,
     FillEvent,
+    MakerOrder,
     Market,
     MarketSnapshot,
     MarketsResponse,
@@ -114,9 +116,12 @@ pub use crate::types::{
     OrderBookSummary,
     OrderDelta,
     OrderRequest,
+    OrderScoringResponse,
     OrderStatus,
     OrderSummary,
     OrderType,
+    PostOrderResponse,
+    PriceHistoryPoint,
     PriceResponse,
     PricesHistoryInterval,
     PricesHistoryResponse,
@@ -142,7 +147,12 @@ pub use crate::types::{
     TickSizeResponse,
     Token,
     TokenPrice,
+    TradeMessage,
+    TradeMessageStatus,
+    TradeMessageType,
     TradeParams,
+    TradeResponse,
+    TraderSide,
     WssAuth,
     WssChannelType,
     WssSubscription,
@@ -150,6 +160,10 @@ pub use crate::types::{
 
 // Re-export client
 pub use crate::client::{ClobClient, PolyfillClient};
+
+// Re-export order signing types (for proxy wallet support)
+pub use crate::orders::SigType;
+pub use alloy_primitives::Address;
 
 // Re-export compatibility types (for easy migration from polymarket-rs-client)
 pub use crate::client::OrderArgs;

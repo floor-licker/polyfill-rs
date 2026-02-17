@@ -191,6 +191,51 @@ pub enum Side {
     SELL = 1,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum TraderSide {
+    Taker,
+    Maker,
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+impl Default for TraderSide {
+    fn default() -> Self {
+        Self::Unknown("UNKNOWN".to_string())
+    }
+}
+
+/// Trade lifecycle status (Matched → Mined → Confirmed).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TradeMessageStatus {
+    #[serde(alias = "matched", alias = "MATCHED")]
+    Matched,
+    #[serde(alias = "mined", alias = "MINED")]
+    Mined,
+    #[serde(alias = "confirmed", alias = "CONFIRMED")]
+    Confirmed,
+    /// Forward-compatible catch-all for unknown statuses.
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+impl Default for TradeMessageStatus {
+    fn default() -> Self {
+        Self::Unknown("UNKNOWN".to_string())
+    }
+}
+
+/// Trade message type discriminator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TradeMessageType {
+    #[serde(alias = "trade", alias = "TRADE")]
+    Trade,
+    /// Forward-compatible catch-all.
+    #[serde(untagged)]
+    Unknown(String),
+}
+
 impl Side {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -214,6 +259,7 @@ pub enum OrderType {
     #[default]
     GTC,
     FOK,
+    FAK,
     GTD,
 }
 
@@ -222,6 +268,7 @@ impl OrderType {
         match self {
             OrderType::GTC => "GTC",
             OrderType::FOK => "FOK",
+            OrderType::FAK => "FAK",
             OrderType::GTD => "GTD",
         }
     }
@@ -524,6 +571,8 @@ impl Default for ExtraOrderArgs {
 #[derive(Debug, Clone)]
 pub struct MarketOrderArgs {
     pub token_id: String,
+    pub side: Side,
+    /// Quote amount for buys, base token amount for sells.
     pub amount: Decimal,
 }
 
@@ -889,7 +938,7 @@ pub struct EventMessage {
     pub description: String,
 }
 
-/// User trade execution message.
+/// User trade execution message (authenticated WebSocket channel).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeMessage {
     pub id: String,
@@ -898,10 +947,11 @@ pub struct TradeMessage {
     pub side: Side,
     pub size: Decimal,
     pub price: Decimal,
+    /// Trade lifecycle status (Matched → Mined → Confirmed).
     #[serde(default)]
-    pub status: Option<String>,
+    pub status: TradeMessageStatus,
     #[serde(rename = "type", default)]
-    pub msg_type: Option<String>,
+    pub msg_type: Option<TradeMessageType>,
     #[serde(
         default,
         deserialize_with = "crate::decode::deserializers::optional_number_from_string"
@@ -918,6 +968,36 @@ pub struct TradeMessage {
         deserialize_with = "crate::decode::deserializers::optional_number_from_string"
     )]
     pub timestamp: Option<u64>,
+    /// Outcome (e.g. "Yes" / "No").
+    #[serde(default)]
+    pub outcome: Option<String>,
+    /// API key of the event owner.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// API key of the trade owner.
+    #[serde(default)]
+    pub trade_owner: Option<String>,
+    /// Taker order ID.
+    #[serde(default)]
+    pub taker_order_id: Option<String>,
+    /// Maker order details.
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
+    pub maker_orders: Vec<MakerOrder>,
+    /// Fee rate in basis points.
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub fee_rate_bps: Option<Decimal>,
+    /// On-chain transaction hash.
+    #[serde(default)]
+    pub transaction_hash: Option<String>,
+    /// Whether user was maker or taker.
+    #[serde(default)]
+    pub trader_side: Option<TraderSide>,
 }
 
 /// User order update message.
@@ -1106,6 +1186,131 @@ pub struct OpenOrder {
     pub created_at: u64,
 }
 
+/// Response from posting a single order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostOrderResponse {
+    #[serde(default)]
+    pub error_msg: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string_default_on_error"
+    )]
+    pub making_amount: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string_default_on_error"
+    )]
+    pub taking_amount: Option<Decimal>,
+    #[serde(rename = "orderID")]
+    pub order_id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    pub success: bool,
+    #[serde(default, alias = "transactionsHashes")]
+    pub transaction_hashes: Vec<String>,
+    #[serde(default)]
+    pub trade_ids: Vec<String>,
+}
+
+/// Response from cancel endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelOrdersResponse {
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
+    pub canceled: Vec<String>,
+    #[serde(default, alias = "not_canceled")]
+    pub not_canceled: std::collections::HashMap<String, String>,
+}
+
+/// Trade item returned by `/data/trades`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TradeResponse {
+    pub id: String,
+    #[serde(default)]
+    pub taker_order_id: Option<String>,
+    pub market: String,
+    pub asset_id: String,
+    pub side: Side,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub size: Decimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub fee_rate_bps: Option<Decimal>,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub price: Decimal,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub match_time: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub last_update: Option<u64>,
+    #[serde(default)]
+    pub outcome: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_number_from_string"
+    )]
+    pub bucket_index: Option<u64>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub maker_address: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::vec_from_null"
+    )]
+    pub maker_orders: Vec<MakerOrder>,
+    #[serde(default)]
+    pub transaction_hash: Option<String>,
+    #[serde(default)]
+    pub trader_side: TraderSide,
+    #[serde(default, alias = "err_msg")]
+    pub error_msg: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MakerOrder {
+    pub order_id: String,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub maker_address: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub matched_amount: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub price: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::decode::deserializers::optional_decimal_from_string"
+    )]
+    pub fee_rate_bps: Option<Decimal>,
+    #[serde(default)]
+    pub asset_id: Option<String>,
+    #[serde(default)]
+    pub outcome: Option<String>,
+    #[serde(default)]
+    pub side: Option<Side>,
+}
+
 /// Balance allowance information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceAllowance {
@@ -1254,30 +1459,40 @@ impl PricesHistoryInterval {
     }
 }
 
-/// Raw response from `/prices-history`.
+/// A single price-history datapoint from `/prices-history`.
 ///
-/// We intentionally keep `history` entries as `serde_json::Value` because the upstream API has
-/// no stable public schema here and currently may return empty history for many markets.
+/// Mirrors the official Polymarket SDK shape (`t`, `p`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceHistoryPoint {
+    pub t: i64,
+    #[serde(deserialize_with = "crate::decode::deserializers::decimal_from_string")]
+    pub p: Decimal,
+}
+
+/// Response from `/prices-history`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricesHistoryResponse {
-    pub history: Vec<serde_json::Value>,
+    pub history: Vec<PriceHistoryPoint>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SpreadResponse {
-    #[serde(with = "rust_decimal::serde::str")]
     pub spread: Decimal,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct TickSizeResponse {
-    #[serde(with = "rust_decimal::serde::str")]
     pub minimum_tick_size: Decimal,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct NegRiskResponse {
     pub neg_risk: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderScoringResponse {
+    pub scoring: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1374,7 +1589,7 @@ pub struct Rewards {
 /// Fee rate in basis points for a given token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeeRateResponse {
-    pub fee_rate_bps: u32,
+    pub base_fee: u32,
 }
 
 /// Create RFQ request (Requester).
@@ -1657,3 +1872,19 @@ pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>;
 pub type ApiCreds = ApiCredentials;
 pub type CreateOrderOptions = OrderOptions;
 pub type OrderArgs = OrderRequest;
+
+#[cfg(test)]
+mod tests {
+    use super::OrderType;
+
+    #[test]
+    fn test_order_type_fak_serde_and_string() {
+        assert_eq!(OrderType::FAK.as_str(), "FAK");
+
+        let json = serde_json::to_string(&OrderType::FAK).unwrap();
+        assert_eq!(json, "\"FAK\"");
+
+        let parsed: OrderType = serde_json::from_str("\"FAK\"").unwrap();
+        assert_eq!(parsed, OrderType::FAK);
+    }
+}
