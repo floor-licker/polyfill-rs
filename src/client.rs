@@ -847,12 +847,20 @@ impl ClobClient {
         token_id: &str,
         options: Option<&OrderOptions>,
     ) -> Result<OrderOptions> {
-        let (tick_size, neg_risk, fee_rate_bps) = match options {
-            Some(o) => (o.tick_size, o.neg_risk, o.fee_rate_bps),
-            None => (None, None, None),
+        let (tick_size, neg_risk, fee_rate_bps, force_tick_size) = match options {
+            Some(o) => (o.tick_size, o.neg_risk, o.fee_rate_bps, o.force_tick_size),
+            None => (None, None, None, false),
         };
 
-        let tick_size = self.resolve_tick_size(token_id, tick_size).await?;
+        let tick_size = if force_tick_size {
+            match tick_size {
+                Some(t) => t,
+                None => self.get_tick_size(token_id).await?,
+            }
+        } else {
+            self.resolve_tick_size(token_id, tick_size).await?
+        };
+
         let neg_risk = match neg_risk {
             Some(nr) => nr,
             None => self.get_neg_risk(token_id).await?,
@@ -862,6 +870,7 @@ impl ClobClient {
             tick_size: Some(tick_size),
             neg_risk: Some(neg_risk),
             fee_rate_bps,
+            force_tick_size: false,
         })
     }
 
@@ -3626,5 +3635,129 @@ mod tests {
         let approved = client.approve_rfq_order(&exec).await.unwrap();
         assert_eq!(approved.trade_ids, vec!["t1".to_string(), "t2".to_string()]);
         approve_mock.assert_async().await;
+    }
+
+    // --- force_tick_size tests ---
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_force_tick_size_skips_api_call() {
+        use crate::types::OrderOptions;
+
+        let mut server = Server::new_async().await;
+
+        // Mock tick-size endpoint — should NOT be called
+        let tick_mock = server
+            .mock("GET", "/tick-size")
+            .expect(0)
+            .create_async()
+            .await;
+
+        // Mock neg-risk endpoint — should NOT be called
+        let neg_risk_mock = server
+            .mock("GET", "/neg-risk")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let options = OrderOptions {
+            tick_size: Some(Decimal::from_str("0.01").unwrap()),
+            neg_risk: Some(false),
+            fee_rate_bps: Some(100),
+            force_tick_size: true,
+        };
+
+        let filled = client
+            .get_filled_order_options("0x123", Some(&options))
+            .await
+            .unwrap();
+
+        // Verify returned values match input — no API calls made
+        assert_eq!(filled.tick_size, Some(Decimal::from_str("0.01").unwrap()));
+        assert_eq!(filled.neg_risk, Some(false));
+        assert_eq!(filled.fee_rate_bps, Some(100));
+
+        tick_mock.assert_async().await;
+        neg_risk_mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_force_tick_size_false_still_validates() {
+        use crate::types::OrderOptions;
+
+        let mut server = Server::new_async().await;
+
+        // With force_tick_size=false, the API IS called for validation
+        let tick_mock = server
+            .mock("GET", "/tick-size")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "0x123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"minimum_tick_size": "0.001"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let options = OrderOptions {
+            tick_size: Some(Decimal::from_str("0.01").unwrap()),
+            neg_risk: Some(false),
+            fee_rate_bps: None,
+            force_tick_size: false,
+        };
+
+        let filled = client
+            .get_filled_order_options("0x123", Some(&options))
+            .await
+            .unwrap();
+
+        assert_eq!(filled.tick_size, Some(Decimal::from_str("0.01").unwrap()));
+        tick_mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_force_tick_size_true_but_none_falls_back_to_api() {
+        use crate::types::OrderOptions;
+
+        let mut server = Server::new_async().await;
+
+        // force_tick_size=true but tick_size=None → must fetch from API
+        let tick_mock = server
+            .mock("GET", "/tick-size")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "0x123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"minimum_tick_size": "0.01"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let neg_risk_mock = server
+            .mock("GET", "/neg-risk")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "0x123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"neg_risk": true}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let options = OrderOptions {
+            tick_size: None,
+            neg_risk: None,
+            fee_rate_bps: None,
+            force_tick_size: true,
+        };
+
+        let filled = client
+            .get_filled_order_options("0x123", Some(&options))
+            .await
+            .unwrap();
+
+        assert_eq!(filled.tick_size, Some(Decimal::from_str("0.01").unwrap()));
+        assert_eq!(filled.neg_risk, Some(true));
+        tick_mock.assert_async().await;
+        neg_risk_mock.assert_async().await;
     }
 }

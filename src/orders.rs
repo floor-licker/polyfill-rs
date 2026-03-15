@@ -512,6 +512,7 @@ mod tests {
                     tick_size: Some(Decimal::from_str("0.01").unwrap()),
                     neg_risk: Some(false),
                     fee_rate_bps: None,
+                    force_tick_size: false,
                 },
             )
             .unwrap();

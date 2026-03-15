@@ -547,6 +547,9 @@ pub struct OrderOptions {
     pub tick_size: Option<Decimal>,
     pub neg_risk: Option<bool>,
     pub fee_rate_bps: Option<u32>,
+    /// When true and tick_size is Some, skip the API validation call entirely.
+    /// Use when tick_size was pre-fetched via `get_tick_size` and is known-valid.
+    pub force_tick_size: bool,
 }
 
 /// Extra arguments for order creation
