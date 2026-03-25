@@ -613,6 +613,38 @@ impl OrderBook {
         }
     }
 
+    /// Apply a price-change delta without sequence validation.
+    ///
+    /// `price_change` WS messages contain multiple entries that share the same
+    /// timestamp.  `apply_delta_fast` uses strict `sequence <= self.sequence`
+    /// ordering, which silently drops the second entry for the same token.
+    /// This method skips that check so all entries in a batch are applied.
+    ///
+    /// The caller MUST call [`set_sequence`] after the batch to advance the
+    /// book's sequence number.
+    pub fn apply_price_change_delta(
+        &mut self,
+        side: Side,
+        price: Decimal,
+        size: Decimal,
+    ) -> Result<()> {
+        let price_ticks = decimal_to_price(price)
+            .map_err(|e| PolyfillError::validation(format!("Invalid price: {e}")))?;
+        let size_units = decimal_to_qty(size)
+            .map_err(|e| PolyfillError::validation(format!("Invalid size: {e}")))?;
+        match side {
+            Side::BUY => self.apply_bid_delta_fast(price_ticks, size_units),
+            Side::SELL => self.apply_ask_delta_fast(price_ticks, size_units),
+        }
+        Ok(())
+    }
+
+    /// Set the book's sequence number after a batch of price-change deltas.
+    pub fn set_sequence(&mut self, sequence: u64) {
+        self.sequence = sequence;
+        self.trim_depth();
+    }
+
     /// Calculate the market impact for a given order size
     /// This is exactly why we don't need deep levels - if your order would require
     /// hitting prices way off the current market (like $0.95 when best ask is $0.67),
@@ -879,6 +911,39 @@ impl OrderBookManager {
             .get_mut(update.asset_id.as_str())
             .ok_or_else(|| PolyfillError::internal_simple("Failed to insert order book"))?
             .apply_book_update(update)
+    }
+
+    /// Apply a `price_change` WS message as a batch of book deltas.
+    ///
+    /// Applies all entries, then sets sequence + trims depth per affected book.
+    /// Returns the list of token_ids that were updated.
+    pub fn apply_price_change(&self, pc: &PriceChange) -> Result<Vec<String>> {
+        let mut books = self
+            .books
+            .write()
+            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+
+        let mut updated: Vec<String> = Vec::new();
+
+        for entry in &pc.price_changes {
+            let Some(book) = books.get_mut(&entry.asset_id) else {
+                continue; // no book yet — skip (deltas before initial snapshot)
+            };
+            let size = entry.size.unwrap_or(Decimal::ZERO);
+            book.apply_price_change_delta(entry.side, entry.price, size)?;
+            if !updated.contains(&entry.asset_id) {
+                updated.push(entry.asset_id.clone());
+            }
+        }
+
+        // Set sequence + trim once per affected book
+        for token_id in &updated {
+            if let Some(book) = books.get_mut(token_id) {
+                book.set_sequence(pc.timestamp);
+            }
+        }
+
+        Ok(updated)
     }
 
     /// Get a book snapshot
