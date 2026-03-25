@@ -636,6 +636,12 @@ impl OrderBook {
             Side::BUY => self.apply_bid_delta_fast(price_ticks, size_units),
             Side::SELL => self.apply_ask_delta_fast(price_ticks, size_units),
         }
+        debug!(
+            "Applied price change delta: {} {} @ {} ticks",
+            side.as_str(),
+            size_units,
+            price_ticks,
+        );
         Ok(())
     }
 
@@ -942,6 +948,13 @@ impl OrderBookManager {
                 book.set_sequence(pc.timestamp);
             }
         }
+
+        debug!(
+            "Applied price_change batch: {} deltas, {} books updated (ts: {})",
+            pc.price_changes.len(),
+            updated.len(),
+            pc.timestamp,
+        );
 
         Ok(updated)
     }
@@ -1369,5 +1382,247 @@ mod tests {
 
         assert!(spread_fast.is_some()); // Should have a spread
         assert!(mid_fast.is_some()); // Should have a mid price
+    }
+
+    // --- apply_price_change_delta / apply_price_change tests ---
+
+    #[test]
+    fn price_change_delta_upserts_and_removes() {
+        let mut book = OrderBook::new("tok1".into(), 20);
+        // Seed with initial book snapshot so sequence is set
+        book.set_sequence(1);
+
+        // Upsert bid
+        book.apply_price_change_delta(Side::BUY, dec!(0.55), dec!(100))
+            .unwrap();
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.55));
+        assert_eq!(book.best_bid().unwrap().size, dec!(100));
+
+        // Upsert ask
+        book.apply_price_change_delta(Side::SELL, dec!(0.60), dec!(50))
+            .unwrap();
+        assert_eq!(book.best_ask().unwrap().price, dec!(0.60));
+        assert_eq!(book.best_ask().unwrap().size, dec!(50));
+
+        // Remove bid (size = 0)
+        book.apply_price_change_delta(Side::BUY, dec!(0.55), dec!(0))
+            .unwrap();
+        assert!(book.best_bid().is_none());
+
+        // Remove ask (size = 0)
+        book.apply_price_change_delta(Side::SELL, dec!(0.60), dec!(0))
+            .unwrap();
+        assert!(book.best_ask().is_none());
+    }
+
+    #[test]
+    fn price_change_delta_skips_sequence_check() {
+        let mut book = OrderBook::new("tok1".into(), 20);
+        book.set_sequence(100);
+
+        // Both deltas apply even though sequence hasn't advanced
+        book.apply_price_change_delta(Side::BUY, dec!(0.55), dec!(100))
+            .unwrap();
+        book.apply_price_change_delta(Side::SELL, dec!(0.60), dec!(50))
+            .unwrap();
+
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.55));
+        assert_eq!(book.best_ask().unwrap().price, dec!(0.60));
+        assert_eq!(book.spread().unwrap(), dec!(0.05));
+    }
+
+    #[test]
+    fn apply_delta_drops_same_sequence() {
+        // Proves the bug that apply_price_change_delta fixes
+        let mut book = OrderBook::new("tok1".into(), 20);
+
+        // First delta at seq 100 — applies
+        book.apply_delta(OrderDelta {
+            token_id: "tok1".into(),
+            timestamp: Utc::now(),
+            side: Side::BUY,
+            price: dec!(0.55),
+            size: dec!(100),
+            sequence: 100,
+        })
+        .unwrap();
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.55));
+
+        // Second delta at same seq 100 — silently dropped
+        book.apply_delta(OrderDelta {
+            token_id: "tok1".into(),
+            timestamp: Utc::now(),
+            side: Side::SELL,
+            price: dec!(0.60),
+            size: dec!(50),
+            sequence: 100,
+        })
+        .unwrap();
+        assert!(
+            book.best_ask().is_none(),
+            "apply_delta should drop same-seq entry"
+        );
+    }
+
+    #[test]
+    fn set_sequence_advances_and_trims() {
+        let mut book = OrderBook::new("tok1".into(), 2); // max_depth = 2
+
+        // Add 3 bid levels
+        book.apply_price_change_delta(Side::BUY, dec!(0.50), dec!(10))
+            .unwrap();
+        book.apply_price_change_delta(Side::BUY, dec!(0.51), dec!(20))
+            .unwrap();
+        book.apply_price_change_delta(Side::BUY, dec!(0.52), dec!(30))
+            .unwrap();
+        assert_eq!(book.bids.len(), 3); // not trimmed yet
+
+        book.set_sequence(200);
+        assert_eq!(book.sequence, 200);
+        assert_eq!(book.bids.len(), 2); // trimmed to max_depth
+    }
+
+    #[test]
+    fn manager_apply_price_change_batch() {
+        let mgr = OrderBookManager::new(20);
+        // Create books for both tokens
+        mgr.get_or_create_book("yes1").unwrap();
+        mgr.get_or_create_book("no1").unwrap();
+
+        let pc = PriceChange {
+            market: "cond1".into(),
+            timestamp: 500,
+            price_changes: vec![
+                PriceChangeEntry {
+                    asset_id: "yes1".into(),
+                    side: Side::BUY,
+                    price: dec!(0.65),
+                    size: Some(dec!(100)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+                PriceChangeEntry {
+                    asset_id: "yes1".into(),
+                    side: Side::SELL,
+                    price: dec!(0.66),
+                    size: Some(dec!(80)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+                PriceChangeEntry {
+                    asset_id: "no1".into(),
+                    side: Side::BUY,
+                    price: dec!(0.34),
+                    size: Some(dec!(90)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+                PriceChangeEntry {
+                    asset_id: "no1".into(),
+                    side: Side::SELL,
+                    price: dec!(0.35),
+                    size: Some(dec!(70)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+            ],
+        };
+
+        let updated = mgr.apply_price_change(&pc).unwrap();
+        assert_eq!(updated.len(), 2);
+
+        // Both sides applied for yes1 — no crossed book
+        let yes_book = mgr.get_book("yes1").unwrap();
+        assert_eq!(yes_book.bids.first().unwrap().price, dec!(0.65));
+        assert_eq!(yes_book.asks.first().unwrap().price, dec!(0.66));
+        assert!(yes_book.asks.first().unwrap().price > yes_book.bids.first().unwrap().price);
+
+        // Both sides applied for no1 — no crossed book
+        let no_book = mgr.get_book("no1").unwrap();
+        assert_eq!(no_book.bids.first().unwrap().price, dec!(0.34));
+        assert_eq!(no_book.asks.first().unwrap().price, dec!(0.35));
+        assert!(no_book.asks.first().unwrap().price > no_book.bids.first().unwrap().price);
+    }
+
+    #[test]
+    fn manager_apply_price_change_skips_unknown_token() {
+        let mgr = OrderBookManager::new(20);
+        // Only create book for yes1, not no1
+        mgr.get_or_create_book("yes1").unwrap();
+
+        let pc = PriceChange {
+            market: "cond1".into(),
+            timestamp: 500,
+            price_changes: vec![
+                PriceChangeEntry {
+                    asset_id: "yes1".into(),
+                    side: Side::BUY,
+                    price: dec!(0.65),
+                    size: Some(dec!(100)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+                PriceChangeEntry {
+                    asset_id: "no1".into(),
+                    side: Side::BUY,
+                    price: dec!(0.34),
+                    size: Some(dec!(90)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+            ],
+        };
+
+        let updated = mgr.apply_price_change(&pc).unwrap();
+        assert_eq!(updated, vec!["yes1"]);
+    }
+
+    #[test]
+    fn manager_apply_price_change_size_zero_removes() {
+        let mgr = OrderBookManager::new(20);
+        mgr.get_or_create_book("tok1").unwrap();
+
+        // Add a level
+        let pc1 = PriceChange {
+            market: "m1".into(),
+            timestamp: 100,
+            price_changes: vec![PriceChangeEntry {
+                asset_id: "tok1".into(),
+                side: Side::BUY,
+                price: dec!(0.50),
+                size: Some(dec!(100)),
+                hash: None,
+                best_bid: None,
+                best_ask: None,
+            }],
+        };
+        mgr.apply_price_change(&pc1).unwrap();
+        assert_eq!(
+            mgr.get_book("tok1").unwrap().bids.first().unwrap().price,
+            dec!(0.50)
+        );
+
+        // Remove it with size = 0
+        let pc2 = PriceChange {
+            market: "m1".into(),
+            timestamp: 200,
+            price_changes: vec![PriceChangeEntry {
+                asset_id: "tok1".into(),
+                side: Side::BUY,
+                price: dec!(0.50),
+                size: Some(dec!(0)),
+                hash: None,
+                best_bid: None,
+                best_ask: None,
+            }],
+        };
+        mgr.apply_price_change(&pc2).unwrap();
+        assert!(mgr.get_book("tok1").unwrap().bids.is_empty());
     }
 }
