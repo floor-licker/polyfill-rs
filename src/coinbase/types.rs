@@ -22,7 +22,7 @@ impl Subscribe {
         Self {
             type_: "subscribe",
             product_ids,
-            channels: vec!["level2", "heartbeat"],
+            channels: vec!["level2", "heartbeat", "matches"],
         }
     }
 
@@ -32,7 +32,7 @@ impl Subscribe {
         Self {
             type_: "subscribe",
             product_ids,
-            channels: vec!["level2_batch", "heartbeat"],
+            channels: vec!["level2_batch", "heartbeat", "matches"],
         }
     }
 }
@@ -100,6 +100,17 @@ pub struct SubscribedChannel {
     pub product_ids: Vec<String>,
 }
 
+/// Match/trade message from the matches channel
+#[derive(Debug, Clone, Deserialize)]
+pub struct Match {
+    pub trade_id: u64,
+    pub product_id: String,
+    pub time: String,
+    pub size: String,
+    pub price: String,
+    pub side: String,
+}
+
 /// Error message from Coinbase
 #[derive(Debug, Clone, Deserialize)]
 pub struct ErrorMessage {
@@ -112,6 +123,7 @@ pub struct ErrorMessage {
 pub enum Message {
     Snapshot(Snapshot),
     L2Update(L2Update),
+    Match(Match),
     Heartbeat(Heartbeat),
     Subscriptions(Subscriptions),
     Error(ErrorMessage),

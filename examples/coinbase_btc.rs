@@ -76,6 +76,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Message::Subscriptions(subs) => {
                         println!("Confirmed subscriptions: {:?}", subs.channels);
                     },
+                    Message::Match(m) => {
+                        println!("Trade: {} {} @ {} ({})", m.side, m.size, m.price, m.trade_id);
+                    },
                     Message::Error(err) => {
                         eprintln!("Error from Coinbase: {} ({:?})", err.message, err.reason);
                     },

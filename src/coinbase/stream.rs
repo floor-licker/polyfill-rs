@@ -261,6 +261,9 @@ impl CoinbaseStream {
                     );
                 }
             },
+            Message::Match(_) => {
+                debug!("Received trade match");
+            },
             Message::Heartbeat(_) => {
                 debug!("Received heartbeat");
             },

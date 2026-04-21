@@ -90,6 +90,11 @@ pub fn parse_message_value(value: Value) -> Result<Message> {
                 .map_err(|e| PolyfillError::parse(format!("Invalid subscriptions: {}", e), None))?;
             Ok(Message::Subscriptions(subs))
         },
+        "match" | "last_match" => {
+            let m: Match = serde_json::from_value(value)
+                .map_err(|e| PolyfillError::parse(format!("Invalid match: {}", e), None))?;
+            Ok(Message::Match(m))
+        },
         "error" => {
             let err: ErrorMessage = serde_json::from_value(value)
                 .map_err(|e| PolyfillError::parse(format!("Invalid error message: {}", e), None))?;

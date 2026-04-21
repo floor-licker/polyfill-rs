@@ -55,6 +55,6 @@ pub mod types;
 // Re-export main types for convenience
 pub use stream::{CoinbaseStream, DEFAULT_URL};
 pub use types::{
-    ErrorMessage, FastDelta, FastL2Update, FastSnapshot, Heartbeat, L2Update, Message, Snapshot,
-    Subscribe, Subscriptions, Unsubscribe,
+    ErrorMessage, FastDelta, FastL2Update, FastSnapshot, Heartbeat, L2Update, Match, Message,
+    Snapshot, Subscribe, Subscriptions, Unsubscribe,
 };
