@@ -12,6 +12,7 @@ use polyfill_rs::{
     fill::{FillEngine, FillStatus},
     types::*,
     utils::time,
+    Exchange,
 };
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
@@ -99,11 +100,11 @@ impl SnipeStrategy {
     }
 
     /// Process a market data update
-    pub fn process_update(&mut self, message: StreamMessage) -> Result<()> {
+    pub async fn process_update(&mut self, message: StreamMessage) -> Result<()> {
         match message {
             StreamMessage::BookUpdate { data } => {
                 if data.token_id == self.token_id {
-                    self.process_book_update(data)?;
+                    self.process_book_update(data).await?;
                 }
             },
             StreamMessage::Trade { data } => {
@@ -120,15 +121,18 @@ impl SnipeStrategy {
     }
 
     /// Process order book update
-    fn process_book_update(&mut self, delta: OrderDelta) -> Result<()> {
-        // Ensure book exists
-        self.book_manager.get_or_create_book(&self.token_id)?;
+    async fn process_book_update(&mut self, delta: OrderDelta) -> Result<()> {
+        self.book_manager
+            .get_or_create_book(Exchange::Polymarket, &self.token_id)
+            .await;
 
-        // Update local order book
-        self.book_manager.apply_delta(delta.clone())?;
+        self.book_manager
+            .apply_delta(Exchange::Polymarket, delta.clone())
+            .await?;
 
-        // Get current book state
-        let book = self.book_manager.get_book(&self.token_id)?;
+        let book = self.book_manager
+            .get_book(Exchange::Polymarket, &self.token_id)
+            .await?;
 
         // Update best prices
         if let Some(best_bid) = book.bids.first() {
@@ -141,7 +145,7 @@ impl SnipeStrategy {
         self.last_update = time::now_secs();
 
         // Check for trading opportunities
-        self.check_opportunities()?;
+        self.check_opportunities().await?;
 
         Ok(())
     }
@@ -166,19 +170,17 @@ impl SnipeStrategy {
     }
 
     /// Check for trading opportunities
-    fn check_opportunities(&mut self) -> Result<()> {
+    async fn check_opportunities(&mut self) -> Result<()> {
         let (bid, ask) = match (self.last_best_bid, self.last_best_ask) {
             (Some(bid), Some(ask)) => (bid, ask),
-            _ => return Ok(()), // No liquidity
+            _ => return Ok(()),
         };
 
-        // Calculate spread
         let spread_pct = match (bid, ask) {
             (bid, ask) if bid > dec!(0) && ask > bid => (ask - bid) / bid * dec!(100),
             _ => return Ok(()),
         };
 
-        // Check if spread is within our target
         if spread_pct <= self.max_spread_pct {
             self.stats.opportunities_detected += 1;
 
@@ -187,15 +189,14 @@ impl SnipeStrategy {
                 spread_pct, self.max_spread_pct
             );
 
-            // Execute snipe order
-            self.execute_snipe_order(bid, ask)?;
+            self.execute_snipe_order(bid, ask).await?;
         }
 
         Ok(())
     }
 
     /// Execute a snipe order
-    fn execute_snipe_order(&mut self, bid: Decimal, ask: Decimal) -> Result<()> {
+    async fn execute_snipe_order(&mut self, bid: Decimal, ask: Decimal) -> Result<()> {
         // Calculate order size (random between min and max)
         let random_factor = Decimal::from(rand::random::<u64>() % 100) / Decimal::from(100);
         let size =
@@ -218,7 +219,7 @@ impl SnipeStrategy {
         };
 
         // Get current book for execution simulation
-        let book = self.book_manager.get_book(&self.token_id)?;
+        let book = self.book_manager.get_book(Exchange::Polymarket, &self.token_id).await?;
         let mut book_impl = polyfill_rs::book::OrderBook::new(self.token_id.clone(), 100);
 
         // Convert to internal book format
@@ -379,7 +380,7 @@ async fn main() -> Result<()> {
         let update = market_data.generate_update();
 
         // Process update
-        if let Err(e) = strategy.process_update(update) {
+        if let Err(e) = strategy.process_update(update).await {
             error!("Error processing update: {}", e);
         }
 

@@ -183,6 +183,28 @@ pub fn is_price_tick_aligned(decimal: Decimal, tick_size_decimal: Decimal) -> bo
     price_ticks % tick_size_ticks == 0
 }
 
+/// Exchange venue for orderbook management.
+///
+/// Used as a key component in `OrderBookManager` to distinguish books
+/// from different venues. For Coinbase, there's typically one book per
+/// trading pair (e.g., "BTC-USD"). For Polymarket, there's one book
+/// per token_id (UP/DOWN shares).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Exchange {
+    Polymarket,
+    Coinbase,
+}
+
+impl Exchange {
+    /// Lowercase identifier for filenames and directory names.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Exchange::Polymarket => "polymarket",
+            Exchange::Coinbase => "coinbase",
+        }
+    }
+}
+
 /// Trading side for orders
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[allow(clippy::upper_case_acronyms)]

@@ -6,7 +6,8 @@ use crate::utils::math;
 use chrono::Utc;
 use rust_decimal::Decimal;
 use std::collections::BTreeMap; // BTreeMap keeps prices sorted automatically - crucial for order books
-use std::sync::{Arc, RwLock}; // For thread-safe access across multiple tasks
+use std::sync::Arc;
+use tokio::sync::RwLock; // Async RwLock - required because polymarket_mm models hold locks across .await
 use tracing::{debug, trace, warn}; // Logging for debugging and monitoring
 
 /// High-performance order book implementation
@@ -682,13 +683,14 @@ pub struct MarketImpact {
 /// With depth limiting: 1000 tokens × 50 levels × 32 bytes = 1.6MB (20x less memory)
 #[derive(Debug)]
 pub struct OrderBookManager {
-    books: Arc<RwLock<std::collections::HashMap<String, OrderBook>>>, // Token ID -> OrderBook
+    /// Books keyed by (Exchange, symbol). For Polymarket the symbol is a token_id,
+    /// for Coinbase it's a trading pair like "BTC-USD".
+    books: Arc<RwLock<std::collections::HashMap<(Exchange, String), OrderBook>>>,
     max_depth: usize,
 }
 
 impl OrderBookManager {
     /// Create a new order book manager
-    /// Starts with an empty collection of books
     pub fn new(max_depth: usize) -> Self {
         Self {
             books: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -696,92 +698,147 @@ impl OrderBookManager {
         }
     }
 
-    /// Get or create an order book for a token
-    /// If we don't have a book for this token yet, create a new empty one
-    pub fn get_or_create_book(&self, token_id: &str) -> Result<OrderBook> {
-        let mut books = self
-            .books
-            .write()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
-
-        if let Some(book) = books.get(token_id) {
-            Ok(book.clone()) // Return a copy of the existing book
+    /// Get or create an order book for the given exchange + symbol.
+    /// If the book doesn't exist yet, creates a new empty one.
+    pub async fn get_or_create_book(
+        &self,
+        exchange: Exchange,
+        symbol: &str,
+    ) -> OrderBook {
+        let mut books = self.books.write().await;
+        let key = (exchange, symbol.to_string());
+        if let Some(book) = books.get(&key) {
+            book.clone()
         } else {
-            // Create a new book for this token
-            let book = OrderBook::new(token_id.to_string(), self.max_depth);
-            books.insert(token_id.to_string(), book.clone());
-            Ok(book)
+            let book = OrderBook::new(symbol.to_string(), self.max_depth);
+            books.insert(key, book.clone());
+            book
         }
     }
 
-    /// Update a book with a delta
-    /// This is called when we receive real-time updates from the exchange
-    pub fn apply_delta(&self, delta: OrderDelta) -> Result<()> {
-        let mut books = self
-            .books
+    /// Replace the book for a given exchange + symbol (e.g., on a full snapshot).
+    pub async fn set_book(
+        &self,
+        exchange: Exchange,
+        symbol: &str,
+        book: OrderBook,
+    ) {
+        self.books
             .write()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+            .await
+            .insert((exchange, symbol.to_string()), book);
+    }
 
-        // Find the book for this token (must already exist)
-        let book = books.get_mut(&delta.token_id).ok_or_else(|| {
+    /// Replace the book from an external snapshot (`types::OrderBook`).
+    /// Converts the Vec<BookLevel> representation to the internal BTreeMap.
+    pub async fn set_snapshot(
+        &self,
+        exchange: Exchange,
+        symbol: &str,
+        snapshot: &crate::types::OrderBook,
+    ) {
+        let mut book = OrderBook::new(symbol.to_string(), self.max_depth);
+        book.timestamp = snapshot.timestamp;
+        book.sequence = snapshot.sequence;
+        for level in &snapshot.bids {
+            if let (Ok(price), Ok(qty)) = (
+                crate::types::decimal_to_price(level.price),
+                crate::types::decimal_to_qty(level.size),
+            ) {
+                book.bids.insert(price, qty);
+            }
+        }
+        for level in &snapshot.asks {
+            if let (Ok(price), Ok(qty)) = (
+                crate::types::decimal_to_price(level.price),
+                crate::types::decimal_to_qty(level.size),
+            ) {
+                book.asks.insert(price, qty);
+            }
+        }
+        self.books
+            .write()
+            .await
+            .insert((exchange, symbol.to_string()), book);
+    }
+
+    /// Update a book with a delta.
+    /// The book must already exist (created via `get_or_create_book` or `set_book`).
+    pub async fn apply_delta(
+        &self,
+        exchange: Exchange,
+        delta: OrderDelta,
+    ) -> Result<()> {
+        let mut books = self.books.write().await;
+        let key = (exchange, delta.token_id.clone());
+        let book = books.get_mut(&key).ok_or_else(|| {
             PolyfillError::market_data(
-                format!("No book found for token: {}", delta.token_id),
+                format!(
+                    "No book found for {:?}/{}",
+                    exchange, delta.token_id
+                ),
                 crate::errors::MarketDataErrorKind::TokenNotFound,
             )
         })?;
-
-        // Apply the update to the specific book
         book.apply_delta(delta)
     }
 
-    /// Get a book snapshot
-    /// Returns a copy of the current book state that won't change
-    pub fn get_book(&self, token_id: &str) -> Result<crate::types::OrderBook> {
-        let books = self
-            .books
-            .read()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
-
+    /// Get a snapshot of a single book.
+    pub async fn get_book(
+        &self,
+        exchange: Exchange,
+        symbol: &str,
+    ) -> Result<crate::types::OrderBook> {
+        let books = self.books.read().await;
         books
-            .get(token_id)
-            .map(|book| book.snapshot()) // Create a snapshot copy
+            .get(&(exchange, symbol.to_string()))
+            .map(|book| book.snapshot())
             .ok_or_else(|| {
                 PolyfillError::market_data(
-                    format!("No book found for token: {}", token_id),
+                    format!("No book found for {:?}/{}", exchange, symbol),
                     crate::errors::MarketDataErrorKind::TokenNotFound,
                 )
             })
     }
 
-    /// Get all available books
-    /// Returns snapshots of every book we're currently tracking
-    pub fn get_all_books(&self) -> Result<Vec<crate::types::OrderBook>> {
-        let books = self
-            .books
-            .read()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
-
-        Ok(books.values().map(|book| book.snapshot()).collect())
+    /// Get snapshots of all books for a specific exchange.
+    pub async fn get_books_for_exchange(
+        &self,
+        exchange: Exchange,
+    ) -> Vec<crate::types::OrderBook> {
+        let books = self.books.read().await;
+        books
+            .iter()
+            .filter(|((ex, _), _)| *ex == exchange)
+            .map(|(_, book)| book.snapshot())
+            .collect()
     }
 
-    /// Remove stale books
-    /// Cleans up books that haven't been updated recently (probably disconnected)
-    /// This prevents memory leaks from accumulating dead books
-    pub fn cleanup_stale_books(&self, max_age: std::time::Duration) -> Result<usize> {
-        let mut books = self
-            .books
+    /// Get snapshots of every book we're currently tracking.
+    pub async fn get_all_books(&self) -> Vec<crate::types::OrderBook> {
+        let books = self.books.read().await;
+        books.values().map(|book| book.snapshot()).collect()
+    }
+
+    /// Remove a specific book (e.g., when a market ends).
+    pub async fn remove_book(&self, exchange: Exchange, symbol: &str) {
+        self.books
             .write()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+            .await
+            .remove(&(exchange, symbol.to_string()));
+    }
 
+    /// Remove stale books that haven't been updated recently.
+    /// Returns the number of books removed.
+    pub async fn cleanup_stale_books(&self, max_age: std::time::Duration) -> usize {
+        let mut books = self.books.write().await;
         let initial_count = books.len();
-        books.retain(|_, book| !book.is_stale(max_age)); // Keep only non-stale books
+        books.retain(|_, book| !book.is_stale(max_age));
         let removed = initial_count - books.len();
-
         if removed > 0 {
             debug!("Removed {} stale order books", removed);
         }
-
-        Ok(removed)
+        removed
     }
 }
 

@@ -86,6 +86,8 @@ pub fn init() {
 // Re-export main types
 pub use crate::types::{
     ApiCredentials,
+    // Exchange enum for multi-venue orderbook management
+    Exchange,
     // Additional compatibility types
     ApiKeysResponse,
     AssetType,
@@ -192,7 +194,7 @@ pub mod utils;
 // Benchmarks
 #[cfg(test)]
 mod benches {
-    use crate::{OrderBookManager, OrderDelta, Side};
+    use crate::{Exchange, OrderBookManager, OrderDelta, Side};
     use chrono::Utc;
     use criterion::{criterion_group, criterion_main};
     use rust_decimal::Decimal;
@@ -201,6 +203,8 @@ mod benches {
     #[allow(dead_code)]
     fn order_book_benchmark(c: &mut criterion::Criterion) {
         let book_manager = OrderBookManager::new(100);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(book_manager.get_or_create_book(Exchange::Polymarket, "test_token"));
 
         c.bench_function("apply_order_delta", |b| {
             b.iter(|| {
@@ -213,7 +217,9 @@ mod benches {
                     sequence: 1,
                 };
 
-                let _ = book_manager.apply_delta(delta);
+                let _ = rt.block_on(
+                    book_manager.apply_delta(Exchange::Polymarket, delta),
+                );
             });
         });
     }
