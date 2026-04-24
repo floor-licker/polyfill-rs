@@ -321,3 +321,145 @@ fn no_alloc_websocket_book_applier_apply_text_message_existing_levels() {
     applier.apply_text_message(msg).unwrap();
     guard.assert_no_allocations();
 }
+
+/// Zero-alloc contract for snapshot replay: the same snapshot applied twice
+/// must not allocate on the second apply (steady-state ladder).
+#[test]
+fn no_alloc_steady_state_snapshot_replay() {
+    let asset_id = "test_asset_id";
+    let mut book = OrderBookImpl::new(asset_id.to_string(), 100);
+
+    let snapshot = polyfill2::types::BookUpdate {
+        asset_id: asset_id.to_string(),
+        market: "0xabc".to_string(),
+        timestamp: 10,
+        bids: vec![
+            polyfill2::types::OrderSummary {
+                price: Decimal::from_str("0.74").unwrap(),
+                size: Decimal::from_str("100").unwrap(),
+            },
+            polyfill2::types::OrderSummary {
+                price: Decimal::from_str("0.75").unwrap(),
+                size: Decimal::from_str("200").unwrap(),
+            },
+        ],
+        asks: vec![
+            polyfill2::types::OrderSummary {
+                price: Decimal::from_str("0.76").unwrap(),
+                size: Decimal::from_str("50").unwrap(),
+            },
+            polyfill2::types::OrderSummary {
+                price: Decimal::from_str("0.77").unwrap(),
+                size: Decimal::from_str("30").unwrap(),
+            },
+        ],
+        hash: None,
+    };
+
+    // Warmup allocations allowed.
+    book.apply_book_update(&snapshot).unwrap();
+
+    // Replay with a strictly larger timestamp so the stale-sequence check passes.
+    // Clone allocates (bids/asks Vecs), but happens before the guard — intentional.
+    let replay = polyfill2::types::BookUpdate {
+        timestamp: 11,
+        ..snapshot.clone()
+    };
+
+    let _ = allocation_count();
+    let guard = NoAllocGuard::new();
+    book.apply_book_update(&replay).unwrap();
+    guard.assert_no_allocations();
+}
+
+/// Same price ladder, different sizes — the common real-market case. Must not allocate.
+#[test]
+fn no_alloc_same_ladder_different_sizes() {
+    let asset_id = "test_asset_id";
+    let mut book = OrderBookImpl::new(asset_id.to_string(), 100);
+
+    let make_snapshot = |ts: u64, bid_size: &str, ask_size: &str| polyfill2::types::BookUpdate {
+        asset_id: asset_id.to_string(),
+        market: "0xabc".to_string(),
+        timestamp: ts,
+        bids: vec![polyfill2::types::OrderSummary {
+            price: Decimal::from_str("0.75").unwrap(),
+            size: Decimal::from_str(bid_size).unwrap(),
+        }],
+        asks: vec![polyfill2::types::OrderSummary {
+            price: Decimal::from_str("0.76").unwrap(),
+            size: Decimal::from_str(ask_size).unwrap(),
+        }],
+        hash: None,
+    };
+
+    // Warmup.
+    book.apply_book_update(&make_snapshot(10, "100", "50"))
+        .unwrap();
+
+    // Same ladder, different sizes.
+    let update = make_snapshot(11, "250", "75");
+
+    let _ = allocation_count();
+    let guard = NoAllocGuard::new();
+    book.apply_book_update(&update).unwrap();
+    guard.assert_no_allocations();
+}
+
+/// Steady-state snapshot replay through the simd-json hot path.
+#[test]
+fn no_alloc_same_ladder_via_ws_processor() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+
+    let mut processor = WsBookUpdateProcessor::new(1024);
+
+    // Warmup #1: decode + apply (allocates for simd-json buffers, BTreeMap nodes).
+    let mut warmup = format!(
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":10,\"bids\":[{{\"price\":\"0.75\",\"size\":\"100\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"50\"}}]}}"
+    )
+    .into_bytes();
+    processor
+        .process_bytes(warmup.as_mut_slice(), &manager)
+        .unwrap();
+
+    // Second message: same ladder, newer timestamp, different sizes. Must be zero-alloc.
+    let mut msg = format!(
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":11,\"bids\":[{{\"price\":\"0.75\",\"size\":\"200\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"75\"}}]}}"
+    )
+    .into_bytes();
+
+    let _ = allocation_count();
+    let guard = NoAllocGuard::new();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
+    guard.assert_no_allocations();
+}
+
+/// Steady-state snapshot replay through the WebSocketStream book applier.
+#[test]
+fn no_alloc_same_ladder_via_ws_applier() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+
+    let processor = WsBookUpdateProcessor::new(1024);
+    let stream = WebSocketStream::new("wss://example.com/ws");
+    let mut applier = stream.into_book_applier(&manager, processor);
+
+    let warmup = format!(
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":10,\"bids\":[{{\"price\":\"0.75\",\"size\":\"100\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"50\"}}]}}"
+    );
+    applier.apply_text_message(warmup).unwrap();
+
+    let msg = format!(
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":11,\"bids\":[{{\"price\":\"0.75\",\"size\":\"200\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"75\"}}]}}"
+    );
+
+    let _ = allocation_count();
+    let guard = NoAllocGuard::new();
+    applier.apply_text_message(msg).unwrap();
+    guard.assert_no_allocations();
+}

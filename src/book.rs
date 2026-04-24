@@ -403,6 +403,10 @@ impl OrderBook {
     ///
     /// Returns `Ok(true)` if the update should be applied, or `Ok(false)` if the update is stale
     /// and should be skipped.
+    ///
+    /// Mark phase of mark-and-sweep: zeros existing level sizes in place so that
+    /// `finish_ws_book_update` can drop any level the incoming message did not
+    /// overwrite. `values_mut` iterates stack-only — no allocation.
     pub(crate) fn begin_ws_book_update(&mut self, asset_id: &str, timestamp: u64) -> Result<bool> {
         if asset_id != self.token_id {
             return Err(PolyfillError::validation("Token ID mismatch"));
@@ -413,8 +417,15 @@ impl OrderBook {
         }
 
         self.sequence = timestamp;
-        self.timestamp =
-            chrono::DateTime::<Utc>::from_timestamp(timestamp as i64, 0).unwrap_or_else(Utc::now);
+        self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp as i64)
+            .unwrap_or_else(Utc::now);
+
+        for size in self.bids.values_mut() {
+            *size = 0;
+        }
+        for size in self.asks.values_mut() {
+            *size = 0;
+        }
 
         Ok(true)
     }
@@ -444,76 +455,67 @@ impl OrderBook {
     }
 
     /// Finish applying a WS `book` update.
+    ///
+    /// Sweep phase of mark-and-sweep: drop any level still carrying sentinel size 0
+    /// (either zeroed by `begin_ws_book_update` and not overwritten by the incoming
+    /// snapshot, or carrying wire-zero size that should not appear in the book).
+    /// Then enforce `max_depth`. `retain` is a no-op when nothing was marked stale.
     pub(crate) fn finish_ws_book_update(&mut self) {
+        self.bids.retain(|_, size| *size != 0);
+        self.asks.retain(|_, size| *size != 0);
         self.trim_depth();
     }
 
-    /// Apply a WebSocket `book` update for this token.
+    /// Apply a full order-book snapshot from a WebSocket `book` event. Replaces the
+    /// book: levels omitted from the message are removed, matching the wire contract
+    /// of Polymarket CLOB V2 `book` messages.
     ///
-    /// The official Polymarket CLOB WebSocket `book` event contains batches of
-    /// price levels for both sides. Unlike `apply_delta_fast`, this method can
-    /// apply many levels that share the same message timestamp.
-    ///
-    /// Notes:
-    /// - This performs upserts (update/insert/remove) for the provided levels.
-    /// - It does **not** infer removals for levels omitted from the message.
-    /// - Insertions of *new* price levels may allocate (BTreeMap node growth).
+    /// If the apply loop errors mid-flight (invalid price/size, tick misalignment),
+    /// the sweep and `trim_depth` phases still run so the book is left in a
+    /// consistent (possibly sparse) state rather than a zeroed-out one. The sequence
+    /// has already been advanced, so the next snapshot with a strictly newer
+    /// timestamp will fully repopulate the book.
     pub fn apply_book_update(&mut self, update: &BookUpdate) -> Result<()> {
-        if update.asset_id != self.token_id {
-            return Err(PolyfillError::validation("Token ID mismatch"));
-        }
+        // Assert ordering before any state mutation so a panic leaves the book unchanged.
+        // Order is not required for correctness (trim_depth is order-agnostic); a violation
+        // signals a server-side contract change worth catching in dev/CI.
+        debug_assert!(
+            update.bids.windows(2).all(|w| w[0].price <= w[1].price),
+            "CLOB `book` message: bids not in ascending price order",
+        );
+        debug_assert!(
+            update.asks.windows(2).all(|w| w[0].price <= w[1].price),
+            "CLOB `book` message: asks not in ascending price order",
+        );
 
-        // Use the exchange-provided timestamp as our monotonic sequence marker.
-        // This is less strict than the REST/legacy delta sequence but works for
-        // ignoring obviously stale book snapshots.
-        if update.timestamp <= self.sequence {
+        if !self.begin_ws_book_update(&update.asset_id, update.timestamp)? {
             return Ok(());
         }
 
-        self.sequence = update.timestamp;
-        self.timestamp = chrono::DateTime::<Utc>::from_timestamp(update.timestamp as i64, 0)
-            .unwrap_or_else(Utc::now);
+        let apply_result = self.apply_snapshot_levels(&update.bids, &update.asks);
+        self.finish_ws_book_update();
+        apply_result
+    }
 
-        // Apply bids (BUY) and asks (SELL) as level upserts.
-        for level in &update.bids {
-            let price_ticks = decimal_to_price(level.price)
-                .map_err(|_| PolyfillError::validation("Invalid price"))?;
-            let size_units = decimal_to_qty(level.size)
-                .map_err(|_| PolyfillError::validation("Invalid size"))?;
-
-            if let Some(tick_size_ticks) = self.tick_size_ticks {
-                if tick_size_ticks > 0 && !price_ticks.is_multiple_of(tick_size_ticks) {
-                    return Err(PolyfillError::validation("Price not aligned to tick size"));
-                }
-            }
-
-            if size_units == 0 {
-                self.bids.remove(&price_ticks);
-            } else {
-                self.bids.insert(price_ticks, size_units);
-            }
-        }
-
-        for level in &update.asks {
-            let price_ticks = decimal_to_price(level.price)
-                .map_err(|_| PolyfillError::validation("Invalid price"))?;
-            let size_units = decimal_to_qty(level.size)
-                .map_err(|_| PolyfillError::validation("Invalid size"))?;
-
-            if let Some(tick_size_ticks) = self.tick_size_ticks {
-                if tick_size_ticks > 0 && !price_ticks.is_multiple_of(tick_size_ticks) {
-                    return Err(PolyfillError::validation("Price not aligned to tick size"));
-                }
-            }
-
-            if size_units == 0 {
-                self.asks.remove(&price_ticks);
-            } else {
-                self.asks.insert(price_ticks, size_units);
+    /// Apply the bid and ask levels of a snapshot. The caller runs sweep (via
+    /// `finish_ws_book_update`) regardless of the result so a mid-flight error
+    /// does not leave the book zeroed. Delegates per-level to
+    /// `apply_ws_book_level_fast`, which handles tick alignment and treats
+    /// `size == 0` as a remove.
+    fn apply_snapshot_levels(
+        &mut self,
+        bids: &[OrderSummary],
+        asks: &[OrderSummary],
+    ) -> Result<()> {
+        for (side, levels) in [(Side::BUY, bids), (Side::SELL, asks)] {
+            for level in levels {
+                let price_ticks = decimal_to_price(level.price)
+                    .map_err(|_| PolyfillError::validation("Invalid price"))?;
+                let size_units = decimal_to_qty(level.size)
+                    .map_err(|_| PolyfillError::validation("Invalid size"))?;
+                self.apply_ws_book_level_fast(side, price_ticks, size_units)?;
             }
         }
-
-        self.trim_depth();
         Ok(())
     }
 

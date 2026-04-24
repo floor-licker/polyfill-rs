@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "polyfill-rs"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
