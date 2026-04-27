@@ -142,6 +142,10 @@ let order_args = OrderArgs::new("token_id", dec!(0.75), dec!(100.0), Side::BUY);
 let result = client.create_and_post_order(&order_args).await?;
 ```
 
+Polymarket applies fees at match time. Signed orders do not include fee information; query
+`client.get_clob_market_info(condition_id).await?.fee_details` when you need fee parameters for
+estimation or simulation.
+
 **High-Frequency Market Making:**
 ```rust
 use polyfill_rs::{OrderBookImpl, WebSocketStream};
@@ -312,6 +316,10 @@ let order_args = OrderArgs::new(
 let result = client.create_and_post_order(&order_args).await?;
 ```
 
+Order creation does not accept or serialize fees. Fee parameters come from
+`get_clob_market_info(condition_id).fee_details` and are only needed for local estimates; the
+protocol applies fees when orders match.
+
 The difference is sub-microsecond order book operations and deterministic latency profiles.
 
 ### Real-Time Order Book Tracking
@@ -353,9 +361,9 @@ Before you place a big order, you probably want to know what it'll cost you:
 use polyfill_rs::FillEngine;
 
 let mut fill_engine = FillEngine::new(
-    Decimal::from_str("0.001")?, // max slippage: 0.1%
-    Decimal::from_str("0.02")?,  // fee rate: 2%
-    10,                          // fee in basis points
+    Decimal::from_str("0.001")?, // minimum fill size
+    Decimal::from_str("0.02")?,  // max slippage: 2%
+    10,                          // simulation fee in basis points
 );
 
 // Simulate buying $1000 worth

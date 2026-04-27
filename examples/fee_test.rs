@@ -1,7 +1,7 @@
-//! Fee calculation verification and order submission test
+//! Fee estimation and order submission test
 //!
 //! This example:
-//! 1. Verifies local fee calculation matches API across multiple 15-minute markets
+//! 1. Estimates fees from V2 market info without adding fees to signed orders
 //! 2. Tests maker and taker order submission on a test market
 //!
 //! Required environment variables:
@@ -10,7 +10,7 @@
 //! - POLYMARKET_SECRET: API secret (optional, will be derived if not set)
 //! - POLYMARKET_PASSPHRASE: API passphrase (optional, will be derived if not set)
 
-use polyfill_rs::{calculate_fee_rate_bps, ClobClient, OrderArgs, OrderType, Result, Side};
+use polyfill_rs::{calculate_taker_fee, ClobClient, OrderArgs, OrderType, Result, Side};
 use rust_decimal_macros::dec;
 use tracing::{error, info, warn};
 
@@ -23,19 +23,19 @@ async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    info!("Polymarket Fee Calculation Test");
-    info!("================================");
+    info!("Polymarket Fee Estimation Test");
+    info!("==============================");
 
     // Load environment variables
     dotenv::dotenv().ok();
 
-    // Create basic client for API verification
+    // Create basic client for market-info lookups
     let client = ClobClient::new("https://clob.polymarket.com");
 
-    // Part A: Verify fee calculation against API
-    info!("\n[Part A] Fee Calculation Verification");
+    // Part A: Estimate fees from market info
+    info!("\n[Part A] Fee Estimation From Market Info");
     info!("--------------------------------------");
-    verify_fee_calculations(&client).await?;
+    estimate_fees_from_market_info(&client).await?;
 
     // Part B: Test live order submission (requires credentials)
     info!("\n[Part B] Live Order Submission Test");
@@ -55,15 +55,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Verify local fee calculation matches API for various prices
-async fn verify_fee_calculations(client: &ClobClient) -> Result<()> {
-    info!("Fetching 15-minute markets for fee verification...");
+/// Estimate fees from V2 market info for active sampling markets.
+async fn estimate_fees_from_market_info(client: &ClobClient) -> Result<()> {
+    info!("Fetching sampling markets for fee estimation...");
 
     // Get sampling markets and filter for 15-minute crypto markets
     let markets = client.get_sampling_markets(None).await?;
 
-    let mut verified_count = 0;
-    let mut mismatches = Vec::new();
+    let mut estimated_count = 0;
 
     for market in markets.data.iter() {
         // Check if this is a 15-minute crypto market
@@ -79,7 +78,8 @@ async fn verify_fee_calculations(client: &ClobClient) -> Result<()> {
             continue;
         }
 
-        // Get token price and fee rate from API for each token
+        let market_info = client.get_clob_market_info(&market.condition_id).await?;
+
         for token in &market.tokens {
             if token.token_id.is_empty() {
                 continue;
@@ -90,99 +90,32 @@ async fn verify_fee_calculations(client: &ClobClient) -> Result<()> {
                 continue;
             }
 
-            // Get fee rate from API
-            match client.get_fee_rate(&token.token_id).await {
-                Ok(api_fee_rate) => {
-                    // Calculate local fee rate
-                    let local_fee_rate = calculate_fee_rate_bps(price);
-
-                    // Compare (allow small rounding differences)
-                    let diff = (api_fee_rate as i32 - local_fee_rate as i32).abs();
-
-                    if diff <= 1 {
-                        verified_count += 1;
-                        info!(
-                            "  {} ({}): price={:.4}, local={}, api={} ",
-                            token.outcome,
-                            &token.token_id[..20],
-                            price,
-                            local_fee_rate,
-                            api_fee_rate
-                        );
-                    } else {
-                        mismatches.push((
-                            market.question.clone(),
-                            token.outcome.clone(),
-                            price,
-                            local_fee_rate,
-                            api_fee_rate,
-                        ));
-                    }
-                },
-                Err(e) => {
-                    warn!("  Failed to get fee rate for {}: {}", token.token_id, e);
-                },
-            }
+            let estimated_fee = calculate_taker_fee(dec!(100), price, &market_info.fee_details);
+            estimated_count += 1;
+            info!(
+                "  {} ({}): price={:.4}, fee={} for $100 quote",
+                token.outcome,
+                &token.token_id[..20],
+                price,
+                estimated_fee
+            );
 
             // Limit to avoid too many API calls
-            if verified_count >= 10 {
+            if estimated_count >= 10 {
                 break;
             }
         }
 
-        if verified_count >= 10 {
+        if estimated_count >= 10 {
             break;
         }
     }
 
-    info!("\nVerification Summary:");
-    info!("  Matched: {} tokens", verified_count);
-    info!("  Mismatches: {} tokens", mismatches.len());
-
-    if !mismatches.is_empty() {
-        error!("\nMismatched calculations:");
-        for (question, outcome, price, local, api) in &mismatches {
-            error!(
-                "  {} ({}): price={:.4}, local={}, api={}",
-                question, outcome, price, local, api
-            );
-        }
-        return Err(polyfill_rs::PolyfillError::validation(
-            "Fee calculation mismatch detected",
-        ));
+    if estimated_count == 0 {
+        warn!("No 15-minute markets found for estimation");
     }
 
-    if verified_count == 0 {
-        warn!("No 15-minute markets found for verification");
-        warn!("Testing formula at known price points instead...");
-
-        // Test at known price points
-        let test_cases = vec![
-            (dec!(0.50), 156u32), // Max fee at 50%
-            (dec!(0.10), 20u32),  // Low price
-            (dec!(0.90), 20u32),  // High price (symmetric)
-            (dec!(0.25), 88u32),  // Mid-low
-            (dec!(0.75), 88u32),  // Mid-high (symmetric)
-        ];
-
-        for (price, expected_approx) in test_cases {
-            let calculated = calculate_fee_rate_bps(price);
-            let diff = (calculated as i32 - expected_approx as i32).abs();
-            if diff <= 2 {
-                info!(
-                    "  price={:.2}: calculated={} bps (expected ~{})",
-                    price, calculated, expected_approx
-                );
-            } else {
-                error!(
-                    "  price={:.2}: calculated={} bps, expected ~{}",
-                    price, calculated, expected_approx
-                );
-            }
-        }
-    }
-
-    info!("Fee calculation verification complete!");
+    info!("Fee estimation complete!");
     Ok(())
 }
 
@@ -269,6 +202,20 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     let tick_size = client.get_tick_size(GREENLAND_YES_TOKEN).await?;
     info!("  Tick size: {}", tick_size);
 
+    let market = client
+        .get_sampling_markets(None)
+        .await?
+        .data
+        .into_iter()
+        .find(|market| {
+            market
+                .tokens
+                .iter()
+                .any(|token| token.token_id == GREENLAND_YES_TOKEN)
+        })
+        .ok_or_else(|| polyfill_rs::PolyfillError::validation("Greenland market not found"))?;
+    let market_info = client.get_clob_market_info(&market.condition_id).await?;
+
     // Minimum order size is 5 shares on Polymarket
     let min_size = dec!(5);
 
@@ -318,10 +265,14 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     info!("\n  [Test 2] Taker Order");
 
     let taker_price = best_ask.price;
-    let taker_fee_rate = calculate_fee_rate_bps(taker_price);
+    let estimated_fee = calculate_taker_fee(
+        min_size * taker_price,
+        taker_price,
+        &market_info.fee_details,
+    );
     info!(
-        "    Price: {}, expected fee rate: {} bps",
-        taker_price, taker_fee_rate
+        "    Price: {}, estimated fee for order: {}",
+        taker_price, estimated_fee
     );
 
     let taker_order_args = OrderArgs::new(GREENLAND_YES_TOKEN, taker_price, min_size, Side::BUY);

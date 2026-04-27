@@ -104,7 +104,6 @@ impl PolyfillDemo {
             private_key: None,              // Would be set in production
             api_credentials: None,          // Would be set in production
             max_slippage: Some(dec!(0.01)), // 1% max slippage
-            fee_rate: Some(dec!(0.02)),     // 2% fee rate
             timeout: Some(Duration::from_secs(30)),
             max_connections: Some(100),
         };
@@ -118,7 +117,7 @@ impl PolyfillDemo {
         let fill_engine = FillEngine::new(
             dec!(1.0), // Min fill size
             dec!(2.0), // Max slippage 2%
-            5,         // 5 bps fee rate
+            5,         // 5 bps simulation fee
         );
 
         // Create fill processor

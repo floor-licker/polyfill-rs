@@ -850,8 +850,6 @@ pub struct ClientConfig {
     pub api_credentials: Option<ApiCredentials>,
     /// Maximum slippage tolerance
     pub max_slippage: Option<Decimal>,
-    /// Fee rate in basis points
-    pub fee_rate: Option<Decimal>,
     /// Request timeout
     pub timeout: Option<std::time::Duration>,
     /// Maximum number of connections
@@ -868,7 +866,6 @@ impl Default for ClientConfig {
             timeout: Some(std::time::Duration::from_secs(30)),
             max_connections: Some(100),
             max_slippage: None,
-            fee_rate: None,
         }
     }
 }
@@ -1319,13 +1316,6 @@ pub struct TickSizeResponse {
 #[derive(Debug, Deserialize)]
 pub struct NegRiskResponse {
     pub neg_risk: bool,
-}
-
-/// Response from the fee-rate API endpoint
-#[derive(Debug, Clone, Deserialize)]
-pub struct FeeRateResponse {
-    /// Base fee (0 for fee-free markets, non-zero for fee-enabled markets)
-    pub base_fee: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

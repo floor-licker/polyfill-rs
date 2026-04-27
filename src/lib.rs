@@ -106,7 +106,6 @@ pub use crate::types::{
     ClobToken,
     // Exchange enum for multi-venue orderbook management
     Exchange,
-    FeeRateResponse,
     FillEvent,
     // Live data types
     LiveDataMessage,
@@ -169,10 +168,8 @@ pub use crate::stream::{
 };
 pub use crate::transport::{RawMessage, WsTransport};
 
-// Re-export fee calculation
-pub use crate::fees::{
-    calculate_fee_rate_bps, calculate_taker_fee, effective_fee_rate, FEE_RATE_BPS_MAKER,
-};
+// Re-export fee estimation
+pub use crate::fees::calculate_taker_fee;
 
 // Re-export utilities
 pub use crate::utils::{crypto, math, rate_limit, retry, time, url};

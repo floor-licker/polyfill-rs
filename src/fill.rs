@@ -38,21 +38,27 @@ pub enum FillStatus {
     Rejected,
 }
 
-/// Fill execution engine
+/// Fill execution engine for local simulation.
+///
+/// The `fee_rate_bps` constructor argument is simulation-only. Live signed orders do not include
+/// fee information; Polymarket applies fees at match time from market fee parameters.
 #[derive(Debug)]
 pub struct FillEngine {
     /// Minimum fill size for market orders
     min_fill_size: Decimal,
     /// Maximum slippage tolerance (as percentage)
     max_slippage_pct: Decimal,
-    /// Fee rate in basis points
+    /// Simulation fee rate in basis points
     fee_rate_bps: u32,
     /// Track fills by order ID
     fills: HashMap<String, Vec<FillEvent>>,
 }
 
 impl FillEngine {
-    /// Create a new fill engine
+    /// Create a new fill engine.
+    ///
+    /// `fee_rate_bps` is used only for local fill simulation and does not affect live signed
+    /// orders.
     pub fn new(min_fill_size: Decimal, max_slippage_pct: Decimal, fee_rate_bps: u32) -> Self {
         Self {
             min_fill_size,
@@ -69,6 +75,10 @@ impl FillEngine {
         book: &crate::book::OrderBook,
     ) -> Result<FillResult> {
         let start_time = Utc::now();
+        let order_id = order
+            .client_id
+            .clone()
+            .unwrap_or_else(|| "market_order".to_string());
 
         // Validate order
         self.validate_market_order(order)?;
@@ -81,10 +91,7 @@ impl FillEngine {
 
         if levels.is_empty() {
             return Ok(FillResult {
-                order_id: order
-                    .client_id
-                    .clone()
-                    .unwrap_or_else(|| "market_order".to_string()),
+                order_id,
                 fills: Vec::new(),
                 total_size: Decimal::ZERO,
                 average_price: Decimal::ZERO,
@@ -114,10 +121,7 @@ impl FillEngine {
 
             let fill = FillEvent {
                 id: uuid::Uuid::new_v4().to_string(),
-                order_id: order
-                    .client_id
-                    .clone()
-                    .unwrap_or_else(|| "market_order".to_string()),
+                order_id: order_id.clone(),
                 token_id: order.token_id.clone(),
                 side: order.side,
                 price: level.price,
@@ -142,10 +146,7 @@ impl FillEngine {
                     slippage, self.max_slippage_pct
                 );
                 return Ok(FillResult {
-                    order_id: order
-                        .client_id
-                        .clone()
-                        .unwrap_or_else(|| "market_order".to_string()),
+                    order_id,
                     fills: Vec::new(),
                     total_size: Decimal::ZERO,
                     average_price: Decimal::ZERO,
@@ -175,10 +176,7 @@ impl FillEngine {
         let total_fees: Decimal = fills.iter().map(|f| f.fee).sum();
 
         let result = FillResult {
-            order_id: order
-                .client_id
-                .clone()
-                .unwrap_or_else(|| "market_order".to_string()),
+            order_id,
             fills,
             total_size,
             average_price,
@@ -212,6 +210,10 @@ impl FillEngine {
         book: &crate::book::OrderBook,
     ) -> Result<FillResult> {
         let start_time = Utc::now();
+        let order_id = order
+            .client_id
+            .clone()
+            .unwrap_or_else(|| "limit_order".to_string());
 
         // Validate order
         self.validate_limit_order(order)?;
@@ -236,10 +238,7 @@ impl FillEngine {
 
         if !can_fill {
             return Ok(FillResult {
-                order_id: order
-                    .client_id
-                    .clone()
-                    .unwrap_or_else(|| "limit_order".to_string()),
+                order_id,
                 fills: Vec::new(),
                 total_size: Decimal::ZERO,
                 average_price: Decimal::ZERO,
@@ -251,12 +250,10 @@ impl FillEngine {
         }
 
         // Simulate immediate fill
+        let fee = self.calculate_fee(order.price * order.size);
         let fill = FillEvent {
             id: uuid::Uuid::new_v4().to_string(),
-            order_id: order
-                .client_id
-                .clone()
-                .unwrap_or_else(|| "limit_order".to_string()),
+            order_id: order_id.clone(),
             token_id: order.token_id.clone(),
             side: order.side,
             price: order.price,
@@ -264,19 +261,16 @@ impl FillEngine {
             timestamp: Utc::now(),
             maker_address: Address::ZERO,
             taker_address: Address::ZERO,
-            fee: self.calculate_fee(order.price * order.size),
+            fee,
         };
 
         let result = FillResult {
-            order_id: order
-                .client_id
-                .clone()
-                .unwrap_or_else(|| "limit_order".to_string()),
+            order_id,
             fills: vec![fill],
             total_size: order.size,
             average_price: order.price,
             total_cost: order.price * order.size,
-            fees: self.calculate_fee(order.price * order.size),
+            fees: fee,
             status: FillStatus::Filled,
             timestamp: start_time,
         };
