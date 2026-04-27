@@ -820,6 +820,7 @@ impl LiveTopic {
 
 /// Crypto symbols for price feeds
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Symbol {
     BTC,
     ETH,

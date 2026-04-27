@@ -398,7 +398,7 @@ impl ClobClient {
         data[21..53].copy_from_slice(salt.as_slice());
         data[53..85].copy_from_slice(init_code_hash.as_slice());
 
-        let hash = keccak256(&data);
+        let hash = keccak256(data);
         let proxy_address = Address::from_slice(&hash[12..]);
 
         Some(proxy_address.to_checksum(None))
@@ -1006,7 +1006,7 @@ impl ClobClient {
             let error_body = response.text().await.unwrap_or_default();
             return Err(PolyfillError::api(
                 status,
-                &format!("Failed to post order: {}", error_body),
+                format!("Failed to post order: {}", error_body),
             ));
         }
 
@@ -1056,7 +1056,7 @@ impl ClobClient {
             let error_body = response.text().await.unwrap_or_default();
             return Err(PolyfillError::api(
                 status,
-                &format!("Failed to post orders: {}", error_body),
+                format!("Failed to post orders: {}", error_body),
             ));
         }
 

@@ -7,7 +7,7 @@ use crate::auth::sign_order_message;
 use crate::client::OrderArgs;
 use crate::errors::{PolyfillError, Result};
 use crate::types::{ExtraOrderArgs, MarketOrderArgs, OrderOptions, Side, SignedOrderRequest};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
 use rand::Rng;
 use rust_decimal::Decimal;
@@ -91,12 +91,12 @@ static ROUNDING_CONFIG: LazyLock<HashMap<Decimal, RoundConfig>> = LazyLock::new(
 pub fn get_contract_config(chain_id: u64, neg_risk: bool) -> Option<ContractConfig> {
     match (chain_id, neg_risk) {
         (137, false) => Some(ContractConfig {
-            exchange: "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E".to_string(),
+            exchange: "0xE111180000d2663C0091e4f400237545B87B996B".to_string(),
             collateral: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".to_string(),
             conditional_tokens: "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045".to_string(),
         }),
         (137, true) => Some(ContractConfig {
-            exchange: "0xC5d563A36AE78145C45a50134d48A1215220f80a".to_string(),
+            exchange: "0xe2222d279d744050d28e00520010520000310F59".to_string(),
             collateral: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".to_string(),
             conditional_tokens: "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045".to_string(),
         }),
@@ -329,6 +329,10 @@ impl OrderBuilder {
         extras: &ExtraOrderArgs,
     ) -> Result<SignedOrderRequest> {
         let seed = generate_seed();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
         let taker_address = Address::from_str(&extras.taker)
             .map_err(|e| PolyfillError::validation(format!("Invalid taker address: {}", e)))?;
 
@@ -339,15 +343,14 @@ impl OrderBuilder {
             salt: U256::from(seed),
             maker: self.funder,
             signer: self.signer.address(),
-            taker: taker_address,
             tokenId: u256_token_id,
             makerAmount: U256::from(maker_amount),
             takerAmount: U256::from(taker_amount),
-            expiration: U256::from(expiration),
-            nonce: extras.nonce,
-            feeRateBps: U256::from(extras.fee_rate_bps),
             side: side as u8,
             signatureType: self.sig_type as u8,
+            timestamp: U256::from(timestamp),
+            metadata: B256::ZERO,
+            builder: B256::ZERO,
         };
 
         let signature = sign_order_message(&self.signer, order, chain_id, exchange)?;
@@ -407,10 +410,18 @@ mod tests {
         // Test Polygon mainnet
         let config = get_contract_config(137, false);
         assert!(config.is_some());
+        assert_eq!(
+            config.unwrap().exchange,
+            "0xE111180000d2663C0091e4f400237545B87B996B"
+        );
 
         // Test with neg risk
         let config_neg = get_contract_config(137, true);
         assert!(config_neg.is_some());
+        assert_eq!(
+            config_neg.unwrap().exchange,
+            "0xe2222d279d744050d28e00520010520000310F59"
+        );
 
         // Test unsupported chain
         let config_unsupported = get_contract_config(999, false);

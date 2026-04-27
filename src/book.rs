@@ -363,7 +363,7 @@ impl OrderBook {
             // }
 
             // AFTER (fast, ~2ns, pure integer):
-            if tick_size_ticks > 0 && delta.price % tick_size_ticks != 0 {
+            if tick_size_ticks > 0 && !delta.price.is_multiple_of(tick_size_ticks) {
                 // Price is not aligned to tick size - reject the update
                 warn!(
                     "Rejecting misaligned price: {} not divisible by tick size {}",
@@ -700,11 +700,7 @@ impl OrderBookManager {
 
     /// Get or create an order book for the given exchange + symbol.
     /// If the book doesn't exist yet, creates a new empty one.
-    pub async fn get_or_create_book(
-        &self,
-        exchange: Exchange,
-        symbol: &str,
-    ) -> OrderBook {
+    pub async fn get_or_create_book(&self, exchange: Exchange, symbol: &str) -> OrderBook {
         let mut books = self.books.write().await;
         let key = (exchange, symbol.to_string());
         if let Some(book) = books.get(&key) {
@@ -717,12 +713,7 @@ impl OrderBookManager {
     }
 
     /// Replace the book for a given exchange + symbol (e.g., on a full snapshot).
-    pub async fn set_book(
-        &self,
-        exchange: Exchange,
-        symbol: &str,
-        book: OrderBook,
-    ) {
+    pub async fn set_book(&self, exchange: Exchange, symbol: &str, book: OrderBook) {
         self.books
             .write()
             .await
@@ -764,19 +755,12 @@ impl OrderBookManager {
 
     /// Update a book with a delta.
     /// The book must already exist (created via `get_or_create_book` or `set_book`).
-    pub async fn apply_delta(
-        &self,
-        exchange: Exchange,
-        delta: OrderDelta,
-    ) -> Result<()> {
+    pub async fn apply_delta(&self, exchange: Exchange, delta: OrderDelta) -> Result<()> {
         let mut books = self.books.write().await;
         let key = (exchange, delta.token_id.clone());
         let book = books.get_mut(&key).ok_or_else(|| {
             PolyfillError::market_data(
-                format!(
-                    "No book found for {:?}/{}",
-                    exchange, delta.token_id
-                ),
+                format!("No book found for {:?}/{}", exchange, delta.token_id),
                 crate::errors::MarketDataErrorKind::TokenNotFound,
             )
         })?;
@@ -802,10 +786,7 @@ impl OrderBookManager {
     }
 
     /// Get snapshots of all books for a specific exchange.
-    pub async fn get_books_for_exchange(
-        &self,
-        exchange: Exchange,
-    ) -> Vec<crate::types::OrderBook> {
+    pub async fn get_books_for_exchange(&self, exchange: Exchange) -> Vec<crate::types::OrderBook> {
         let books = self.books.read().await;
         books
             .iter()

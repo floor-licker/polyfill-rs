@@ -86,8 +86,6 @@ pub fn init() {
 // Re-export main types
 pub use crate::types::{
     ApiCredentials,
-    // Exchange enum for multi-venue orderbook management
-    Exchange,
     // Additional compatibility types
     ApiKeysResponse,
     AssetType,
@@ -101,6 +99,8 @@ pub use crate::types::{
     BookParams,
     ClientConfig,
     ClientResult,
+    // Exchange enum for multi-venue orderbook management
+    Exchange,
     FeeRateResponse,
     FillEvent,
     // Live data types
@@ -217,9 +217,7 @@ mod benches {
                     sequence: 1,
                 };
 
-                let _ = rt.block_on(
-                    book_manager.apply_delta(Exchange::Polymarket, delta),
-                );
+                let _ = rt.block_on(book_manager.apply_delta(Exchange::Polymarket, delta));
             });
         });
     }

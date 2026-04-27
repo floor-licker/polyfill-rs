@@ -71,7 +71,6 @@ tokio-test = "0.4"
 mockito = "1.0"
 proptest = "1.0"
 env_logger = "0.10"
-# polymarket-rs-client = { path = "external/polymarket-rs-client" } # Uncomment to run side-by-side benchmark
 
 [features]
 default = ["stream"]
@@ -107,4 +106,4 @@ opt-level = 1
 [profile.test]
 # Optimizations for test performance
 opt-level = 2
-debug = true 
+debug = true

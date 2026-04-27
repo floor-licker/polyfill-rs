@@ -467,8 +467,8 @@ pub struct LiveDataStream {
     transport: WsTransport,
     /// Current subscriptions
     subscriptions: Vec<LiveDataSubscription>,
-    /// Message sender for internal communication
-    tx: mpsc::UnboundedSender<LiveDataMessage>,
+    /// Message sender retained to keep the receiver open
+    _tx: mpsc::UnboundedSender<LiveDataMessage>,
     /// Message receiver
     rx: mpsc::UnboundedReceiver<LiveDataMessage>,
     /// Staleness threshold - if no message received within this duration, reconnect
@@ -495,7 +495,7 @@ impl LiveDataStream {
         Self {
             transport: WsTransport::new(url),
             subscriptions: Vec::new(),
-            tx,
+            _tx: tx,
             rx,
             staleness_threshold: None,
             last_message_instant: None,

@@ -42,15 +42,14 @@ sol! {
         uint256 salt;
         address maker;
         address signer;
-        address taker;
         uint256 tokenId;
         uint256 makerAmount;
         uint256 takerAmount;
-        uint256 expiration;
-        uint256 nonce;
-        uint256 feeRateBps;
         uint8 side;
         uint8 signatureType;
+        uint256 timestamp;
+        bytes32 metadata;
+        bytes32 builder;
     }
 }
 
@@ -98,18 +97,25 @@ pub fn sign_order_message(
     chain_id: u64,
     verifying_contract: Address,
 ) -> Result<String> {
-    let domain = eip712_domain!(
-        name: "Polymarket CTF Exchange",
-        version: "1",
-        chain_id: chain_id,
-        verifying_contract: verifying_contract,
-    );
+    let domain = order_eip712_domain(chain_id, verifying_contract);
 
     let signature = signer
         .sign_typed_data_sync(&order, &domain)
         .map_err(|e| PolyfillError::crypto(format!("Order signature failed: {}", e)))?;
 
     Ok(encode_prefixed(signature.as_bytes()))
+}
+
+fn order_eip712_domain(
+    chain_id: u64,
+    verifying_contract: Address,
+) -> alloy_sol_types::Eip712Domain {
+    eip712_domain!(
+        name: "Polymarket CTF Exchange",
+        version: "2",
+        chain_id: chain_id,
+        verifying_contract: verifying_contract,
+    )
 }
 
 /// Build HMAC signature for L2 authentication
@@ -218,6 +224,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_sol_types::SolStruct;
 
     #[test]
     fn test_unix_timestamp() {
@@ -366,6 +373,20 @@ mod tests {
         // EIP-712 signatures should be hex strings of specific length
         assert!(signature.starts_with("0x"));
         assert_eq!(signature.len(), 132); // 0x + 130 hex chars = 132 total
+    }
+
+    #[test]
+    fn test_order_eip712_type_is_v2() {
+        assert_eq!(
+            Order::eip712_encode_type(),
+            "Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)"
+        );
+    }
+
+    #[test]
+    fn test_order_eip712_domain_version_is_v2() {
+        let domain = order_eip712_domain(137, Address::ZERO);
+        assert_eq!(domain.version.as_deref(), Some("2"));
     }
 
     #[test]

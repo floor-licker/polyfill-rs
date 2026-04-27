@@ -130,7 +130,8 @@ impl SnipeStrategy {
             .apply_delta(Exchange::Polymarket, delta.clone())
             .await?;
 
-        let book = self.book_manager
+        let book = self
+            .book_manager
             .get_book(Exchange::Polymarket, &self.token_id)
             .await?;
 
@@ -219,7 +220,10 @@ impl SnipeStrategy {
         };
 
         // Get current book for execution simulation
-        let book = self.book_manager.get_book(Exchange::Polymarket, &self.token_id).await?;
+        let book = self
+            .book_manager
+            .get_book(Exchange::Polymarket, &self.token_id)
+            .await?;
         let mut book_impl = polyfill_rs::book::OrderBook::new(self.token_id.clone(), 100);
 
         // Convert to internal book format
