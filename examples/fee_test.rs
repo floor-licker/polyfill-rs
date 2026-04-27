@@ -10,9 +10,7 @@
 //! - POLYMARKET_SECRET: API secret (optional, will be derived if not set)
 //! - POLYMARKET_PASSPHRASE: API passphrase (optional, will be derived if not set)
 
-use polyfill_rs::{
-    calculate_fee_rate_bps, ClobClient, OrderArgs, OrderType, Result, Side, FEE_RATE_BPS_MAKER,
-};
+use polyfill_rs::{calculate_fee_rate_bps, ClobClient, OrderArgs, OrderType, Result, Side};
 use rust_decimal_macros::dec;
 use tracing::{error, info, warn};
 
@@ -275,7 +273,7 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     let min_size = dec!(5);
 
     // Test 1: Maker order (passive, resting on book)
-    info!("\n  [Test 1] Maker Order (fee_rate_bps=0)");
+    info!("\n  [Test 1] Maker Order");
 
     // Place order well below best ask to ensure it rests
     let maker_price = if let Some(bid) = best_bid {
@@ -286,16 +284,7 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
 
     let maker_order_args = OrderArgs::new(GREENLAND_YES_TOKEN, maker_price, min_size, Side::BUY);
 
-    // Create order with fee_rate_bps = 0 (maker)
-    let maker_extras = polyfill_rs::types::ExtraOrderArgs {
-        fee_rate_bps: FEE_RATE_BPS_MAKER,
-        ..Default::default()
-    };
-
-    match client
-        .create_order(&maker_order_args, None, Some(maker_extras), None)
-        .await
-    {
+    match client.create_order(&maker_order_args, 0, None).await {
         Ok(signed_order) => {
             info!("    Created maker order: salt={}", signed_order.salt);
 
@@ -326,27 +315,18 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     }
 
     // Test 2: Taker order (crossing, taking liquidity)
-    info!("\n  [Test 2] Taker Order (calculated fee_rate_bps)");
+    info!("\n  [Test 2] Taker Order");
 
     let taker_price = best_ask.price;
     let taker_fee_rate = calculate_fee_rate_bps(taker_price);
     info!(
-        "    Price: {}, calculated fee_rate_bps: {}",
+        "    Price: {}, expected fee rate: {} bps",
         taker_price, taker_fee_rate
     );
 
     let taker_order_args = OrderArgs::new(GREENLAND_YES_TOKEN, taker_price, min_size, Side::BUY);
 
-    // Create order with calculated fee_rate_bps (taker)
-    let taker_extras = polyfill_rs::types::ExtraOrderArgs {
-        fee_rate_bps: taker_fee_rate,
-        ..Default::default()
-    };
-
-    match client
-        .create_order(&taker_order_args, None, Some(taker_extras), None)
-        .await
-    {
+    match client.create_order(&taker_order_args, 0, None).await {
         Ok(signed_order) => {
             info!("    Created taker order: salt={}", signed_order.salt);
 

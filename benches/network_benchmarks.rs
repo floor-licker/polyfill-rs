@@ -69,7 +69,7 @@ fn benchmark_real_order_creation(c: &mut Criterion) {
                 );
 
                 // This is the real EIP-712 signing + network request
-                let result = client.create_order(&order_args, None, None, None).await;
+                let result = client.create_order(&order_args, 0, None).await;
                 black_box(result)
             })
         })
