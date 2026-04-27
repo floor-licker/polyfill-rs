@@ -239,7 +239,7 @@ impl OrderBuilder {
         chain_id: u64,
         order_args: &MarketOrderArgs,
         price: Decimal,
-        extras: &ExtraOrderArgs,
+        _extras: &ExtraOrderArgs,
         options: &OrderOptions,
     ) -> Result<SignedOrderRequest> {
         let tick_size = options
@@ -268,7 +268,6 @@ impl OrderBuilder {
             maker_amount,
             taker_amount,
             0,
-            extras,
         )
     }
 
@@ -278,7 +277,7 @@ impl OrderBuilder {
         chain_id: u64,
         order_args: &OrderArgs,
         expiration: u64,
-        extras: &ExtraOrderArgs,
+        _extras: &ExtraOrderArgs,
         options: &OrderOptions,
     ) -> Result<SignedOrderRequest> {
         let tick_size = options
@@ -311,7 +310,6 @@ impl OrderBuilder {
             maker_amount,
             taker_amount,
             expiration,
-            extras,
         )
     }
 
@@ -326,16 +324,13 @@ impl OrderBuilder {
         maker_amount: u32,
         taker_amount: u32,
         expiration: u64,
-        extras: &ExtraOrderArgs,
     ) -> Result<SignedOrderRequest> {
         let seed = generate_seed();
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis();
-        let taker_address = Address::from_str(&extras.taker)
-            .map_err(|e| PolyfillError::validation(format!("Invalid taker address: {}", e)))?;
-
+        let zero_hash = B256::ZERO;
         let u256_token_id = U256::from_str_radix(&token_id, 10)
             .map_err(|e| PolyfillError::validation(format!("Incorrect tokenId format: {}", e)))?;
 
@@ -349,8 +344,8 @@ impl OrderBuilder {
             side: side as u8,
             signatureType: self.sig_type as u8,
             timestamp: U256::from(timestamp),
-            metadata: B256::ZERO,
-            builder: B256::ZERO,
+            metadata: zero_hash,
+            builder: zero_hash,
         };
 
         let signature = sign_order_message(&self.signer, order, chain_id, exchange)?;
@@ -359,15 +354,15 @@ impl OrderBuilder {
             salt: seed,
             maker: self.funder.to_checksum(None),
             signer: self.signer.address().to_checksum(None),
-            taker: taker_address.to_checksum(None),
             token_id,
             maker_amount: maker_amount.to_string(),
             taker_amount: taker_amount.to_string(),
             expiration: expiration.to_string(),
-            nonce: extras.nonce.to_string(),
-            fee_rate_bps: extras.fee_rate_bps.to_string(),
             side: side.as_str().to_string(),
             signature_type: self.sig_type as u8,
+            timestamp: timestamp.to_string(),
+            metadata: zero_hash.to_string(),
+            builder: zero_hash.to_string(),
             signature,
         })
     }
