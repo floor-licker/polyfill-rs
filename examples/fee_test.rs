@@ -298,10 +298,6 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     {
         Ok(signed_order) => {
             info!("    Created maker order: salt={}", signed_order.salt);
-            info!(
-                "    fee_rate_bps in signed order: {}",
-                signed_order.fee_rate_bps
-            );
 
             match client.post_order(signed_order, OrderType::GTC).await {
                 Ok(result) => {
@@ -353,10 +349,6 @@ async fn test_order_submission(client: &ClobClient) -> Result<()> {
     {
         Ok(signed_order) => {
             info!("    Created taker order: salt={}", signed_order.salt);
-            info!(
-                "    fee_rate_bps in signed order: {}",
-                signed_order.fee_rate_bps
-            );
 
             // For taker orders, use FOK (Fill-or-Kill) to ensure immediate execution
             match client.post_order(signed_order, OrderType::FOK).await {

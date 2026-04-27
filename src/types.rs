@@ -558,15 +558,15 @@ pub struct SignedOrderRequest {
     pub salt: u64,
     pub maker: String,
     pub signer: String,
-    pub taker: String,
     pub token_id: String,
     pub maker_amount: String,
     pub taker_amount: String,
     pub expiration: String,
-    pub nonce: String,
-    pub fee_rate_bps: String,
     pub side: String,
     pub signature_type: u8,
+    pub timestamp: String,
+    pub metadata: String,
+    pub builder: String,
     pub signature: String,
 }
 
@@ -621,6 +621,98 @@ impl PostOrderArgs {
             order_type,
             post_only,
         }
+    }
+}
+
+#[cfg(test)]
+mod signed_order_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn signed_order_request() -> SignedOrderRequest {
+        SignedOrderRequest {
+            salt: 123,
+            maker: "0x0000000000000000000000000000000000000001".to_string(),
+            signer: "0x0000000000000000000000000000000000000002".to_string(),
+            token_id: "456".to_string(),
+            maker_amount: "1000000".to_string(),
+            taker_amount: "2000000".to_string(),
+            expiration: "0".to_string(),
+            side: "BUY".to_string(),
+            signature_type: 2,
+            timestamp: "1710000000000".to_string(),
+            metadata: "0x0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            builder: "0x0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            signature: "0xsig".to_string(),
+        }
+    }
+
+    #[test]
+    fn signed_order_request_serializes_v2_wire_body() {
+        let value = serde_json::to_value(signed_order_request()).unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "salt": 123,
+                "maker": "0x0000000000000000000000000000000000000001",
+                "signer": "0x0000000000000000000000000000000000000002",
+                "tokenId": "456",
+                "makerAmount": "1000000",
+                "takerAmount": "2000000",
+                "expiration": "0",
+                "side": "BUY",
+                "signatureType": 2,
+                "timestamp": "1710000000000",
+                "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "signature": "0xsig"
+            })
+        );
+
+        assert!(value.get("taker").is_none());
+        assert!(value.get("nonce").is_none());
+        assert!(value.get("feeRateBps").is_none());
+    }
+
+    #[test]
+    fn post_order_serializes_v2_order_body() {
+        let value = serde_json::to_value(PostOrder::new(
+            signed_order_request(),
+            "owner-key".to_string(),
+            OrderType::GTC,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "order": {
+                    "salt": 123,
+                    "maker": "0x0000000000000000000000000000000000000001",
+                    "signer": "0x0000000000000000000000000000000000000002",
+                    "tokenId": "456",
+                    "makerAmount": "1000000",
+                    "takerAmount": "2000000",
+                    "expiration": "0",
+                    "side": "BUY",
+                    "signatureType": 2,
+                    "timestamp": "1710000000000",
+                    "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "signature": "0xsig"
+                },
+                "owner": "owner-key",
+                "orderType": "GTC"
+            })
+        );
+
+        assert!(value["order"].get("taker").is_none());
+        assert!(value["order"].get("nonce").is_none());
+        assert!(value["order"].get("feeRateBps").is_none());
+        assert!(value.get("postOnly").is_none());
     }
 }
 
