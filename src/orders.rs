@@ -6,7 +6,7 @@
 use crate::auth::sign_order_message;
 use crate::client::OrderArgs;
 use crate::errors::{PolyfillError, Result};
-use crate::types::{ExtraOrderArgs, MarketOrderArgs, OrderOptions, Side, SignedOrderRequest};
+use crate::types::{MarketOrderArgs, OrderOptions, Side, SignedOrderRequest};
 use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
 use rand::Rng;
@@ -239,7 +239,6 @@ impl OrderBuilder {
         chain_id: u64,
         order_args: &MarketOrderArgs,
         price: Decimal,
-        _extras: &ExtraOrderArgs,
         options: &OrderOptions,
     ) -> Result<SignedOrderRequest> {
         let tick_size = options
@@ -277,7 +276,6 @@ impl OrderBuilder {
         chain_id: u64,
         order_args: &OrderArgs,
         expiration: u64,
-        _extras: &ExtraOrderArgs,
         options: &OrderOptions,
     ) -> Result<SignedOrderRequest> {
         let tick_size = options
@@ -421,6 +419,43 @@ mod tests {
         // Test unsupported chain
         let config_unsupported = get_contract_config(999, false);
         assert!(config_unsupported.is_none());
+    }
+
+    #[test]
+    fn test_signed_order_timestamp_is_millis_and_expiration_is_wire_only() {
+        let signer: PrivateKeySigner =
+            "0x1234567890123456789012345678901234567890123456789012345678901234"
+                .parse()
+                .unwrap();
+        let builder = OrderBuilder::new(signer, None, None);
+        let order_args = OrderArgs::new(
+            "123456",
+            Decimal::from_str("0.50").unwrap(),
+            Decimal::from_str("5").unwrap(),
+            Side::BUY,
+        );
+        let options = OrderOptions {
+            tick_size: Some(Decimal::from_str("0.01").unwrap()),
+            neg_risk: Some(false),
+        };
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        let order = builder
+            .create_order(137, &order_args, 123, &options)
+            .unwrap();
+
+        let after = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let timestamp = order.timestamp.parse::<u128>().unwrap();
+        assert!(timestamp >= before);
+        assert!(timestamp <= after);
+        assert!(timestamp >= 1_000_000_000_000);
+        assert_eq!(order.expiration, "123");
     }
 
     #[test]

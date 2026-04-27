@@ -821,9 +821,9 @@ impl ClobClient {
         token_id: &str,
         options: Option<&OrderOptions>,
     ) -> Result<OrderOptions> {
-        let (tick_size, neg_risk, fee_rate_bps) = match options {
-            Some(o) => (o.tick_size, o.neg_risk, o.fee_rate_bps),
-            None => (None, None, None),
+        let (tick_size, neg_risk) = match options {
+            Some(o) => (o.tick_size, o.neg_risk),
+            None => (None, None),
         };
 
         let tick_size = self.resolve_tick_size(token_id, tick_size).await?;
@@ -835,7 +835,6 @@ impl ClobClient {
         Ok(OrderOptions {
             tick_size: Some(tick_size),
             neg_risk: Some(neg_risk),
-            fee_rate_bps,
         })
     }
 
@@ -850,8 +849,7 @@ impl ClobClient {
     pub async fn create_order(
         &self,
         order_args: &OrderArgs,
-        expiration: Option<u64>,
-        extras: Option<crate::types::ExtraOrderArgs>,
+        expiration: u64,
         options: Option<&OrderOptions>,
     ) -> Result<SignedOrderRequest> {
         let order_builder = self
@@ -863,9 +861,6 @@ impl ClobClient {
             .get_filled_order_options(&order_args.token_id, options)
             .await?;
 
-        let expiration = expiration.unwrap_or(0);
-        let extras = extras.unwrap_or_default();
-
         if !self.is_price_in_range(
             order_args.price,
             create_order_options.tick_size.expect("Should be filled"),
@@ -875,13 +870,7 @@ impl ClobClient {
             ));
         }
 
-        order_builder.create_order(
-            self.chain_id,
-            order_args,
-            expiration,
-            &extras,
-            &create_order_options,
-        )
+        order_builder.create_order(self.chain_id, order_args, expiration, &create_order_options)
     }
 
     /// Calculate market price from order book
@@ -924,7 +913,6 @@ impl ClobClient {
     pub async fn create_market_order(
         &self,
         order_args: &crate::types::MarketOrderArgs,
-        extras: Option<crate::types::ExtraOrderArgs>,
         options: Option<&OrderOptions>,
     ) -> Result<SignedOrderRequest> {
         let order_builder = self
@@ -936,7 +924,6 @@ impl ClobClient {
             .get_filled_order_options(&order_args.token_id, options)
             .await?;
 
-        let extras = extras.unwrap_or_default();
         let price = self
             .calculate_market_price(&order_args.token_id, Side::BUY, order_args.amount)
             .await?;
@@ -950,13 +937,7 @@ impl ClobClient {
             ));
         }
 
-        order_builder.create_market_order(
-            self.chain_id,
-            order_args,
-            price,
-            &extras,
-            &create_order_options,
-        )
+        order_builder.create_market_order(self.chain_id, order_args, price, &create_order_options)
     }
 
     /// Post an order to the exchange
@@ -1065,7 +1046,7 @@ impl ClobClient {
 
     /// Create and post an order in one call
     pub async fn create_and_post_order(&self, order_args: &OrderArgs) -> Result<Value> {
-        let order = self.create_order(order_args, None, None, None).await?;
+        let order = self.create_order(order_args, 0, None).await?;
         self.post_order(order, OrderType::GTC).await
     }
 
@@ -1924,9 +1905,8 @@ impl ClobClient {
 
 // Re-export types from the canonical location in types.rs
 pub use crate::types::{
-    ExtraOrderArgs, Market, MarketOrderArgs, MarketsResponse, MidpointResponse, NegRiskResponse,
-    OrderBookSummary, OrderSummary, PriceResponse, Rewards, SpreadResponse, TickSizeResponse,
-    Token,
+    Market, MarketOrderArgs, MarketsResponse, MidpointResponse, NegRiskResponse, OrderBookSummary,
+    OrderSummary, PriceResponse, Rewards, SpreadResponse, TickSizeResponse, Token,
 };
 
 // Compatibility types that need to stay in client.rs
