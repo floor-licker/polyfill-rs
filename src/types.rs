@@ -7,7 +7,7 @@ use alloy_primitives::Address;
 use chrono::{DateTime, Utc};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 // ============================================================================
 // FIXED-POINT OPTIMIZATION FOR HOT PATH PERFORMANCE
@@ -758,6 +758,83 @@ pub struct Token {
     pub price: Decimal,
     #[serde(default)]
     pub winner: bool,
+}
+
+fn required_nullable_string<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
+}
+
+/// V2 CLOB market information from `/clob-markets/{condition_id}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClobMarketDetails {
+    #[serde(rename = "c")]
+    pub condition_id: String,
+    #[serde(rename = "gst", deserialize_with = "required_nullable_string")]
+    pub game_start_time: Option<String>,
+    #[serde(rename = "r")]
+    pub rewards: ClobRewards,
+    #[serde(rename = "t")]
+    pub tokens: Vec<ClobToken>,
+    #[serde(rename = "mos", with = "rust_decimal::serde::float")]
+    pub minimum_order_size: Decimal,
+    #[serde(rename = "mts", with = "rust_decimal::serde::float")]
+    pub minimum_tick_size: Decimal,
+    #[serde(rename = "mbf", with = "rust_decimal::serde::float")]
+    pub maker_base_fee: Decimal,
+    #[serde(rename = "tbf", with = "rust_decimal::serde::float")]
+    pub taker_base_fee: Decimal,
+    #[serde(rename = "rfqe")]
+    pub rfq_enabled: bool,
+    #[serde(rename = "itode")]
+    pub is_taker_order_delay_enabled: bool,
+    #[serde(rename = "ibce")]
+    pub is_blockaid_check_enabled: bool,
+    #[serde(rename = "fd")]
+    pub fee_details: ClobFeeDetails,
+    #[serde(rename = "oas")]
+    pub minimum_order_age_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClobToken {
+    #[serde(rename = "t")]
+    pub token_id: String,
+    #[serde(rename = "o")]
+    pub outcome: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClobRewards {
+    #[serde(rename = "mi", with = "rust_decimal::serde::float")]
+    pub min_size: Decimal,
+    #[serde(rename = "ma", with = "rust_decimal::serde::float")]
+    pub max_spread: Decimal,
+    #[serde(rename = "e")]
+    pub event_start_date: Option<String>,
+    #[serde(rename = "moas", with = "rust_decimal::serde::float")]
+    pub max_order_amount_spread: Decimal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClobRewardRate {
+    #[serde(with = "rust_decimal::serde::float")]
+    pub reward_rate: Decimal,
+    pub asset_address: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClobFeeDetails {
+    #[serde(rename = "r")]
+    pub fee_rate: u32,
+    #[serde(rename = "e")]
+    pub fee_exponent: u32,
+    #[serde(rename = "to")]
+    pub taker_only: bool,
 }
 
 /// Client configuration for PolyfillClient

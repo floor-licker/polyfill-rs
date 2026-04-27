@@ -1,0 +1,33 @@
+{
+  "c": "0xcondition-free",
+  "gst": null,
+  "r": {
+    "mi": 0.0,
+    "ma": 0.0,
+    "e": null,
+    "moas": 0.0
+  },
+  "t": [
+    {
+      "t": "0xfreeyes",
+      "o": "Yes"
+    },
+    {
+      "t": "0xfreeno",
+      "o": "No"
+    }
+  ],
+  "mos": 5.0,
+  "mts": 0.001,
+  "mbf": 0.0,
+  "tbf": 0.0,
+  "rfqe": false,
+  "itode": false,
+  "ibce": true,
+  "fd": {
+    "r": 0,
+    "e": 0,
+    "to": false
+  },
+  "oas": 0
+}
