@@ -99,6 +99,11 @@ pub use crate::types::{
     BookParams,
     ClientConfig,
     ClientResult,
+    ClobFeeDetails,
+    ClobMarketDetails,
+    ClobRewardRate,
+    ClobRewards,
+    ClobToken,
     // Exchange enum for multi-venue orderbook management
     Exchange,
     FeeRateResponse,

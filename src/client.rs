@@ -17,6 +17,7 @@ use reqwest::Client;
 use reqwest::{Method, RequestBuilder};
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
+use serde::Deserialize;
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -68,6 +69,11 @@ pub struct ClobClient {
     connection_manager: Option<std::sync::Arc<crate::connection_manager::ConnectionManager>>,
     #[allow(dead_code)]
     buffer_pool: std::sync::Arc<crate::buffer_pool::BufferPool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarketByTokenResponse {
+    condition_id: String,
 }
 
 impl ClobClient {
@@ -603,6 +609,27 @@ impl ClobClient {
         Ok(tick_size)
     }
 
+    /// Get typed V2 CLOB market details by condition id
+    pub async fn get_clob_market_info(
+        &self,
+        condition_id: &str,
+    ) -> Result<crate::types::ClobMarketDetails> {
+        let response = self
+            .http_client
+            .get(format!("{}/clob-markets/{}", self.base_url, condition_id))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(PolyfillError::api(
+                response.status().as_u16(),
+                "Failed to get CLOB market info",
+            ));
+        }
+
+        Ok(response.json().await?)
+    }
+
     /// Create a new API key
     pub async fn create_api_key(&self, nonce: Option<U256>) -> Result<ApiCreds> {
         let signer = self
@@ -801,20 +828,6 @@ impl ClobClient {
         Ok(base_fee as u32)
     }
 
-    /// Resolve tick size for an order
-    /// If tick_size is provided, uses it directly without API validation (fast path)
-    /// If tick_size is None, fetches from API
-    async fn resolve_tick_size(
-        &self,
-        token_id: &str,
-        tick_size: Option<Decimal>,
-    ) -> Result<Decimal> {
-        match tick_size {
-            Some(t) => Ok(t), // Fast path: trust provided tick_size
-            None => self.get_tick_size(token_id).await,
-        }
-    }
-
     /// Get filled order options
     async fn get_filled_order_options(
         &self,
@@ -826,7 +839,27 @@ impl ClobClient {
             None => (None, None),
         };
 
-        let tick_size = self.resolve_tick_size(token_id, tick_size).await?;
+        let tick_size = match tick_size {
+            Some(t) => t,
+            None => {
+                let response = self
+                    .http_client
+                    .get(format!("{}/markets-by-token/{}", self.base_url, token_id))
+                    .send()
+                    .await?;
+                if !response.status().is_success() {
+                    return Err(PolyfillError::api(
+                        response.status().as_u16(),
+                        "Failed to get market by token",
+                    ));
+                }
+
+                let token_market: MarketByTokenResponse = response.json().await?;
+                self.get_clob_market_info(&token_market.condition_id)
+                    .await?
+                    .minimum_tick_size
+            },
+        };
         let neg_risk = match neg_risk {
             Some(nr) => nr,
             None => self.get_neg_risk(token_id).await?,
@@ -1905,7 +1938,8 @@ impl ClobClient {
 
 // Re-export types from the canonical location in types.rs
 pub use crate::types::{
-    Market, MarketOrderArgs, MarketsResponse, MidpointResponse, NegRiskResponse, OrderBookSummary,
+    ClobFeeDetails, ClobMarketDetails, ClobRewardRate, ClobRewards, ClobToken, Market,
+    MarketOrderArgs, MarketsResponse, MidpointResponse, NegRiskResponse, OrderBookSummary,
     OrderSummary, PriceResponse, Rewards, SpreadResponse, TickSizeResponse, Token,
 };
 
@@ -1922,7 +1956,7 @@ pub type PolyfillClient = ClobClient;
 #[cfg(test)]
 mod tests {
     use super::{ClobClient, OrderArgs as ClientOrderArgs};
-    use crate::types::Side;
+    use crate::types::{ClobMarketDetails, OrderOptions, Side};
     use crate::{ApiCredentials, PolyfillError};
     use mockito::{Matcher, Server};
     use rust_decimal::Decimal;
@@ -2224,6 +2258,118 @@ mod tests {
         assert!(result.is_ok());
         let tick_size = result.unwrap();
         assert_eq!(tick_size, Decimal::from_str("0.01").unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_clob_market_info_success() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/clob-markets/0xcondition")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!(
+                "../tests/fixtures/clob_market_info_fee_enabled.json"
+            ))
+            .create_async()
+            .await;
+
+        let client = create_test_client(&server.url());
+        let result = client.get_clob_market_info("0xcondition").await;
+
+        mock.assert_async().await;
+        assert!(result.is_ok());
+        let market = result.unwrap();
+        assert_eq!(market.condition_id, "0xcondition");
+        assert_eq!(market.tokens.len(), 2);
+        assert_eq!(market.minimum_tick_size, Decimal::from_str("0.01").unwrap());
+        assert_eq!(market.fee_details.fee_rate, 25);
+        assert!(!market.fee_details.taker_only);
+        assert!(!market.is_taker_order_delay_enabled);
+        assert!(market.is_blockaid_check_enabled);
+        assert_eq!(market.minimum_order_age_seconds, 0);
+        assert!(market.rfq_enabled);
+    }
+
+    #[test]
+    fn test_clob_market_info_fee_free_fixture_parses() {
+        let market: ClobMarketDetails = serde_json::from_str(include_str!(
+            "../tests/fixtures/clob_market_info_fee_free.json"
+        ))
+        .unwrap();
+
+        assert_eq!(market.condition_id, "0xcondition-free");
+        assert_eq!(market.game_start_time, None);
+        assert_eq!(
+            market.minimum_tick_size,
+            Decimal::from_str("0.001").unwrap()
+        );
+        assert_eq!(market.fee_details.fee_rate, 0);
+        assert_eq!(market.fee_details.fee_exponent, 0);
+        assert!(!market.fee_details.taker_only);
+        assert!(!market.rfq_enabled);
+    }
+
+    #[test]
+    fn test_clob_market_info_missing_required_field_fails() {
+        let body = include_str!("../tests/fixtures/clob_market_info_fee_enabled.json")
+            .replace(r#"  "gst": "2026-04-27T12:00:00Z","#, "");
+
+        let result = serde_json::from_str::<ClobMarketDetails>(&body);
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_order_missing_tick_uses_clob_market_info() {
+        let mut server = Server::new_async().await;
+        let markets_by_token_mock = server
+            .mock("GET", "/markets-by-token/123")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"condition_id": "0xcondition"}"#)
+            .create_async()
+            .await;
+        let clob_market_mock = server
+            .mock("GET", "/clob-markets/0xcondition")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!(
+                "../tests/fixtures/clob_market_info_fee_enabled.json"
+            ))
+            .create_async()
+            .await;
+        let neg_risk_mock = server
+            .mock("GET", "/neg-risk")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "123".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"neg_risk": false}"#)
+            .create_async()
+            .await;
+        let tick_size_mock = server
+            .mock("GET", "/tick-size")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_auth(&server.url());
+        let order_args = ClientOrderArgs::new(
+            "123",
+            Decimal::from_str("0.75").unwrap(),
+            Decimal::from_str("10").unwrap(),
+            Side::BUY,
+        );
+        let options = OrderOptions {
+            tick_size: None,
+            neg_risk: None,
+        };
+        let result = client.create_order(&order_args, 0, Some(&options)).await;
+
+        markets_by_token_mock.assert_async().await;
+        clob_market_mock.assert_async().await;
+        neg_risk_mock.assert_async().await;
+        tick_size_mock.assert_async().await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread")]
