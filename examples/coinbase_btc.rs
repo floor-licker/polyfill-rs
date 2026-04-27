@@ -50,9 +50,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let best_ask = book.best_ask();
 
                                 if let (Some(bid), Some(ask)) = (best_bid, best_ask) {
-                                    let spread = &ask.price - &bid.price;
+                                    let spread = ask.price - bid.price;
                                     let spread_bps =
-                                        (&spread / &bid.price) * rust_decimal::Decimal::from(10000);
+                                        (spread / bid.price) * rust_decimal::Decimal::from(10000);
 
                                     println!(
                                         "BTC-USD | Bid: ${:.2} ({:.4}) | Ask: ${:.2} ({:.4}) | Spread: ${:.2} ({:.1} bps) | Updates: {} | Rate: {:.0}/s",
@@ -77,7 +77,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Confirmed subscriptions: {:?}", subs.channels);
                     },
                     Message::Match(m) => {
-                        println!("Trade: {} {} @ {} ({})", m.side, m.size, m.price, m.trade_id);
+                        println!(
+                            "Trade: {} {} @ {} ({})",
+                            m.side, m.size, m.price, m.trade_id
+                        );
                     },
                     Message::Error(err) => {
                         eprintln!("Error from Coinbase: {} ({:?})", err.message, err.reason);

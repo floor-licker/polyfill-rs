@@ -121,17 +121,15 @@ pub fn parse_message_value(value: Value) -> Result<Message> {
 pub fn snapshot_to_fast(snapshot: &Snapshot) -> Result<FastSnapshot> {
     let mut bids = Vec::with_capacity(snapshot.bids.len());
     for (price_str, size_str) in &snapshot.bids {
-        match (parse_price(price_str), parse_size(size_str)) {
-            (Ok(price), Ok(size)) => bids.push((price, size)),
-            _ => {}, // Skip invalid/extreme prices silently
+        if let (Ok(price), Ok(size)) = (parse_price(price_str), parse_size(size_str)) {
+            bids.push((price, size));
         }
     }
 
     let mut asks = Vec::with_capacity(snapshot.asks.len());
     for (price_str, size_str) in &snapshot.asks {
-        match (parse_price(price_str), parse_size(size_str)) {
-            (Ok(price), Ok(size)) => asks.push((price, size)),
-            _ => {}, // Skip invalid/extreme prices silently
+        if let (Ok(price), Ok(size)) = (parse_price(price_str), parse_size(size_str)) {
+            asks.push((price, size));
         }
     }
 
@@ -149,15 +147,12 @@ pub fn snapshot_to_fast(snapshot: &Snapshot) -> Result<FastSnapshot> {
 pub fn l2update_to_fast(update: &L2Update) -> Result<FastL2Update> {
     let mut changes = Vec::with_capacity(update.changes.len());
     for (side_str, price_str, size_str) in &update.changes {
-        match (
+        if let (Ok(side), Ok(price), Ok(size)) = (
             parse_side(side_str),
             parse_price(price_str),
             parse_size(size_str),
         ) {
-            (Ok(side), Ok(price), Ok(size)) => {
-                changes.push(FastDelta { side, price, size });
-            },
-            _ => {}, // Skip invalid/extreme prices silently
+            changes.push(FastDelta { side, price, size });
         }
     }
 

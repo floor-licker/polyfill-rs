@@ -12,8 +12,6 @@
 use polyfill_rs::{
     // Order book management
     book::{OrderBook, OrderBookManager},
-    Exchange,
-
     // Error handling
     errors::{PolyfillError, Result},
 
@@ -33,6 +31,8 @@ use polyfill_rs::{
     ClientConfig,
     // Core client types
     ClobClient,
+    Exchange,
+
     OrderArgs,
     OrderType,
 
@@ -638,7 +638,11 @@ impl PolyfillDemo {
             match &message {
                 StreamMessage::BookUpdate { data } => {
                     info!("  Processing book update for token: {}", data.token_id);
-                    if let Err(e) = self.book_manager.apply_delta(Exchange::Polymarket, data.clone()).await {
+                    if let Err(e) = self
+                        .book_manager
+                        .apply_delta(Exchange::Polymarket, data.clone())
+                        .await
+                    {
                         error!("  Failed to apply book update: {}", e);
                         self.stats.errors += 1;
                     }

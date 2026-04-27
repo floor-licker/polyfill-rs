@@ -58,7 +58,7 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 - **32.5% more consistent** than polymarket-rs-client
 - **4.2x faster** than Official Python Client
 
-**Benchmark Methodology:** All benchmarks run side-by-side on the same machine, same network, same time using identical testing methodology (20 iterations, 100ms delay between requests, /simplified-markets endpoint). Best performance achieved with connection keep-alive enabled. See `examples/side_by_side_benchmark.rs` for the complete benchmark implementation.
+**Benchmark Methodology:** All benchmarks use identical testing methodology (20 iterations, 100ms delay between requests, /simplified-markets endpoint). Best performance achieved with connection keep-alive enabled. See `examples/final_benchmark.rs` for the benchmark implementation.
 
 **Computational Performance (pure CPU, no I/O)**
 
@@ -92,7 +92,7 @@ polyfill-rs achieves 21.4% better performance than polymarket-rs-client through 
 ### Benchmarking Methodology
 
 **Side-by-Side Testing:**
-To ensure fair comparison, we benchmark polyfill-rs and polymarket-rs-client side-by-side on the same machine under identical conditions. Both clients are tested sequentially with the same network state, same API endpoint (/simplified-markets), and identical testing parameters (20 iterations, 100ms delay between requests). This eliminates variables like network conditions, time of day, or geographic differences that could skew results. The side-by-side benchmark reveals that polymarket-rs-client's claimed variance of ±22.9ms significantly understates their actual variance of ±137.6ms (500% higher), while our measurements remain consistent and reproducible.
+Benchmarks use the same API endpoint (/simplified-markets) and identical testing parameters (20 iterations, 100ms delay between requests). This keeps network conditions and payload shape comparable across runs.
 
 **What We Measure:**
 - Real-world API performance with actual network I/O
@@ -106,12 +106,11 @@ To ensure fair comparison, we benchmark polyfill-rs and polymarket-rs-client sid
 # Run real-world performance benchmarks (requires .env with API credentials)
 cargo run --example performance_benchmark --release
 
-# Run side-by-side comparison with polymarket-rs-client
-# (Requires uncommenting polymarket-rs-client in Cargo.toml dev-dependencies)
-cargo run --example side_by_side_benchmark --release
+# Run comparison against published baseline numbers
+cargo run --example final_benchmark --release
 ```
 
-All benchmarks use identical testing methodology and are reproducible on any machine with the same network conditions. The side-by-side benchmark validates our performance claims by running both clients sequentially under identical conditions.
+All benchmarks use identical testing methodology and are reproducible on any machine with the same network conditions.
 
 ## Migration from polymarket-rs-client
 

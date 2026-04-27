@@ -764,9 +764,9 @@ impl QueueFillEngine {
                 // Step 2: Check for trade-through fills
                 let trade_through = match order.side {
                     // BUY: fills when best_ask <= limit_price
-                    Side::BUY => update.best_ask.map_or(false, |ask| ask <= order.price),
+                    Side::BUY => update.best_ask.is_some_and(|ask| ask <= order.price),
                     // SELL: fills when best_bid >= limit_price
-                    Side::SELL => update.best_bid.map_or(false, |bid| bid >= order.price),
+                    Side::SELL => update.best_bid.is_some_and(|bid| bid >= order.price),
                 };
 
                 // Step 3: Generate fills if trade-through occurred and queue is clear
@@ -861,12 +861,8 @@ impl FillEngine {
 
         // Check if order is marketable (crossing)
         let is_crossing = match order.side {
-            Side::BUY => book
-                .best_ask()
-                .map_or(false, |ask| order.price >= ask.price),
-            Side::SELL => book
-                .best_bid()
-                .map_or(false, |bid| order.price <= bid.price),
+            Side::BUY => book.best_ask().is_some_and(|ask| order.price >= ask.price),
+            Side::SELL => book.best_bid().is_some_and(|bid| order.price <= bid.price),
         };
 
         if !is_crossing {
