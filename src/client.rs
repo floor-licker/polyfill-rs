@@ -794,40 +794,6 @@ impl ClobClient {
         Ok(neg_risk)
     }
 
-    /// Get base fee rate for a token.
-    ///
-    /// This endpoint returns the base_fee for a given token_id.
-    /// For 15-minute markets with fees enabled, this returns a non-zero value.
-    /// For fee-free markets, this returns 0.
-    ///
-    /// Note: For production use, prefer `polyfill_rs::fees::calculate_fee_rate_bps(price)`
-    /// to avoid API latency. This method is primarily for verification purposes.
-    pub async fn get_fee_rate(&self, token_id: &str) -> Result<u32> {
-        let response = self
-            .http_client
-            .get(format!("{}/fee-rate", self.base_url))
-            .query(&[("token_id", token_id)])
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Err(PolyfillError::api(
-                response.status().as_u16(),
-                "Failed to get fee rate",
-            ));
-        }
-
-        let fee_rate_response: Value = response.json().await?;
-
-        // API returns "base_fee" field
-        let base_fee = fee_rate_response["base_fee"]
-            .as_u64()
-            .or_else(|| fee_rate_response["fee_rate_bps"].as_u64())
-            .unwrap_or(0);
-
-        Ok(base_fee as u32)
-    }
-
     /// Get filled order options
     async fn get_filled_order_options(
         &self,
