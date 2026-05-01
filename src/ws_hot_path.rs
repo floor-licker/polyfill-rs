@@ -9,10 +9,21 @@
 
 use crate::book::OrderBookManager;
 use crate::errors::{PolyfillError, Result};
-use crate::types::{decimal_to_price, decimal_to_qty, Side};
-use rust_decimal::Decimal;
+use crate::types::{Price, Qty, Side, MAX_QTY};
 use simd_json::prelude::*;
-use std::str::FromStr;
+
+const WS_DECIMAL_SCALE_DIGITS: usize = 4;
+const WS_SCALE_FACTOR: u64 = 10_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParseScaledError {
+    Empty,
+    InvalidChar,
+    MultipleDots,
+    TooManyDecimals,
+    Overflow,
+    ZeroPrice,
+}
 
 /// Summary of what happened while processing a WS payload.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +168,85 @@ fn parse_u64<'tape, 'input>(value: simd_json::tape::Value<'tape, 'input>) -> Opt
         .or_else(|| value.into_string().and_then(|s| s.parse::<u64>().ok()))
 }
 
+#[inline]
+fn parse_price_ticks_ascii(s: &str) -> std::result::Result<Price, ParseScaledError> {
+    let ticks = parse_scaled_ascii_u64(s, Price::MAX as u64)?;
+    if ticks == 0 {
+        return Err(ParseScaledError::ZeroPrice);
+    }
+
+    Ok(ticks as Price)
+}
+
+#[inline]
+fn parse_qty_units_ascii(s: &str) -> std::result::Result<Qty, ParseScaledError> {
+    let units = parse_scaled_ascii_u64(s, MAX_QTY as u64)?;
+    Ok(units as Qty)
+}
+
+#[inline]
+fn parse_scaled_ascii_u64(s: &str, max: u64) -> std::result::Result<u64, ParseScaledError> {
+    if s.is_empty() {
+        return Err(ParseScaledError::Empty);
+    }
+
+    let mut int = 0u64;
+    let mut frac = 0u64;
+    let mut frac_digits = 0usize;
+    let mut seen_dot = false;
+    let mut seen_digit = false;
+
+    for b in s.bytes() {
+        match b {
+            b'0'..=b'9' => {
+                seen_digit = true;
+                let d = u64::from(b - b'0');
+                if seen_dot {
+                    if frac_digits < WS_DECIMAL_SCALE_DIGITS {
+                        frac = frac
+                            .checked_mul(10)
+                            .and_then(|x| x.checked_add(d))
+                            .ok_or(ParseScaledError::Overflow)?;
+                        frac_digits += 1;
+                    } else if d != 0 {
+                        return Err(ParseScaledError::TooManyDecimals);
+                    }
+                } else {
+                    int = int
+                        .checked_mul(10)
+                        .and_then(|x| x.checked_add(d))
+                        .ok_or(ParseScaledError::Overflow)?;
+                }
+            },
+            b'.' if !seen_dot => {
+                seen_dot = true;
+            },
+            b'.' => return Err(ParseScaledError::MultipleDots),
+            _ => return Err(ParseScaledError::InvalidChar),
+        }
+    }
+
+    if !seen_digit {
+        return Err(ParseScaledError::Empty);
+    }
+
+    while frac_digits < WS_DECIMAL_SCALE_DIGITS {
+        frac = frac.checked_mul(10).ok_or(ParseScaledError::Overflow)?;
+        frac_digits += 1;
+    }
+
+    let scaled = int
+        .checked_mul(WS_SCALE_FACTOR)
+        .and_then(|x| x.checked_add(frac))
+        .ok_or(ParseScaledError::Overflow)?;
+
+    if scaled > max {
+        return Err(ParseScaledError::Overflow);
+    }
+
+    Ok(scaled)
+}
+
 fn apply_levels<'tape, 'input>(
     book: &mut crate::book::OrderBook,
     side: Side,
@@ -177,19 +267,94 @@ fn apply_levels<'tape, 'input>(
             .and_then(|v| v.into_string())
             .ok_or_else(|| PolyfillError::parse("Missing size", None))?;
 
-        let price_decimal =
-            Decimal::from_str(price_str).map_err(|_| PolyfillError::validation("Invalid price"))?;
-        let size_decimal =
-            Decimal::from_str(size_str).map_err(|_| PolyfillError::validation("Invalid size"))?;
-
-        let price_ticks = decimal_to_price(price_decimal)
+        let price_ticks = parse_price_ticks_ascii(price_str)
             .map_err(|_| PolyfillError::validation("Invalid price"))?;
-        let size_units =
-            decimal_to_qty(size_decimal).map_err(|_| PolyfillError::validation("Invalid size"))?;
+        let size_units = parse_qty_units_ascii(size_str)
+            .map_err(|_| PolyfillError::validation("Invalid size"))?;
 
         book.apply_ws_book_level_fast(side, price_ticks, size_units)?;
         applied += 1;
     }
 
     Ok(applied)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_price_ticks_ascii, parse_qty_units_ascii, ParseScaledError};
+    use crate::{OrderBookManager, WsBookUpdateProcessor};
+
+    #[test]
+    fn parses_fixed_scale_prices_without_decimal() {
+        assert_eq!(parse_price_ticks_ascii("0.7134"), Ok(7134));
+        assert_eq!(parse_price_ticks_ascii("12.5000"), Ok(125_000));
+        assert_eq!(parse_price_ticks_ascii("12.5"), Ok(125_000));
+        assert_eq!(parse_price_ticks_ascii("1"), Ok(10_000));
+        assert_eq!(parse_price_ticks_ascii(".5"), Ok(5_000));
+        assert_eq!(parse_price_ticks_ascii("1.230000"), Ok(12_300));
+    }
+
+    #[test]
+    fn parses_fixed_scale_sizes_without_decimal() {
+        assert_eq!(parse_qty_units_ascii("0"), Ok(0));
+        assert_eq!(parse_qty_units_ascii("100.0000"), Ok(1_000_000));
+        assert_eq!(parse_qty_units_ascii("12.5000"), Ok(125_000));
+        assert_eq!(parse_qty_units_ascii("12.5"), Ok(125_000));
+    }
+
+    #[test]
+    fn rejects_invalid_scaled_ascii_values() {
+        assert_eq!(parse_price_ticks_ascii(""), Err(ParseScaledError::Empty));
+        assert_eq!(parse_price_ticks_ascii("."), Err(ParseScaledError::Empty));
+        assert_eq!(
+            parse_price_ticks_ascii("0"),
+            Err(ParseScaledError::ZeroPrice)
+        );
+        assert_eq!(
+            parse_price_ticks_ascii("0.0000"),
+            Err(ParseScaledError::ZeroPrice)
+        );
+        assert_eq!(
+            parse_price_ticks_ascii("0.00005"),
+            Err(ParseScaledError::TooManyDecimals)
+        );
+        assert_eq!(
+            parse_price_ticks_ascii("1.23456"),
+            Err(ParseScaledError::TooManyDecimals)
+        );
+        assert_eq!(
+            parse_price_ticks_ascii("1.2.3"),
+            Err(ParseScaledError::MultipleDots)
+        );
+        assert_eq!(
+            parse_qty_units_ascii("-1.0"),
+            Err(ParseScaledError::InvalidChar)
+        );
+        assert_eq!(
+            parse_qty_units_ascii("1e3"),
+            Err(ParseScaledError::InvalidChar)
+        );
+        assert_eq!(
+            parse_qty_units_ascii("922337203685478.0"),
+            Err(ParseScaledError::Overflow)
+        );
+    }
+
+    #[test]
+    fn ws_book_processor_rejects_fractional_values_that_would_round() {
+        let asset_id = "test_asset_id";
+        let manager = OrderBookManager::new(10);
+        manager.get_or_create_book(asset_id).unwrap();
+
+        let mut processor = WsBookUpdateProcessor::new(1024);
+        let mut msg = format!(
+            "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":10,\"bids\":[{{\"price\":\"0.75005\",\"size\":\"200.0\"}}],\"asks\":[]}}"
+        )
+        .into_bytes();
+
+        let err = processor
+            .process_bytes(msg.as_mut_slice(), &manager)
+            .unwrap_err();
+        assert!(err.to_string().contains("Invalid price"));
+    }
 }
