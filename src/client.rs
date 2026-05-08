@@ -83,6 +83,11 @@ pub struct ClobClient {
     api_creds: Option<ApiCreds>,
     builder_code: Option<String>,
     order_builder: Option<crate::orders::OrderBuilder>,
+    /// Address the API key is bound to. Only `Some` for POLY_1271
+    /// (deposit-wallet) flows, where the API key must be issued for the
+    /// deposit-wallet contract instead of the EOA. All L1/L2 auth headers
+    /// route through this address when set.
+    auth_address: Option<Address>,
     #[allow(dead_code)]
     dns_cache: Option<std::sync::Arc<crate::dns_cache::DnsCache>>,
     #[allow(dead_code)]
@@ -158,6 +163,14 @@ impl ClobClient {
             .clone()
             .map(|signer| crate::orders::OrderBuilder::new(signer, auth.sig_type, auth.funder));
 
+        // For POLY_1271 the API key must be issued for the deposit-wallet
+        // contract (= funder), not the EOA. All L1/L2 auth headers route
+        // through that address.
+        let auth_address = match (auth.sig_type, auth.funder) {
+            (Some(crate::orders::SigType::Poly1271), funder) => funder,
+            _ => None,
+        };
+
         Self {
             http_client,
             base_url: host.to_string(),
@@ -166,6 +179,7 @@ impl ClobClient {
             api_creds: auth.api_creds,
             builder_code: auth.builder_code,
             order_builder,
+            auth_address,
             dns_cache,
             connection_manager,
             buffer_pool,
@@ -541,7 +555,7 @@ impl ClobClient {
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
         let endpoint = format!("/fees/builder-fees/{builder_code}");
-        let headers = create_l2_headers::<Value>(signer, api_creds, "GET", &endpoint, None)?;
+        let headers = create_l2_headers::<Value>(signer, api_creds, "GET", &endpoint, None, self.auth_address)?;
         let req = self.create_request_with_headers(Method::GET, &endpoint, headers.into_iter());
 
         let response = req.send().await?;
@@ -743,7 +757,7 @@ impl ClobClient {
             .as_ref()
             .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
 
-        let headers = create_l1_headers(signer, nonce)?;
+        let headers = create_l1_headers(signer, nonce, self.auth_address)?;
         let req =
             self.create_request_with_headers(Method::POST, "/auth/api-key", headers.into_iter());
 
@@ -765,7 +779,7 @@ impl ClobClient {
             .as_ref()
             .ok_or_else(|| PolyfillError::auth("Signer not set"))?;
 
-        let headers = create_l1_headers(signer, nonce)?;
+        let headers = create_l1_headers(signer, nonce, self.auth_address)?;
         let req = self.create_request_with_headers(
             Method::GET,
             "/auth/derive-api-key",
@@ -808,7 +822,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/auth/api-keys";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .http_client
@@ -845,7 +859,7 @@ impl ClobClient {
         let method = Method::DELETE;
         let endpoint = "/auth/api-key";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .http_client
@@ -1165,7 +1179,7 @@ impl ClobClient {
         // to maintain consistency with the authentication context layer
         let body = PostOrder::new(order, api_creds.api_key.clone(), options);
 
-        let headers = create_l2_headers(signer, api_creds, "POST", "/order", Some(&body))?;
+        let headers = create_l2_headers(signer, api_creds, "POST", "/order", Some(&body), self.auth_address)?;
         let req = self.create_request_with_headers(Method::POST, "/order", headers.into_iter());
 
         let response = req.json(&body).send().await?;
@@ -1226,7 +1240,7 @@ impl ClobClient {
 
         let body = std::collections::HashMap::from([("orderID", order_id)]);
 
-        let headers = create_l2_headers(signer, api_creds, "DELETE", "/order", Some(&body))?;
+        let headers = create_l2_headers(signer, api_creds, "DELETE", "/order", Some(&body), self.auth_address)?;
         let req = self.create_request_with_headers(Method::DELETE, "/order", headers.into_iter());
 
         let response = req.json(&body).send().await?;
@@ -1254,7 +1268,7 @@ impl ClobClient {
             .as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
-        let headers = create_l2_headers(signer, api_creds, "DELETE", "/orders", Some(order_ids))?;
+        let headers = create_l2_headers(signer, api_creds, "DELETE", "/orders", Some(order_ids), self.auth_address)?;
         let req = self.create_request_with_headers(Method::DELETE, "/orders", headers.into_iter());
 
         let response = req.json(order_ids).send().await?;
@@ -1282,7 +1296,7 @@ impl ClobClient {
             .as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
-        let headers = create_l2_headers::<Value>(signer, api_creds, "DELETE", "/cancel-all", None)?;
+        let headers = create_l2_headers::<Value>(signer, api_creds, "DELETE", "/cancel-all", None, self.auth_address)?;
         let req =
             self.create_request_with_headers(Method::DELETE, "/cancel-all", headers.into_iter());
 
@@ -1325,7 +1339,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/data/orders";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let query_params = match params {
             None => Vec::new(),
@@ -1404,7 +1418,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/data/trades";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let query_params = match trade_params {
             None => Vec::new(),
@@ -1484,7 +1498,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/balance-allowance";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .http_client
@@ -1524,7 +1538,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/notifications";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .http_client
@@ -1671,7 +1685,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = &format!("/data/order/{}", order_id);
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .http_client
@@ -1752,7 +1766,7 @@ impl ClobClient {
             ("asset_id", asset_id.unwrap_or("")),
         ]);
 
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body), self.auth_address)?;
 
         let response = self
             .http_client
@@ -1788,7 +1802,7 @@ impl ClobClient {
         let method = Method::DELETE;
         let endpoint = "/notifications";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .http_client
@@ -1839,7 +1853,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/balance-allowance/update";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .http_client
@@ -1875,7 +1889,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/order-scoring";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .http_client
@@ -1921,6 +1935,7 @@ impl ClobClient {
             method.as_str(),
             endpoint,
             Some(order_ids),
+            self.auth_address,
         )?;
 
         let response = self
@@ -1964,7 +1979,7 @@ impl ClobClient {
         let method = Method::POST;
         let endpoint = "/rfq/request";
         let headers =
-            create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(request))?;
+            create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(request), self.auth_address)?;
 
         let response = self
             .create_request_with_headers(method, endpoint, headers.into_iter())
@@ -2002,7 +2017,7 @@ impl ClobClient {
         let body = crate::types::RfqCancelRequest {
             request_id: request_id.to_string(),
         };
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body), self.auth_address)?;
 
         let response = self
             .create_request_with_headers(method, endpoint, headers.into_iter())
@@ -2038,7 +2053,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/rfq/data/requests";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let query_params = params.cloned().unwrap_or_default().to_query_params();
 
@@ -2078,7 +2093,7 @@ impl ClobClient {
 
         let method = Method::POST;
         let endpoint = "/rfq/quote";
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(quote))?;
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(quote), self.auth_address)?;
 
         let response = self
             .create_request_with_headers(method, endpoint, headers.into_iter())
@@ -2116,7 +2131,7 @@ impl ClobClient {
         let body = crate::types::RfqCancelQuote {
             quote_id: quote_id.to_string(),
         };
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body), self.auth_address)?;
 
         let response = self
             .create_request_with_headers(method, endpoint, headers.into_iter())
@@ -2152,7 +2167,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/rfq/data/requester/quotes";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let query_params = params.cloned().unwrap_or_default().to_query_params();
 
@@ -2193,7 +2208,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/rfq/data/quoter/quotes";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let query_params = params.cloned().unwrap_or_default().to_query_params();
 
@@ -2231,7 +2246,7 @@ impl ClobClient {
         let method = Method::GET;
         let endpoint = "/rfq/data/best-quote";
         let headers =
-            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None)?;
+            create_l2_headers::<Value>(signer, api_creds, method.as_str(), endpoint, None, self.auth_address)?;
 
         let response = self
             .create_request_with_headers(method, endpoint, headers.into_iter())
@@ -2269,7 +2284,7 @@ impl ClobClient {
 
         let method = Method::POST;
         let endpoint = "/rfq/request/accept";
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(body))?;
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(body), self.auth_address)?;
 
         let response = self
             .create_request_with_headers(method, endpoint, headers.into_iter())
@@ -2304,7 +2319,7 @@ impl ClobClient {
 
         let method = Method::POST;
         let endpoint = "/rfq/quote/approve";
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(body))?;
+        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(body), self.auth_address)?;
 
         let response = self
             .create_request_with_headers(method, endpoint, headers.into_iter())
