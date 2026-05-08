@@ -78,25 +78,17 @@ pub fn get_current_unix_time_secs() -> u64 {
         .as_secs()
 }
 
-/// Sign CLOB authentication message using EIP-712.
-///
-/// `auth_address` is the address embedded inside the ClobAuth EIP-712 struct
-/// — this is the address the server binds the resulting API key to. Pass
-/// `None` to use the EOA signer's address (default for EOA / Proxy / Safe
-/// flows). Pass `Some(deposit_wallet)` for POLY_1271 flows so the API key
-/// is bound to the deposit-wallet contract; the server validates the
-/// signature via EIP-1271 `isValidSignature` against that contract.
+/// Sign CLOB authentication message using EIP-712
 pub fn sign_clob_auth_message(
     signer: &PrivateKeySigner,
     timestamp: String,
     nonce: U256,
-    auth_address: Option<Address>,
 ) -> Result<String> {
     let message = "This message attests that I control the given wallet".to_string();
     let polygon = 137;
 
     let auth_struct = ClobAuth {
-        address: auth_address.unwrap_or_else(|| signer.address()),
+        address: signer.address(),
         timestamp,
         nonce,
         message,
@@ -304,25 +296,18 @@ where
     Ok(base64::engine::general_purpose::URL_SAFE.encode(result.into_bytes()))
 }
 
-/// Create L1 headers for authentication.
+/// Create L1 headers for authentication (using private key signature)
 ///
-/// `auth_address` overrides the address embedded inside the signed
-/// ClobAuth message AND the `POLY_ADDRESS` header. Pass `None` to bind the
-/// API key to the EOA. Pass `Some(deposit_wallet)` for POLY_1271 flows so
-/// the API key is bound to the deposit-wallet contract.
-pub fn create_l1_headers(
-    signer: &PrivateKeySigner,
-    nonce: Option<U256>,
-    auth_address: Option<Address>,
-) -> Result<Headers> {
+/// Generates initial authentication envelope using elliptic curve cryptography
+/// for establishing trusted communication channels with the distributed ledger API.
+pub fn create_l1_headers(signer: &PrivateKeySigner, nonce: Option<U256>) -> Result<Headers> {
     // Capture temporal context for replay prevention at protocol boundary
     let timestamp = get_current_unix_time_secs().to_string();
     let nonce = nonce.unwrap_or(U256::ZERO);
-    let bound = auth_address.unwrap_or_else(|| signer.address());
 
     // Generate EIP-712 compliant signature for cryptographic proof of authority
-    let signature = sign_clob_auth_message(signer, timestamp.clone(), nonce, Some(bound))?;
-    let address = encode_prefixed(bound.as_slice());
+    let signature = sign_clob_auth_message(signer, timestamp.clone(), nonce)?;
+    let address = encode_prefixed(signer.address().as_slice());
 
     // Assemble primary authentication header set with identity binding
     Ok(HashMap::from([
@@ -343,15 +328,12 @@ pub fn create_l2_headers<T>(
     method: &str,
     req_path: &str,
     body: Option<&T>,
-    auth_address: Option<Address>,
 ) -> Result<Headers>
 where
     T: ?Sized + Serialize,
 {
-    // POLY_ADDRESS must match the address the API key is bound to. For
-    // POLY_1271 flows that's the deposit-wallet contract, not the EOA.
-    let address =
-        encode_prefixed(auth_address.unwrap_or_else(|| signer.address()).as_slice());
+    // Extract identity from signing authority for header binding
+    let address = encode_prefixed(signer.address().as_slice());
     let timestamp = get_current_unix_time_secs();
 
     // Generate cryptographic authenticator using temporal and message context
@@ -444,7 +426,7 @@ mod tests {
         let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
         let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
 
-        let result = create_l1_headers(&signer, Some(U256::from(12345)), None);
+        let result = create_l1_headers(&signer, Some(U256::from(12345)));
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -462,8 +444,8 @@ mod tests {
         let private_key = "0x1234567890123456789012345678901234567890123456789012345678901234";
         let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
 
-        let headers_1 = create_l1_headers(&signer, Some(U256::from(12345)), None).unwrap();
-        let headers_2 = create_l1_headers(&signer, Some(U256::from(54321)), None).unwrap();
+        let headers_1 = create_l1_headers(&signer, Some(U256::from(12345))).unwrap();
+        let headers_2 = create_l1_headers(&signer, Some(U256::from(54321))).unwrap();
 
         // Different nonces should produce different signatures
         assert_ne!(
@@ -488,7 +470,7 @@ mod tests {
             passphrase: "test_passphrase".to_string(),
         };
 
-        let result = create_l2_headers::<String>(&signer, &api_creds, "GET", "/test", None, None);
+        let result = create_l2_headers::<String>(&signer, &api_creds, "GET", "/test", None);
         assert!(result.is_ok());
 
         let headers = result.unwrap();
@@ -510,7 +492,7 @@ mod tests {
         let signer: PrivateKeySigner = private_key.parse().expect("Valid private key");
 
         // Test that we can create and sign EIP-712 messages
-        let result = create_l1_headers(&signer, Some(U256::from(12345)), None);
+        let result = create_l1_headers(&signer, Some(U256::from(12345)));
         assert!(result.is_ok());
 
         let headers = result.unwrap();
