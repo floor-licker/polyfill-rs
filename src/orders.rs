@@ -540,10 +540,21 @@ impl OrderBuilder {
         let builder = normalize_optional_bytes32("builder_code", builder_code)?;
         let metadata = normalize_optional_bytes32("metadata", metadata)?;
 
+        // POLY_1271 (deposit-wallet) flow: the V2 Order's `signer` field MUST
+        // be the deposit-wallet contract itself, NOT the EOA. The EOA is only
+        // the inner ECDSA signer; the wrapped signature is verified by the
+        // wallet contract's `isValidSignature`. For all other sig_types,
+        // `signer` is the EOA address as before.
+        let order_signer = if self.sig_type == SigType::Poly1271 {
+            self.funder
+        } else {
+            self.signer.address()
+        };
+
         let order = SignedOrderMessage {
             salt: U256::from(seed),
             maker: self.funder,
-            signer: self.signer.address(),
+            signer: order_signer,
             token_id: u256_token_id,
             maker_amount: U256::from(maker_amount),
             taker_amount: U256::from(taker_amount),
@@ -563,7 +574,7 @@ impl OrderBuilder {
         Ok(SignedOrderRequest {
             salt: seed,
             maker: self.funder.to_checksum(None),
-            signer: self.signer.address().to_checksum(None),
+            signer: order_signer.to_checksum(None),
             token_id,
             maker_amount: maker_amount.to_string(),
             taker_amount: taker_amount.to_string(),
