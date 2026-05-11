@@ -5,7 +5,7 @@ use crate::types::*;
 use crate::utils::math;
 use chrono::Utc;
 use rust_decimal::Decimal;
-use std::collections::BTreeMap; // BTreeMap keeps prices sorted automatically - crucial for order books
+use std::collections::{BTreeMap, HashMap}; // BTreeMap keeps prices sorted automatically - crucial for order books
 use std::sync::{Arc, RwLock}; // For thread-safe access across multiple tasks
 use tracing::{debug, trace, warn}; // Logging for debugging and monitoring
 
@@ -614,6 +614,41 @@ impl OrderBook {
         }
     }
 
+    /// Trim stale top-of-book levels using the server-stamped BBO carried on a
+    /// `price_change` batch.
+    fn reconcile_to_server_bbo(&mut self, best_bid: Option<Decimal>, best_ask: Option<Decimal>) {
+        let best_bid_ticks = best_bid.and_then(|price| decimal_to_price(price).ok());
+        let best_ask_ticks = best_ask.and_then(|price| decimal_to_price(price).ok());
+
+        if let (Some(bid), Some(ask)) = (best_bid_ticks, best_ask_ticks) {
+            if bid >= ask {
+                return;
+            }
+        }
+
+        if let Some(server_best_bid) = best_bid_ticks {
+            while self
+                .bids
+                .iter()
+                .next_back()
+                .is_some_and(|(&price, _)| price > server_best_bid)
+            {
+                self.bids.pop_last();
+            }
+        }
+
+        if let Some(server_best_ask) = best_ask_ticks {
+            while self
+                .asks
+                .iter()
+                .next()
+                .is_some_and(|(&price, _)| price < server_best_ask)
+            {
+                self.asks.pop_first();
+            }
+        }
+    }
+
     /// Apply a price-change delta without sequence validation.
     ///
     /// `price_change` WS messages contain multiple entries that share the same
@@ -931,8 +966,17 @@ impl OrderBookManager {
             .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
 
         let mut updated: Vec<String> = Vec::new();
+        let mut server_bbo: HashMap<&str, (Option<Decimal>, Option<Decimal>)> = HashMap::new();
 
         for entry in &pc.price_changes {
+            let bbo_entry = server_bbo.entry(entry.asset_id.as_str()).or_default();
+            if entry.best_bid.is_some() {
+                bbo_entry.0 = entry.best_bid;
+            }
+            if entry.best_ask.is_some() {
+                bbo_entry.1 = entry.best_ask;
+            }
+
             let Some(book) = books.get_mut(&entry.asset_id) else {
                 continue; // no book yet — skip (deltas before initial snapshot)
             };
@@ -946,6 +990,9 @@ impl OrderBookManager {
         // Set sequence + trim once per affected book
         for token_id in &updated {
             if let Some(book) = books.get_mut(token_id) {
+                let (best_bid, best_ask) =
+                    server_bbo.get(token_id.as_str()).copied().unwrap_or_default();
+                book.reconcile_to_server_bbo(best_bid, best_ask);
                 book.set_sequence(pc.timestamp);
             }
         }
@@ -1625,5 +1672,119 @@ mod tests {
         };
         mgr.apply_price_change(&pc2).unwrap();
         assert!(mgr.get_book("tok1").unwrap().bids.is_empty());
+    }
+
+    #[test]
+    fn manager_apply_price_change_reconciles_to_server_bbo() {
+        let mgr = OrderBookManager::new(20);
+        mgr.get_or_create_book("tok1").unwrap();
+
+        let seed = PriceChange {
+            market: "m1".into(),
+            timestamp: 100,
+            price_changes: vec![
+                PriceChangeEntry {
+                    asset_id: "tok1".into(),
+                    side: Side::BUY,
+                    price: dec!(0.50),
+                    size: Some(dec!(100)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+                PriceChangeEntry {
+                    asset_id: "tok1".into(),
+                    side: Side::SELL,
+                    price: dec!(0.60),
+                    size: Some(dec!(80)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+            ],
+        };
+        mgr.apply_price_change(&seed).unwrap();
+
+        let crossed = PriceChange {
+            market: "m1".into(),
+            timestamp: 200,
+            price_changes: vec![PriceChangeEntry {
+                asset_id: "tok1".into(),
+                side: Side::BUY,
+                price: dec!(0.61),
+                size: Some(dec!(50)),
+                hash: None,
+                best_bid: Some(dec!(0.50)),
+                best_ask: Some(dec!(0.60)),
+            }],
+        };
+        mgr.apply_price_change(&crossed).unwrap();
+
+        let book = mgr.get_book("tok1").unwrap();
+        assert_eq!(book.bids.first().unwrap().price, dec!(0.50));
+        assert_eq!(book.asks.first().unwrap().price, dec!(0.60));
+        assert!(book.asks.first().unwrap().price > book.bids.first().unwrap().price);
+    }
+
+    #[test]
+    fn manager_apply_price_change_uses_latest_non_none_server_bbo() {
+        let mgr = OrderBookManager::new(20);
+        mgr.get_or_create_book("tok1").unwrap();
+
+        let seed = PriceChange {
+            market: "m1".into(),
+            timestamp: 100,
+            price_changes: vec![
+                PriceChangeEntry {
+                    asset_id: "tok1".into(),
+                    side: Side::BUY,
+                    price: dec!(0.50),
+                    size: Some(dec!(100)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+                PriceChangeEntry {
+                    asset_id: "tok1".into(),
+                    side: Side::SELL,
+                    price: dec!(0.60),
+                    size: Some(dec!(80)),
+                    hash: None,
+                    best_bid: None,
+                    best_ask: None,
+                },
+            ],
+        };
+        mgr.apply_price_change(&seed).unwrap();
+
+        let crossed = PriceChange {
+            market: "m1".into(),
+            timestamp: 200,
+            price_changes: vec![
+                PriceChangeEntry {
+                    asset_id: "tok1".into(),
+                    side: Side::BUY,
+                    price: dec!(0.61),
+                    size: Some(dec!(50)),
+                    hash: None,
+                    best_bid: Some(dec!(0.49)),
+                    best_ask: None,
+                },
+                PriceChangeEntry {
+                    asset_id: "tok1".into(),
+                    side: Side::BUY,
+                    price: dec!(0.49),
+                    size: Some(dec!(30)),
+                    hash: None,
+                    best_bid: Some(dec!(0.50)),
+                    best_ask: Some(dec!(0.60)),
+                },
+            ],
+        };
+        mgr.apply_price_change(&crossed).unwrap();
+
+        let book = mgr.get_book("tok1").unwrap();
+        assert_eq!(book.bids.first().unwrap().price, dec!(0.50));
+        assert_eq!(book.asks.first().unwrap().price, dec!(0.60));
     }
 }
