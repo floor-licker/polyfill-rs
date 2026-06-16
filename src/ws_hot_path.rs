@@ -9,7 +9,7 @@
 
 use crate::book::OrderBookManager;
 use crate::errors::{PolyfillError, Result};
-use crate::types::{decimal_to_price, decimal_to_qty, Side};
+use crate::types::{decimal_to_price, decimal_to_qty, Price, Side};
 use rust_decimal::Decimal;
 use simd_json::prelude::*;
 use std::str::FromStr;
@@ -141,7 +141,10 @@ fn process_stream_object<'tape, 'input>(
             applied += apply_levels(book, Side::SELL, asks)?;
         }
 
-        book.finish_ws_book_update();
+        book.finish_ws_book_update(
+            |price_ticks| ws_levels_contain_price(bids, price_ticks),
+            |price_ticks| ws_levels_contain_price(asks, price_ticks),
+        );
         Ok(applied)
     })?;
 
@@ -192,4 +195,39 @@ fn apply_levels<'tape, 'input>(
     }
 
     Ok(applied)
+}
+
+fn ws_levels_contain_price<'tape, 'input>(
+    levels: Option<simd_json::tape::Array<'tape, 'input>>,
+    price_ticks: Price,
+) -> bool {
+    let Some(levels) = levels else {
+        return false;
+    };
+
+    levels.iter().any(|level| {
+        let Some(obj) = level.as_object() else {
+            return false;
+        };
+        let Some(price_str) = obj.get("price").and_then(|v| v.into_string()) else {
+            return false;
+        };
+        let Some(size_str) = obj.get("size").and_then(|v| v.into_string()) else {
+            return false;
+        };
+        let Ok(price_decimal) = Decimal::from_str(price_str) else {
+            return false;
+        };
+        let Ok(size_decimal) = Decimal::from_str(size_str) else {
+            return false;
+        };
+        let Ok(level_price_ticks) = decimal_to_price(price_decimal) else {
+            return false;
+        };
+        let Ok(size_units) = decimal_to_qty(size_decimal) else {
+            return false;
+        };
+
+        size_units != 0 && level_price_ticks == price_ticks
+    })
 }

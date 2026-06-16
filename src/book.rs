@@ -413,8 +413,8 @@ impl OrderBook {
         }
 
         self.sequence = timestamp;
-        self.timestamp =
-            chrono::DateTime::<Utc>::from_timestamp(timestamp as i64, 0).unwrap_or_else(Utc::now);
+        self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp as i64)
+            .unwrap_or_else(Utc::now);
 
         Ok(true)
     }
@@ -443,20 +443,26 @@ impl OrderBook {
         Ok(())
     }
 
-    /// Finish applying a WS `book` update.
-    pub(crate) fn finish_ws_book_update(&mut self) {
+    /// Finish applying a WS `book` snapshot.
+    pub(crate) fn finish_ws_book_update(
+        &mut self,
+        mut has_bid: impl FnMut(Price) -> bool,
+        mut has_ask: impl FnMut(Price) -> bool,
+    ) {
+        self.bids.retain(|price_ticks, _| has_bid(*price_ticks));
+        self.asks.retain(|price_ticks, _| has_ask(*price_ticks));
         self.trim_depth();
     }
 
     /// Apply a WebSocket `book` update for this token.
     ///
-    /// The official Polymarket CLOB WebSocket `book` event contains batches of
-    /// price levels for both sides. Unlike `apply_delta_fast`, this method can
-    /// apply many levels that share the same message timestamp.
+    /// The official Polymarket CLOB WebSocket `book` event is a full snapshot.
+    /// Unlike `apply_delta_fast`, this method can apply many levels that share
+    /// the same message timestamp.
     ///
     /// Notes:
-    /// - This performs upserts (update/insert/remove) for the provided levels.
-    /// - It does **not** infer removals for levels omitted from the message.
+    /// - This replaces the snapshot for both sides.
+    /// - Levels omitted from the message are removed.
     /// - Insertions of *new* price levels may allocate (BTreeMap node growth).
     pub fn apply_book_update(&mut self, update: &BookUpdate) -> Result<()> {
         if update.asset_id != self.token_id {
@@ -471,7 +477,7 @@ impl OrderBook {
         }
 
         self.sequence = update.timestamp;
-        self.timestamp = chrono::DateTime::<Utc>::from_timestamp(update.timestamp as i64, 0)
+        self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(update.timestamp as i64)
             .unwrap_or_else(Utc::now);
 
         // Apply bids (BUY) and asks (SELL) as level upserts.
@@ -513,6 +519,10 @@ impl OrderBook {
             }
         }
 
+        self.bids
+            .retain(|price_ticks, _| book_update_has_level(&update.bids, *price_ticks));
+        self.asks
+            .retain(|price_ticks, _| book_update_has_level(&update.asks, *price_ticks));
         self.trim_depth();
         Ok(())
     }
@@ -757,6 +767,19 @@ impl OrderBook {
             _ => true,                                       // Empty book is technically valid
         }
     }
+}
+
+fn book_update_has_level(levels: &[OrderSummary], price_ticks: Price) -> bool {
+    levels.iter().any(|level| {
+        let Ok(level_price_ticks) = decimal_to_price(level.price) else {
+            return false;
+        };
+        let Ok(size_units) = decimal_to_qty(level.size) else {
+            return false;
+        };
+
+        size_units != 0 && level_price_ticks == price_ticks
+    })
 }
 
 /// Market impact calculation result
@@ -1019,6 +1042,115 @@ mod tests {
         assert_eq!(book.sequence, 1); // Sequence should update
         assert_eq!(book.best_bid().unwrap().price, dec!(0.5)); // Should be our bid
         assert_eq!(book.best_bid().unwrap().size, dec!(100)); // Should be our size
+    }
+
+    #[test]
+    fn test_book_update_replaces_snapshot_and_uses_millis_timestamp() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        let timestamp = 1_757_908_892_351;
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp,
+            bids: vec![
+                OrderSummary {
+                    price: dec!(0.48),
+                    size: dec!(10),
+                },
+                OrderSummary {
+                    price: dec!(0.49),
+                    size: dec!(20),
+                },
+            ],
+            asks: vec![
+                OrderSummary {
+                    price: dec!(0.52),
+                    size: dec!(30),
+                },
+                OrderSummary {
+                    price: dec!(0.53),
+                    size: dec!(40),
+                },
+            ],
+            hash: None,
+        })
+        .unwrap();
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp: timestamp + 1,
+            bids: vec![OrderSummary {
+                price: dec!(0.49),
+                size: dec!(25),
+            }],
+            asks: vec![OrderSummary {
+                price: dec!(0.53),
+                size: dec!(45),
+            }],
+            hash: None,
+        })
+        .unwrap();
+
+        assert_eq!(book.timestamp.timestamp_millis(), timestamp as i64 + 1);
+        assert_eq!(book.bids(None).len(), 1);
+        assert_eq!(book.asks(None).len(), 1);
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.49));
+        assert_eq!(book.best_bid().unwrap().size, dec!(25));
+        assert_eq!(book.best_ask().unwrap().price, dec!(0.53));
+        assert_eq!(book.best_ask().unwrap().size, dec!(45));
+    }
+
+    #[test]
+    fn test_book_update_depth_keeps_best_prices_independent_of_payload_order() {
+        let mut book = OrderBook::new("test_token".to_string(), 2);
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp: 1_757_908_892_351,
+            bids: vec![
+                OrderSummary {
+                    price: dec!(0.49),
+                    size: dec!(10),
+                },
+                OrderSummary {
+                    price: dec!(0.50),
+                    size: dec!(20),
+                },
+                OrderSummary {
+                    price: dec!(0.48),
+                    size: dec!(30),
+                },
+            ],
+            asks: vec![
+                OrderSummary {
+                    price: dec!(0.52),
+                    size: dec!(40),
+                },
+                OrderSummary {
+                    price: dec!(0.54),
+                    size: dec!(50),
+                },
+                OrderSummary {
+                    price: dec!(0.53),
+                    size: dec!(60),
+                },
+            ],
+            hash: None,
+        })
+        .unwrap();
+
+        let bids = book.bids(None);
+        assert_eq!(bids.len(), 2);
+        assert_eq!(bids[0].price, dec!(0.50));
+        assert_eq!(bids[1].price, dec!(0.49));
+
+        let asks = book.asks(None);
+        assert_eq!(asks.len(), 2);
+        assert_eq!(asks[0].price, dec!(0.52));
+        assert_eq!(asks[1].price, dec!(0.53));
     }
 
     #[test]

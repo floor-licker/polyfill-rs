@@ -762,4 +762,31 @@ mod tests {
         assert_eq!(snapshot.asks[0].price, Decimal::from_str("0.76").unwrap());
         assert_eq!(snapshot.asks[0].size, Decimal::from_str("5").unwrap());
     }
+
+    #[test]
+    fn test_websocket_book_applier_replaces_snapshot() {
+        let books = crate::book::OrderBookManager::new(64);
+        let _ = books.get_or_create_book("12345").unwrap();
+
+        let processor = WsBookUpdateProcessor::new(1024);
+        let stream = WebSocketStream::new("wss://example.com/ws");
+        let mut applier = stream.into_book_applier(&books, processor);
+
+        let first = r#"{"event_type":"book","asset_id":"12345","timestamp":"1757908892351","bids":[{"price":"0.74","size":"8"},{"price":"0.75","size":"10"}],"asks":[{"price":"0.76","size":"5"},{"price":"0.77","size":"4"}]}"#.to_string();
+        applier.apply_text_message(first).unwrap();
+
+        let second = r#"{"event_type":"book","asset_id":"12345","timestamp":"1757908892352","bids":[{"price":"0.75","size":"11"}],"asks":[{"price":"0.76","size":"6"}]}"#.to_string();
+        let stats = applier.apply_text_message(second).unwrap();
+        assert_eq!(stats.book_messages, 1);
+        assert_eq!(stats.book_levels_applied, 2);
+
+        let snapshot = books.get_book("12345").unwrap();
+        assert_eq!(snapshot.timestamp.timestamp_millis(), 1_757_908_892_352);
+        assert_eq!(snapshot.bids.len(), 1);
+        assert_eq!(snapshot.asks.len(), 1);
+        assert_eq!(snapshot.bids[0].price, Decimal::from_str("0.75").unwrap());
+        assert_eq!(snapshot.bids[0].size, Decimal::from_str("11").unwrap());
+        assert_eq!(snapshot.asks[0].price, Decimal::from_str("0.76").unwrap());
+        assert_eq!(snapshot.asks[0].size, Decimal::from_str("6").unwrap());
+    }
 }
