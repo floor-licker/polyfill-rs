@@ -21,7 +21,7 @@ futures-util = "0.3"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "stream", "gzip"] }
-hickory-resolver = "0.24"
+hickory-resolver = "0.26"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

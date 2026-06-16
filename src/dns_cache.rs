@@ -4,7 +4,8 @@
 //! which can add 10-20ms per request.
 
 use hickory_resolver::config::*;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::TokioResolver;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -20,7 +21,7 @@ struct DnsCacheEntry {
 
 /// DNS cache for resolving hostnames
 pub struct DnsCache {
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
     cache: Arc<RwLock<HashMap<String, DnsCacheEntry>>>,
     default_ttl: Duration,
 }
@@ -28,8 +29,12 @@ pub struct DnsCache {
 impl DnsCache {
     /// Create a new DNS cache with system configuration
     pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let mut builder = TokioResolver::builder_with_config(
+            ResolverConfig::default(),
+            TokioRuntimeProvider::default(),
+        );
+        *builder.options_mut() = ResolverOpts::default();
+        let resolver = builder.build()?;
 
         Ok(Self {
             resolver,
@@ -40,8 +45,12 @@ impl DnsCache {
 
     /// Create a DNS cache with custom TTL
     pub async fn with_ttl(ttl: Duration) -> Result<Self, Box<dyn std::error::Error>> {
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let mut builder = TokioResolver::builder_with_config(
+            ResolverConfig::default(),
+            TokioRuntimeProvider::default(),
+        );
+        *builder.options_mut() = ResolverOpts::default();
+        let resolver = builder.build()?;
 
         Ok(Self {
             resolver,
