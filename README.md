@@ -43,11 +43,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **Real-World API Performance (with network I/O)**
 
-End-to-end performance with Polymarket's API, including network latency, JSON parsing, and decompression:
+Real-world Polymarket API latency broken down by request phase:
 
-| Operation | polyfill-rs | polymarket-rs-client | Official Python Client |
-|-----------|-------------|----------------------|------------------------|
-| **Fetch Markets** | **321.6 ms ± 92.9 ms** | 409.3 ms ± 137.6 ms | 1.366 s ± 0.048 s |
+![polyfill-rs benchmark results](assets/benchmark-results.svg)
+
+| Operation | Metric | polyfill-rs | rs-clob-client-v2 | polymarket-rs-client | Official Python Client |
+|-----------|--------|-------------|-------------------|----------------------|------------------------|
+| **Fetch Markets** | mean ± sd | **321.6 ms ± 92.9 ms** | - | 409.3 ms ± 137.6 ms | 1.366 s ± 0.048 s |
+| **Cold Start** | single run | 651.7 ms | **543.9 ms** | - | - |
+| **Warm Connection** | single run | **202.9 ms** | 497.2 ms | - | - |
+| **Steady Typed Total** | p50 / p95 / p99 | **209.9 / 276.1 / 509.5 ms** | 215.9 / 284.7 / 312.4 ms | - | - |
+| **Network-Only Byte Fetch** | p50 / p95 / p99 | 382.5 / 590.3 / 626.7 ms | **300.1 / 449.0 / 520.1 ms** | - | - |
+| **CPU Parse Only** | p50 / p95 / p99 | **0.5 / 1.2 / 1.4 ms** | 1.3 / 1.4 / 1.4 ms | - | - |
 
 
 **Performance vs polymarket-rs-client:**
@@ -55,7 +62,7 @@ End-to-end performance with Polymarket's API, including network latency, JSON pa
 - **32.5% more consistent** 
 - **4.2x faster** than Official Python Client
 
-**Benchmark Methodology:** All benchmarks run side-by-side on the same machine, same network, same time using 20 iterations, 100ms delay between requests, /simplified-markets endpoint. Best performance achieved with connection keep-alive enabled. See `examples/side_by_side_benchmark.rs` in commit `a63a170`: https://github.com/floor-licker/polyfill-rs/blob/a63a170/examples/side_by_side_benchmark.rs for the complete benchmark implementation.
+**Benchmark Methodology:** The `rs-clob-client-v2` comparison separates cold start, warm connection, steady-state typed requests, network-only byte fetches, and CPU-only parsing. Steady-state rows use 20 paired iterations with alternating order and 100ms delay; parse rows use 200 iterations from a cached 480KB payload. The network-only row compares byte fetches through each HTTP stack without typed deserialization. Run it with `cargo run --release --example official_client_side_by_side_benchmark --features official-client-benchmark`. See `examples/side_by_side_benchmark.rs` in commit `a63a170`: https://github.com/floor-licker/polyfill-rs/blob/a63a170/examples/side_by_side_benchmark.rs for the original legacy benchmark implementation.
 
 **Computational Performance (pure CPU, no I/O)**
 

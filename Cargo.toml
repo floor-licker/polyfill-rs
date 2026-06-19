@@ -20,7 +20,7 @@ futures = "0.3"
 futures-util = "0.3"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "stream", "gzip"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "stream", "gzip", "rustls", "http2"] }
 hickory-resolver = "0.26"
 
 # Serialization
@@ -64,6 +64,9 @@ rand = "0.8"
 # Optional WebSocket support for streaming
 tokio-tungstenite = { version = "0.21", optional = true, features = ["native-tls"] }
 
+# Optional benchmark-only dependency for comparing against Polymarket's active Rust SDK.
+polymarket_client_sdk_v2 = { git = "https://github.com/Polymarket/rs-clob-client-v2", rev = "8ba5008733c3c03e92041eef8b1cb8495dbed718", features = ["clob"], optional = true }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 tokio-test = "0.4"
@@ -75,10 +78,15 @@ env_logger = "0.10"
 default = ["stream"]
 stream = ["tokio-tungstenite"]
 side-by-side-benchmark = []
+official-client-benchmark = ["dep:polymarket_client_sdk_v2"]
 
 [[example]]
 name = "side_by_side_benchmark"
 required-features = ["side-by-side-benchmark"]
+
+[[example]]
+name = "official_client_side_by_side_benchmark"
+required-features = ["official-client-benchmark"]
 
 [[bench]]
 name = "book_updates"
