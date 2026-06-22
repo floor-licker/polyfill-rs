@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="380" viewBox="0 0 980 380" role="img" aria-labelledby="title desc">
+  <title id="title">polyfill-rs benchmark bars</title>
+  <desc id="desc">Minimal horizontal bars visualizing p50 benchmark latency. Lower values are faster.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .group { fill: #6b7280; font-size: 12px; font-weight: 650; }
+    .label { fill: #374151; font-size: 12px; font-weight: 600; }
+    .value { fill: #111827; font-size: 12px; font-weight: 650; }
+    .rule { stroke: #e5e7eb; stroke-width: 1; }
+    .polyfill { fill: #0f766e; }
+    .compare { fill: #9ca3af; }
+  </style>
+
+  <rect width="980" height="380" fill="#ffffff"/>
+
+  <text class="group" x="40" y="38">Steady typed total, p50</text>
+  <text class="label" x="40" y="68">polyfill-rs</text>
+  <rect class="polyfill" x="210" y="54" width="584" height="18" rx="3"/>
+  <text class="value" x="812" y="68">209.9 ms</text>
+  <text class="label" x="40" y="96">rs-clob-client-v2</text>
+  <rect class="compare" x="210" y="82" width="600" height="18" rx="3"/>
+  <text class="value" x="828" y="96">215.9 ms</text>
+
+  <line class="rule" x1="40" y1="128" x2="940" y2="128"/>
+
+  <text class="group" x="40" y="158">Network-only byte fetch, p50</text>
+  <text class="label" x="40" y="188">polyfill-rs</text>
+  <rect class="polyfill" x="210" y="174" width="600" height="18" rx="3"/>
+  <text class="value" x="828" y="188">382.5 ms</text>
+  <text class="label" x="40" y="216">rs-clob-client-v2</text>
+  <rect class="compare" x="210" y="202" width="471" height="18" rx="3"/>
+  <text class="value" x="699" y="216">300.1 ms</text>
+
+  <line class="rule" x1="40" y1="248" x2="940" y2="248"/>
+
+  <text class="group" x="40" y="278">CPU parse only, p50</text>
+  <text class="label" x="40" y="308">polyfill-rs</text>
+  <rect class="polyfill" x="210" y="294" width="231" height="18" rx="3"/>
+  <text class="value" x="459" y="308">0.5 ms</text>
+  <text class="label" x="40" y="336">rs-clob-client-v2</text>
+  <rect class="compare" x="210" y="322" width="600" height="18" rx="3"/>
+  <text class="value" x="828" y="336">1.3 ms</text>
+</svg>
