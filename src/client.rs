@@ -13,7 +13,7 @@ use crate::types::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
-use reqwest::header::{HeaderName, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
 use reqwest::Client;
 use reqwest::{Method, RequestBuilder};
 use rust_decimal::prelude::FromPrimitive;
@@ -32,6 +32,17 @@ struct MarketByTokenResponse {
     condition_id: String,
 }
 
+fn polymarket_default_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static(concat!("polyfill-rs/", env!("CARGO_PKG_VERSION"))),
+    );
+    headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers
+}
+
 fn build_http_client(
     host: &str,
     timeout: Option<Duration>,
@@ -40,6 +51,7 @@ fn build_http_client(
     let max_connections = max_connections.unwrap_or(10);
     let mut builder = reqwest::ClientBuilder::new()
         .no_proxy()
+        .default_headers(polymarket_default_headers())
         .http2_adaptive_window(true)
         .http2_initial_stream_window_size(512 * 1024)
         .tcp_nodelay(true)
@@ -61,6 +73,7 @@ fn build_http_client(
     builder.build().unwrap_or_else(|_| {
         reqwest::ClientBuilder::new()
             .no_proxy()
+            .default_headers(polymarket_default_headers())
             .build()
             .expect("Failed to build reqwest client")
     })
@@ -108,21 +121,6 @@ impl ClobClient {
         http_client: Client,
         auth: ClientAuthConfig,
     ) -> Self {
-        let dns_cache = tokio::runtime::Handle::try_current().ok().and_then(|_| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let cache = crate::dns_cache::DnsCache::new().await.ok()?;
-                    let hostname = host
-                        .trim_start_matches("https://")
-                        .trim_start_matches("http://")
-                        .split('/')
-                        .next()?;
-                    cache.prewarm(hostname).await.ok()?;
-                    Some(std::sync::Arc::new(cache))
-                })
-            })
-        });
-
         let connection_manager = Some(std::sync::Arc::new(
             crate::connection_manager::ConnectionManager::new(
                 http_client.clone(),
@@ -130,13 +128,6 @@ impl ClobClient {
             ),
         ));
         let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
-
-        let pool_clone = buffer_pool.clone();
-        if let Ok(_handle) = tokio::runtime::Handle::try_current() {
-            tokio::spawn(async move {
-                pool_clone.prewarm(3).await;
-            });
-        }
 
         let order_builder = auth
             .signer
@@ -151,14 +142,14 @@ impl ClobClient {
             api_creds: auth.api_creds,
             builder_code: auth.builder_code,
             order_builder,
-            dns_cache,
+            dns_cache: None,
             connection_manager,
             buffer_pool,
         }
     }
 
     /// Create a new client with optimized HTTP/2 settings (benchmarked 11.4% faster)
-    /// Now includes DNS caching, connection management, and buffer pooling
+    /// Connection prewarming is explicit through [`ClobClient::prewarm_connections`].
     pub fn new(host: &str) -> Self {
         let http_client = build_http_client(host, None, None);
         Self::build_client(host, 137, http_client, ClientAuthConfig::default())
