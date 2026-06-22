@@ -195,6 +195,12 @@ pub struct OrderBook {
     /// Snapshot generation used to retain book levels without rescanning input payloads.
     snapshot_generation: u64,
 
+    /// Last accepted full-book snapshot hash, when the feed provides one.
+    ///
+    /// This is used as a tie-breaker for same-millisecond snapshots. If the timestamp is equal
+    /// but the hash differs, the snapshot can still represent a newer book state.
+    last_snapshot_hash: Option<String>,
+
     /// Minimum tick size for this market in ticks (like 10 for $0.001 increments)
     /// Some markets only allow certain price increments
     /// We store this in ticks for fast validation without conversion
@@ -234,6 +240,7 @@ impl OrderBook {
             bids: BookSide::new(BookSideKind::Bid, max_depth), // Empty to start
             asks: BookSide::new(BookSideKind::Ask, max_depth), // Empty to start
             snapshot_generation: 0,
+            last_snapshot_hash: None,
             tick_size_ticks: None, // We'll set this later when we learn about the market
             max_depth,
         }
@@ -531,16 +538,13 @@ impl OrderBook {
         &self,
         asset_id: &str,
         timestamp: u64,
+        hash: Option<&str>,
     ) -> Result<bool> {
         if asset_id != self.token_id {
             return Err(PolyfillError::validation("Token ID mismatch"));
         }
 
-        if timestamp <= self.sequence {
-            return Ok(false);
-        }
-
-        Ok(true)
+        Ok(self.should_apply_snapshot(timestamp, hash))
     }
 
     /// Atomically apply a WebSocket `book` snapshot.
@@ -552,13 +556,14 @@ impl OrderBook {
         &mut self,
         asset_id: &str,
         timestamp: u64,
+        hash: Option<&str>,
         levels: &[ParsedBookLevel],
     ) -> Result<bool> {
-        if !self.should_apply_ws_book_update(asset_id, timestamp)? {
+        if !self.should_apply_ws_book_update(asset_id, timestamp, hash)? {
             return Ok(false);
         }
 
-        self.apply_validated_snapshot(timestamp, levels)?;
+        self.apply_validated_snapshot(timestamp, hash, levels)?;
 
         Ok(true)
     }
@@ -578,10 +583,10 @@ impl OrderBook {
             return Err(PolyfillError::validation("Token ID mismatch"));
         }
 
-        // Use the exchange-provided timestamp as our monotonic sequence marker.
-        // This is less strict than the REST/legacy delta sequence but works for
-        // ignoring obviously stale book snapshots.
-        if update.timestamp <= self.sequence {
+        // Use the exchange-provided timestamp as our monotonic snapshot marker.
+        // If the feed emits two snapshots in the same millisecond, a different hash is treated as
+        // a distinct newer state. Equal timestamp without a hash is considered duplicate/stale.
+        if !self.should_apply_snapshot(update.timestamp, update.hash.as_deref()) {
             return Ok(());
         }
 
@@ -598,6 +603,7 @@ impl OrderBook {
         }
 
         self.sequence = update.timestamp;
+        self.last_snapshot_hash = update.hash.clone();
         self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(update.timestamp as i64)
             .unwrap_or_else(Utc::now);
         self.begin_snapshot();
@@ -699,6 +705,18 @@ impl OrderBook {
     }
 
     #[inline]
+    fn should_apply_snapshot(&self, timestamp: u64, hash: Option<&str>) -> bool {
+        if timestamp > self.sequence {
+            return true;
+        }
+        if timestamp < self.sequence {
+            return false;
+        }
+
+        hash.is_some_and(|hash| self.last_snapshot_hash.as_deref() != Some(hash))
+    }
+
+    #[inline]
     fn parse_snapshot_summary(&self, side: Side, level: &OrderSummary) -> Result<ParsedBookLevel> {
         let price_ticks = decimal_to_price(level.price)
             .map_err(|_| PolyfillError::validation("Invalid price"))?;
@@ -726,6 +744,7 @@ impl OrderBook {
     fn apply_validated_snapshot(
         &mut self,
         timestamp: u64,
+        hash: Option<&str>,
         levels: &[ParsedBookLevel],
     ) -> Result<()> {
         for &level in levels {
@@ -733,6 +752,7 @@ impl OrderBook {
         }
 
         self.sequence = timestamp;
+        self.last_snapshot_hash = hash.map(str::to_owned);
         self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp as i64)
             .unwrap_or_else(Utc::now);
         self.begin_snapshot();
@@ -1384,6 +1404,109 @@ mod tests {
         assert_eq!(book.best_bid().unwrap().size, dec!(25));
         assert_eq!(book.best_ask().unwrap().price, dec!(0.53));
         assert_eq!(book.best_ask().unwrap().size, dec!(45));
+    }
+
+    #[test]
+    fn test_book_update_allows_same_timestamp_with_different_hash() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        let timestamp = 1_757_908_892_351;
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp,
+            bids: vec![OrderSummary {
+                price: dec!(0.48),
+                size: dec!(10),
+            }],
+            asks: vec![OrderSummary {
+                price: dec!(0.52),
+                size: dec!(20),
+            }],
+            hash: Some("hash_a".to_string()),
+        })
+        .unwrap();
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp,
+            bids: vec![OrderSummary {
+                price: dec!(0.49),
+                size: dec!(30),
+            }],
+            asks: vec![OrderSummary {
+                price: dec!(0.53),
+                size: dec!(40),
+            }],
+            hash: Some("hash_b".to_string()),
+        })
+        .unwrap();
+
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.49));
+        assert_eq!(book.best_bid().unwrap().size, dec!(30));
+        assert_eq!(book.best_ask().unwrap().price, dec!(0.53));
+        assert_eq!(book.best_ask().unwrap().size, dec!(40));
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp,
+            bids: vec![OrderSummary {
+                price: dec!(0.50),
+                size: dec!(50),
+            }],
+            asks: vec![OrderSummary {
+                price: dec!(0.54),
+                size: dec!(60),
+            }],
+            hash: Some("hash_b".to_string()),
+        })
+        .unwrap();
+
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.49));
+        assert_eq!(book.best_ask().unwrap().price, dec!(0.53));
+    }
+
+    #[test]
+    fn test_book_update_rejects_same_timestamp_without_hash_tie_breaker() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        let timestamp = 1_757_908_892_351;
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp,
+            bids: vec![OrderSummary {
+                price: dec!(0.48),
+                size: dec!(10),
+            }],
+            asks: vec![OrderSummary {
+                price: dec!(0.52),
+                size: dec!(20),
+            }],
+            hash: None,
+        })
+        .unwrap();
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp,
+            bids: vec![OrderSummary {
+                price: dec!(0.49),
+                size: dec!(30),
+            }],
+            asks: vec![OrderSummary {
+                price: dec!(0.53),
+                size: dec!(40),
+            }],
+            hash: None,
+        })
+        .unwrap();
+
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.48));
+        assert_eq!(book.best_ask().unwrap().price, dec!(0.52));
     }
 
     #[test]

@@ -130,6 +130,7 @@ fn process_stream_object<'tape, 'input>(
         .ok_or_else(|| PolyfillError::parse("Missing timestamp", None))?;
     let timestamp = parse_u64(timestamp_value)
         .ok_or_else(|| PolyfillError::parse("Invalid timestamp", None))?;
+    let hash = obj.get("hash").and_then(|v| v.into_string());
 
     let bids = obj
         .get("bids")
@@ -145,7 +146,7 @@ fn process_stream_object<'tape, 'input>(
     let result = books.with_book_mut(asset_id, |book| {
         parsed_levels.clear();
 
-        if !book.should_apply_ws_book_update(asset_id, timestamp)? {
+        if !book.should_apply_ws_book_update(asset_id, timestamp, hash)? {
             return Ok(0);
         }
 
@@ -153,7 +154,7 @@ fn process_stream_object<'tape, 'input>(
         collect_levels(Side::SELL, asks, parsed_levels)?;
 
         let parsed_count = parsed_levels.len();
-        if book.apply_ws_book_snapshot_fast(asset_id, timestamp, parsed_levels)? {
+        if book.apply_ws_book_snapshot_fast(asset_id, timestamp, hash, parsed_levels)? {
             Ok(parsed_count)
         } else {
             Ok(0)
@@ -410,5 +411,41 @@ mod tests {
         assert_eq!(snapshot.asks.len(), 1);
         assert_eq!(snapshot.bids[0].price, dec!(0.50));
         assert_eq!(snapshot.asks[0].price, dec!(0.60));
+    }
+
+    #[test]
+    fn processor_allows_same_timestamp_with_different_hash() {
+        let books = OrderBookManager::new(10);
+        books.get_or_create_book("test_asset_id").unwrap();
+        let mut processor = WsBookUpdateProcessor::new(1024);
+
+        let mut first = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1000,"hash":"hash_a","bids":[{"price":"0.5000","size":"10.0000"}],"asks":[{"price":"0.6000","size":"20.0000"}]}"#.to_vec();
+        let first_stats = processor
+            .process_bytes(first.as_mut_slice(), &books)
+            .unwrap();
+        assert_eq!(first_stats.book_levels_applied, 2);
+
+        let mut second = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1000,"hash":"hash_b","bids":[{"price":"0.5100","size":"11.0000"}],"asks":[{"price":"0.6100","size":"21.0000"}]}"#.to_vec();
+        let second_stats = processor
+            .process_bytes(second.as_mut_slice(), &books)
+            .unwrap();
+        assert_eq!(second_stats.book_levels_applied, 2);
+
+        let snapshot = books.get_book("test_asset_id").unwrap();
+        assert_eq!(snapshot.sequence, 1000);
+        assert_eq!(snapshot.bids[0].price, dec!(0.51));
+        assert_eq!(snapshot.bids[0].size, dec!(11));
+        assert_eq!(snapshot.asks[0].price, dec!(0.61));
+        assert_eq!(snapshot.asks[0].size, dec!(21));
+
+        let mut duplicate = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1000,"hash":"hash_b","bids":[{"price":"0.5200","size":"12.0000"}],"asks":[{"price":"0.6200","size":"22.0000"}]}"#.to_vec();
+        let duplicate_stats = processor
+            .process_bytes(duplicate.as_mut_slice(), &books)
+            .unwrap();
+        assert_eq!(duplicate_stats.book_levels_applied, 0);
+
+        let snapshot = books.get_book("test_asset_id").unwrap();
+        assert_eq!(snapshot.bids[0].price, dec!(0.51));
+        assert_eq!(snapshot.asks[0].price, dec!(0.61));
     }
 }
