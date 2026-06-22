@@ -62,7 +62,7 @@ Real-world Polymarket API latency broken down by request phase:
 - **32.5% more consistent** 
 - **4.2x faster** than Official Python Client
 
-**Benchmark Methodology:** The `rs-clob-client-v2` comparison separates cold start, warm connection, steady-state typed requests, network-only byte fetches, and CPU-only parsing. The latest local live-network run was on June 22, 2026 against `https://clob.polymarket.com/simplified-markets?next_cursor=MA==`. Steady-state rows use 40 paired iterations with alternating order and 100ms delay after 5 warmups; parse rows use 300 iterations from a cached 480KB payload. The network-only row compares byte fetches through each HTTP stack without typed deserialization. The CPU parse row compares polyfill typed parsing against the `rs-clob-client-v2` request-helper parse path; direct serde parsing of the SDK response type measured 0.5 / 0.6 / 0.6 ms. Run it with `cargo run --release --example official_client_side_by_side_benchmark --features official-client-benchmark`. See `examples/side_by_side_benchmark.rs` in commit `a63a170`: https://github.com/floor-licker/polyfill-rs/blob/a63a170/examples/side_by_side_benchmark.rs for the original legacy benchmark implementation.
+**Benchmark Methodology:** The `rs-clob-client-v2` comparison separates cold start, warm connection, steady-state typed requests, network-only byte fetches, and CPU-only parsing. The latest local live-network run was on June 22, 2026 against `https://clob.polymarket.com/simplified-markets?next_cursor=MA==`. Steady-state rows use 40 paired iterations with alternating order and 100ms delay after 5 warmups; parse rows use 300 iterations from a cached 480KB payload. The network-only row compares byte fetches through each HTTP stack without typed deserialization. The CPU parse row compares polyfill's SIMD-backed typed parser against the `rs-clob-client-v2` request-helper parse path; direct serde parsing of the SDK response type measured 0.5 / 0.6 / 0.6 ms. Run it with `cargo run --release --example official_client_side_by_side_benchmark --features official-client-benchmark`. See `examples/side_by_side_benchmark.rs` in commit `a63a170`: https://github.com/floor-licker/polyfill-rs/blob/a63a170/examples/side_by_side_benchmark.rs for the original legacy benchmark implementation.
 
 **Computational Performance (pure CPU, no I/O)**
 
@@ -70,14 +70,14 @@ Real-world Polymarket API latency broken down by request phase:
 |-----------|-------------|-------|
 | **Order Book Updates (1000 ops)** | 159.6 µs ± 32 µs | 6,260 updates/sec, zero-allocation |
 | **Spread/Mid Calculations** | 70 ns ± 77 ns | 14.3M ops/sec, optimized BTreeMap |
-| **JSON Parsing (480KB)** | ~2.3 ms | SIMD-accelerated parsing (1.77x faster than serde_json) |
+| **JSON Parsing (480KB)** | ~0.5 ms | SIMD-backed parsing for large REST market responses and benchmarked polyfill typed parse path |
 | **WS `book` hot path (decode + apply)** | ~0.23 µs / 1.73 µs / 6.74 µs | 1 / 16 / 64 levels-per-side, strict fixed-point tape parser with generation-marked snapshot retention (see `benches/ws_hot_path.rs`) |
 
 Run the WS hot-path benchmark locally with `cargo bench --bench ws_hot_path`.
 
 **Key Performance Optimizations:**
 
-The 21.4% performance improvement comes from SIMD-accelerated JSON parsing (1.77x faster than serde_json), HTTP/2 tuning with 512KB stream windows optimized for 469KB payloads, explicit Polymarket request headers, and opt-in connection prewarming/keep-alive support.
+The 21.4% performance improvement comes from HTTP/2 tuning with 512KB stream windows optimized for 469KB payloads, explicit Polymarket request headers, SIMD-backed parsing for large REST market responses, and opt-in connection prewarming/keep-alive support.
 
 ### Memory Architecture
 
