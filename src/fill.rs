@@ -1,7 +1,9 @@
-//! Trade execution and fill handling for Polymarket client
+//! Trade execution simulation and fill handling for the Polymarket client.
 //!
-//! This module provides high-performance trade execution logic and
-//! fill event processing for latency-sensitive trading environments.
+//! This module is intended for local simulation, slippage checks, and fill-event
+//! bookkeeping. It is not a hot-path matching or execution engine: market-order
+//! simulation materializes book levels as `Decimal` values, creates UUID-backed
+//! fill IDs, clones order identifiers, and stores owned fill history.
 
 use crate::errors::{PolyfillError, Result};
 use crate::types::*;
@@ -38,7 +40,11 @@ pub enum FillStatus {
     Rejected,
 }
 
-/// Fill execution engine
+/// Fill simulation and bookkeeping engine.
+///
+/// `FillEngine` favors ergonomic `Decimal` outputs and owned `FillEvent` records
+/// over allocation-sensitive execution. It should not be used as evidence that the
+/// order-routing or market-data hot paths are allocation-free.
 #[derive(Debug)]
 pub struct FillEngine {
     /// Minimum fill size for market orders
@@ -52,7 +58,7 @@ pub struct FillEngine {
 }
 
 impl FillEngine {
-    /// Create a new fill engine
+    /// Create a new fill simulation engine.
     pub fn new(min_fill_size: Decimal, max_slippage_pct: Decimal, fee_rate_bps: u32) -> Self {
         Self {
             min_fill_size,
@@ -62,7 +68,12 @@ impl FillEngine {
         }
     }
 
-    /// Execute a market order against an order book
+    /// Simulate executing a market order against an order book.
+    ///
+    /// This method allocates and converts internal book levels back to `Decimal`
+    /// via `OrderBook::asks`/`OrderBook::bids`, then builds owned `FillEvent`
+    /// records. It is suitable for simulation and reporting, not latency-sensitive
+    /// execution benchmarking.
     pub fn execute_market_order(
         &mut self,
         order: &MarketOrderRequest,
@@ -205,7 +216,7 @@ impl FillEngine {
         Ok(result)
     }
 
-    /// Execute a limit order (simulation)
+    /// Simulate executing a limit order.
     pub fn execute_limit_order(
         &mut self,
         order: &OrderRequest,
