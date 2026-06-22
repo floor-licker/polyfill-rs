@@ -71,7 +71,7 @@ Real-world Polymarket API latency broken down by request phase:
 | **Order Book Updates (1000 ops)** | 159.6 µs ± 32 µs | 6,260 updates/sec, zero-allocation |
 | **Spread/Mid Calculations** | 70 ns ± 77 ns | 14.3M ops/sec, optimized BTreeMap |
 | **JSON Parsing (480KB)** | ~2.3 ms | SIMD-accelerated parsing (1.77x faster than serde_json) |
-| **WS `book` hot path (decode + apply)** | ~0.30 µs / 9.68 µs / 124.28 µs | 1 / 16 / 64 levels-per-side, fixed-point tape parser, ~6.8–9.5% faster than prior Decimal ingress path (see `benches/ws_hot_path.rs`) |
+| **WS `book` hot path (decode + apply)** | ~0.27 µs / 7.46 µs / 93.24 µs | 1 / 16 / 64 levels-per-side, strict 4dp fixed-point tape parser, no Decimal/rounding/clamping in the feed path (see `benches/ws_hot_path.rs`) |
 
 Run the WS hot-path benchmark locally with `cargo bench --bench ws_hot_path`.
 

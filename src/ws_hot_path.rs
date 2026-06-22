@@ -178,10 +178,8 @@ fn apply_levels<'tape, 'input>(
             .and_then(|v| v.into_string())
             .ok_or_else(|| PolyfillError::parse("Missing size", None))?;
 
-        let price_ticks = parse_price_ticks(price_str)
-            .ok_or_else(|| PolyfillError::validation("Invalid price"))?;
-        let size_units =
-            parse_qty_units(size_str).ok_or_else(|| PolyfillError::validation("Invalid size"))?;
+        let price_ticks = parse_price_ticks_4dp(price_str)?;
+        let size_units = parse_qty_scaled_4dp(size_str)?;
 
         book.apply_ws_book_level_fast(side, price_ticks, size_units)?;
         applied += 1;
@@ -208,10 +206,10 @@ fn ws_levels_contain_price<'tape, 'input>(
         let Some(size_str) = obj.get("size").and_then(|v| v.into_string()) else {
             return false;
         };
-        let Some(level_price_ticks) = parse_price_ticks(price_str) else {
+        let Ok(level_price_ticks) = parse_price_ticks_4dp(price_str) else {
             return false;
         };
-        let Some(size_units) = parse_qty_units(size_str) else {
+        let Ok(size_units) = parse_qty_scaled_4dp(size_str) else {
             return false;
         };
 
@@ -219,89 +217,74 @@ fn ws_levels_contain_price<'tape, 'input>(
     })
 }
 
-fn parse_price_ticks(value: &str) -> Option<Price> {
-    let scaled = parse_scaled_i128(value)?;
-    if scaled < 0 {
-        return None;
+#[inline]
+fn parse_price_ticks_4dp(value: &str) -> Result<Price> {
+    let scaled = parse_scaled_4_u64(value)?;
+    if scaled < MIN_PRICE_TICKS as u64 {
+        return Err(PolyfillError::validation("Invalid price"));
     }
-    if scaled < MIN_PRICE_TICKS as i128 {
-        return Some(MIN_PRICE_TICKS);
-    }
-    if scaled > MAX_PRICE_TICKS as i128 {
-        return None;
+    if scaled > MAX_PRICE_TICKS as u64 {
+        return Err(PolyfillError::validation("Invalid price"));
     }
 
-    Some(scaled as Price)
+    Ok(scaled as Price)
 }
 
-fn parse_qty_units(value: &str) -> Option<Qty> {
-    let scaled = parse_scaled_i128(value)?;
-    if scaled < -(MAX_QTY as i128) || scaled > MAX_QTY as i128 {
-        return None;
+#[inline]
+fn parse_qty_scaled_4dp(value: &str) -> Result<Qty> {
+    let scaled = parse_scaled_4_u64(value)?;
+    if scaled > MAX_QTY as u64 {
+        return Err(PolyfillError::validation("Invalid size"));
     }
 
-    Some(scaled as Qty)
+    Ok(scaled as Qty)
 }
 
-fn parse_scaled_i128(value: &str) -> Option<i128> {
-    let value = value.trim();
+#[inline]
+fn parse_scaled_4_u64(value: &str) -> Result<u64> {
     if value.is_empty() {
-        return None;
+        return Err(PolyfillError::parse("invalid decimal", None));
     }
 
-    let bytes = value.as_bytes();
-    let mut idx = 0usize;
-    let mut sign = 1i128;
-
-    match bytes[idx] {
-        b'-' => {
-            sign = -1;
-            idx += 1;
-        },
-        b'+' => {
-            idx += 1;
-        },
-        _ => {},
-    }
-
-    if idx == bytes.len() {
-        return None;
-    }
-
-    let mut whole = 0i128;
-    let mut frac = 0i128;
-    let mut frac_digits = 0usize;
-    let mut round_up = false;
+    let mut whole = 0u64;
+    let mut frac = 0u64;
+    let mut frac_digits = 0u8;
     let mut seen_dot = false;
     let mut seen_digit = false;
 
-    while idx < bytes.len() {
-        match bytes[idx] {
+    for &byte in value.as_bytes() {
+        match byte {
             b'0'..=b'9' => {
                 seen_digit = true;
-                let digit = (bytes[idx] - b'0') as i128;
+                let digit = (byte - b'0') as u64;
                 if seen_dot {
-                    if frac_digits < 4 {
-                        frac = frac.checked_mul(10)?.checked_add(digit)?;
-                        frac_digits += 1;
-                    } else if frac_digits == 4 {
-                        round_up = digit >= 5;
+                    if frac_digits >= 4 {
+                        if digit != 0 {
+                            return Err(PolyfillError::parse("too many decimal places", None));
+                        }
+                    } else {
+                        frac = frac
+                            .checked_mul(10)
+                            .and_then(|x| x.checked_add(digit))
+                            .ok_or_else(|| PolyfillError::parse("scaled value overflow", None))?;
                         frac_digits += 1;
                     }
                 } else {
-                    whole = whole.checked_mul(10)?.checked_add(digit)?;
+                    whole = whole
+                        .checked_mul(10)
+                        .and_then(|x| x.checked_add(digit))
+                        .ok_or_else(|| PolyfillError::parse("scaled value overflow", None))?;
                 }
             },
             b'.' if !seen_dot => {
                 seen_dot = true;
             },
-            _ => return None,
+            _ => return Err(PolyfillError::parse("invalid decimal", None)),
         }
-        idx += 1;
     }
 
     if !seen_digit {
-        return None;
+        return Err(PolyfillError::parse("invalid decimal", None));
     }
 
     while frac_digits < 4 {
@@ -309,13 +292,10 @@ fn parse_scaled_i128(value: &str) -> Option<i128> {
         frac_digits += 1;
     }
 
-    let mut magnitude = whole.checked_mul(SCALE_FACTOR as i128)?.checked_add(frac)?;
-
-    if round_up {
-        magnitude = magnitude.checked_add(1)?;
-    }
-
-    Some(magnitude * sign)
+    whole
+        .checked_mul(SCALE_FACTOR as u64)
+        .and_then(|x| x.checked_add(frac))
+        .ok_or_else(|| PolyfillError::parse("scaled value overflow", None))
 }
 
 #[cfg(test)]
@@ -324,19 +304,21 @@ mod tests {
 
     #[test]
     fn fixed_point_parser_matches_expected_price_ticks() {
-        assert_eq!(parse_price_ticks("0.6543"), Some(6543));
-        assert_eq!(parse_price_ticks("1.0000"), Some(10_000));
-        assert_eq!(parse_price_ticks("0.00005"), Some(1));
-        assert_eq!(parse_price_ticks("0"), Some(1));
-        assert_eq!(parse_price_ticks("-0.1"), None);
+        assert_eq!(parse_price_ticks_4dp("0.6543").unwrap(), 6543);
+        assert_eq!(parse_price_ticks_4dp("1.0000").unwrap(), 10_000);
+        assert_eq!(parse_price_ticks_4dp("1.000000").unwrap(), 10_000);
+        assert!(parse_price_ticks_4dp("0.00005").is_err());
+        assert!(parse_price_ticks_4dp("0").is_err());
+        assert!(parse_price_ticks_4dp("-0.1").is_err());
     }
 
     #[test]
     fn fixed_point_parser_matches_expected_qty_units() {
-        assert_eq!(parse_qty_units("100.0"), Some(1_000_000));
-        assert_eq!(parse_qty_units("-50.5"), Some(-505_000));
-        assert_eq!(parse_qty_units("0.00004"), Some(0));
-        assert_eq!(parse_qty_units("0.00005"), Some(1));
-        assert_eq!(parse_qty_units("-0.00005"), Some(-1));
+        assert_eq!(parse_qty_scaled_4dp("100.0").unwrap(), 1_000_000);
+        assert_eq!(parse_qty_scaled_4dp("0.0000").unwrap(), 0);
+        assert_eq!(parse_qty_scaled_4dp("1.234500").unwrap(), 12_345);
+        assert!(parse_qty_scaled_4dp("-50.5").is_err());
+        assert!(parse_qty_scaled_4dp("0.00004").is_err());
+        assert!(parse_qty_scaled_4dp("0.00005").is_err());
     }
 }
