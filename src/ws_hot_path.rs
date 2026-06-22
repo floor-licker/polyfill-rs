@@ -9,10 +9,8 @@
 
 use crate::book::OrderBookManager;
 use crate::errors::{PolyfillError, Result};
-use crate::types::{decimal_to_price, decimal_to_qty, Price, Side};
-use rust_decimal::Decimal;
+use crate::types::{Price, Qty, Side, MAX_PRICE_TICKS, MAX_QTY, MIN_PRICE_TICKS, SCALE_FACTOR};
 use simd_json::prelude::*;
-use std::str::FromStr;
 
 /// Summary of what happened while processing a WS payload.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -180,15 +178,10 @@ fn apply_levels<'tape, 'input>(
             .and_then(|v| v.into_string())
             .ok_or_else(|| PolyfillError::parse("Missing size", None))?;
 
-        let price_decimal =
-            Decimal::from_str(price_str).map_err(|_| PolyfillError::validation("Invalid price"))?;
-        let size_decimal =
-            Decimal::from_str(size_str).map_err(|_| PolyfillError::validation("Invalid size"))?;
-
-        let price_ticks = decimal_to_price(price_decimal)
-            .map_err(|_| PolyfillError::validation("Invalid price"))?;
+        let price_ticks = parse_price_ticks(price_str)
+            .ok_or_else(|| PolyfillError::validation("Invalid price"))?;
         let size_units =
-            decimal_to_qty(size_decimal).map_err(|_| PolyfillError::validation("Invalid size"))?;
+            parse_qty_units(size_str).ok_or_else(|| PolyfillError::validation("Invalid size"))?;
 
         book.apply_ws_book_level_fast(side, price_ticks, size_units)?;
         applied += 1;
@@ -215,19 +208,135 @@ fn ws_levels_contain_price<'tape, 'input>(
         let Some(size_str) = obj.get("size").and_then(|v| v.into_string()) else {
             return false;
         };
-        let Ok(price_decimal) = Decimal::from_str(price_str) else {
+        let Some(level_price_ticks) = parse_price_ticks(price_str) else {
             return false;
         };
-        let Ok(size_decimal) = Decimal::from_str(size_str) else {
-            return false;
-        };
-        let Ok(level_price_ticks) = decimal_to_price(price_decimal) else {
-            return false;
-        };
-        let Ok(size_units) = decimal_to_qty(size_decimal) else {
+        let Some(size_units) = parse_qty_units(size_str) else {
             return false;
         };
 
         size_units != 0 && level_price_ticks == price_ticks
     })
+}
+
+fn parse_price_ticks(value: &str) -> Option<Price> {
+    let scaled = parse_scaled_i128(value)?;
+    if scaled < 0 {
+        return None;
+    }
+    if scaled < MIN_PRICE_TICKS as i128 {
+        return Some(MIN_PRICE_TICKS);
+    }
+    if scaled > MAX_PRICE_TICKS as i128 {
+        return None;
+    }
+
+    Some(scaled as Price)
+}
+
+fn parse_qty_units(value: &str) -> Option<Qty> {
+    let scaled = parse_scaled_i128(value)?;
+    if scaled < -(MAX_QTY as i128) || scaled > MAX_QTY as i128 {
+        return None;
+    }
+
+    Some(scaled as Qty)
+}
+
+fn parse_scaled_i128(value: &str) -> Option<i128> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let bytes = value.as_bytes();
+    let mut idx = 0usize;
+    let mut sign = 1i128;
+
+    match bytes[idx] {
+        b'-' => {
+            sign = -1;
+            idx += 1;
+        },
+        b'+' => {
+            idx += 1;
+        },
+        _ => {},
+    }
+
+    if idx == bytes.len() {
+        return None;
+    }
+
+    let mut whole = 0i128;
+    let mut frac = 0i128;
+    let mut frac_digits = 0usize;
+    let mut round_up = false;
+    let mut seen_dot = false;
+    let mut seen_digit = false;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'0'..=b'9' => {
+                seen_digit = true;
+                let digit = (bytes[idx] - b'0') as i128;
+                if seen_dot {
+                    if frac_digits < 4 {
+                        frac = frac.checked_mul(10)?.checked_add(digit)?;
+                        frac_digits += 1;
+                    } else if frac_digits == 4 {
+                        round_up = digit >= 5;
+                        frac_digits += 1;
+                    }
+                } else {
+                    whole = whole.checked_mul(10)?.checked_add(digit)?;
+                }
+            },
+            b'.' if !seen_dot => {
+                seen_dot = true;
+            },
+            _ => return None,
+        }
+        idx += 1;
+    }
+
+    if !seen_digit {
+        return None;
+    }
+
+    while frac_digits < 4 {
+        frac *= 10;
+        frac_digits += 1;
+    }
+
+    let mut magnitude = whole.checked_mul(SCALE_FACTOR as i128)?.checked_add(frac)?;
+
+    if round_up {
+        magnitude = magnitude.checked_add(1)?;
+    }
+
+    Some(magnitude * sign)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_point_parser_matches_expected_price_ticks() {
+        assert_eq!(parse_price_ticks("0.6543"), Some(6543));
+        assert_eq!(parse_price_ticks("1.0000"), Some(10_000));
+        assert_eq!(parse_price_ticks("0.00005"), Some(1));
+        assert_eq!(parse_price_ticks("0"), Some(1));
+        assert_eq!(parse_price_ticks("-0.1"), None);
+    }
+
+    #[test]
+    fn fixed_point_parser_matches_expected_qty_units() {
+        assert_eq!(parse_qty_units("100.0"), Some(1_000_000));
+        assert_eq!(parse_qty_units("-50.5"), Some(-505_000));
+        assert_eq!(parse_qty_units("0.00004"), Some(0));
+        assert_eq!(parse_qty_units("0.00005"), Some(1));
+        assert_eq!(parse_qty_units("-0.00005"), Some(-1));
+    }
 }
