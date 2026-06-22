@@ -21,6 +21,8 @@ use polymarket_client_sdk_v2::clob::types::response::{
 };
 use polymarket_client_sdk_v2::clob::{Client as OfficialClient, Config as OfficialConfig};
 
+type BenchResult<T> = Result<T, Box<dyn std::error::Error>>;
+
 const INITIAL_CURSOR: &str = "MA==";
 const OFFICIAL_SDK_REV: &str = "8ba5008733c3c03e92041eef8b1cb8495dbed718";
 
@@ -323,21 +325,22 @@ fn official_style_http_client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder().default_headers(headers).build()
 }
 
-fn parse_polyfill_once(bytes: &[u8]) -> Result<Duration, serde_json::Error> {
+fn parse_polyfill_once(bytes: &[u8]) -> BenchResult<Duration> {
     let start = Instant::now();
-    let page: polyfill_rs::types::SimplifiedMarketsResponse = serde_json::from_slice(bytes)?;
+    let page: polyfill_rs::types::SimplifiedMarketsResponse =
+        polyfill_rs::decode::fast_parse::parse_json_fast_owned(bytes)?;
     black_box(page);
     Ok(start.elapsed())
 }
 
-fn parse_official_direct_once(bytes: &[u8]) -> Result<Duration, serde_json::Error> {
+fn parse_official_direct_once(bytes: &[u8]) -> BenchResult<Duration> {
     let start = Instant::now();
     let page: OfficialPage<OfficialSimplifiedMarketResponse> = serde_json::from_slice(bytes)?;
     black_box(page);
     Ok(start.elapsed())
 }
 
-fn parse_official_helper_once(bytes: &[u8]) -> Result<Duration, serde_json::Error> {
+fn parse_official_helper_once(bytes: &[u8]) -> BenchResult<Duration> {
     let start = Instant::now();
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
     let page: Option<OfficialPage<OfficialSimplifiedMarketResponse>> =
@@ -350,9 +353,9 @@ fn run_parse_samples<F>(
     bytes: &[u8],
     iterations: usize,
     mut parse_once: F,
-) -> Result<Vec<Duration>, serde_json::Error>
+) -> BenchResult<Vec<Duration>>
 where
-    F: FnMut(&[u8]) -> Result<Duration, serde_json::Error>,
+    F: FnMut(&[u8]) -> BenchResult<Duration>,
 {
     let mut times = Vec::with_capacity(iterations);
     for _ in 0..iterations {

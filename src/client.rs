@@ -17,9 +17,10 @@ use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
 use reqwest::Client;
-use reqwest::{Method, RequestBuilder};
+use reqwest::{Method, RequestBuilder, Response};
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 use std::net::{IpAddr, SocketAddr};
@@ -117,6 +118,19 @@ struct ClientAuthConfig {
 }
 
 impl ClobClient {
+    async fn parse_json_response<T>(response: Response) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let mut bytes = response
+            .bytes()
+            .await
+            .map_err(|e| PolyfillError::network(format!("Failed to read response body: {e}"), e))?
+            .to_vec();
+
+        crate::decode::fast_parse::parse_json_fast(&mut bytes)
+    }
+
     fn build_client(
         host: &str,
         chain_id: u64,
@@ -368,8 +382,7 @@ impl ClobClient {
             ));
         }
 
-        let order_book: OrderBookSummary = response.json().await?;
-        Ok(order_book)
+        Self::parse_json_response(response).await
     }
 
     /// Get midpoint for a token
@@ -388,8 +401,7 @@ impl ClobClient {
             ));
         }
 
-        let midpoint: MidpointResponse = response.json().await?;
-        Ok(midpoint)
+        Self::parse_json_response(response).await
     }
 
     /// Get spread for a token
@@ -2407,10 +2419,7 @@ impl ClobClient {
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
-        response
-            .json::<crate::types::MarketsResponse>()
-            .await
-            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+        Self::parse_json_response(response).await
     }
 
     /// Get sampling simplified markets with pagination
@@ -2428,10 +2437,7 @@ impl ClobClient {
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
-        response
-            .json::<crate::types::SimplifiedMarketsResponse>()
-            .await
-            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+        Self::parse_json_response(response).await
     }
 
     /// Get markets with pagination
@@ -2449,10 +2455,7 @@ impl ClobClient {
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
-        response
-            .json::<crate::types::MarketsResponse>()
-            .await
-            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+        Self::parse_json_response(response).await
     }
 
     /// Get simplified markets with pagination
@@ -2470,10 +2473,7 @@ impl ClobClient {
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
 
-        response
-            .json::<crate::types::SimplifiedMarketsResponse>()
-            .await
-            .map_err(|e| PolyfillError::parse(format!("Failed to parse response: {}", e), None))
+        Self::parse_json_response(response).await
     }
 
     /// Get single market by condition ID
