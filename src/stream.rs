@@ -8,6 +8,7 @@ use crate::types::*;
 use crate::ws_hot_path::{WsBookApplyStats, WsBookUpdateProcessor};
 use chrono::Utc;
 use futures::{SinkExt, Stream, StreamExt};
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -653,8 +654,7 @@ impl MarketStream for MockStream {
 #[allow(dead_code)]
 pub struct StreamManager {
     streams: Vec<Box<dyn MarketStream>>,
-    message_tx: mpsc::UnboundedSender<StreamMessage>,
-    message_rx: mpsc::UnboundedReceiver<StreamMessage>,
+    message_subscribers: Mutex<Vec<mpsc::UnboundedSender<StreamMessage>>>,
 }
 
 impl Default for StreamManager {
@@ -665,12 +665,9 @@ impl Default for StreamManager {
 
 impl StreamManager {
     pub fn new() -> Self {
-        let (message_tx, message_rx) = mpsc::unbounded_channel();
-
         Self {
             streams: Vec::new(),
-            message_tx,
-            message_rx,
+            message_subscribers: Mutex::new(Vec::new()),
         }
     }
 
@@ -679,17 +676,15 @@ impl StreamManager {
     }
 
     pub fn get_message_receiver(&mut self) -> mpsc::UnboundedReceiver<StreamMessage> {
-        // Note: UnboundedReceiver doesn't implement Clone
-        // In a real implementation, you'd want to use a different approach
-        // For now, we'll return a dummy receiver
-        let (_, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.message_subscribers.lock().push(tx);
         rx
     }
 
     pub fn broadcast_message(&self, message: StreamMessage) -> Result<()> {
-        self.message_tx
-            .send(message)
-            .map_err(|e| PolyfillError::internal("Failed to broadcast message", e))
+        let mut subscribers = self.message_subscribers.lock();
+        subscribers.retain(|tx| tx.send(message.clone()).is_ok());
+        Ok(())
     }
 }
 
@@ -727,6 +722,8 @@ mod tests {
         let mut manager = StreamManager::new();
         let mock_stream = Box::new(MockStream::new());
         manager.add_stream(mock_stream);
+        let mut first_rx = manager.get_message_receiver();
+        let mut second_rx = manager.get_message_receiver();
 
         // Test message broadcasting
         let message = StreamMessage::Book(BookUpdate {
@@ -738,6 +735,28 @@ mod tests {
             hash: None,
         });
         assert!(manager.broadcast_message(message).is_ok());
+
+        assert!(matches!(
+            first_rx.try_recv().unwrap(),
+            StreamMessage::Book(BookUpdate { asset_id, .. }) if asset_id == "1"
+        ));
+        assert!(matches!(
+            second_rx.try_recv().unwrap(),
+            StreamMessage::Book(BookUpdate { asset_id, .. }) if asset_id == "1"
+        ));
+
+        drop(first_rx);
+        let message = StreamMessage::PriceChange(PriceChange {
+            market: "0xabc".to_string(),
+            timestamp: 1_234_567_891,
+            price_changes: vec![],
+        });
+        assert!(manager.broadcast_message(message).is_ok());
+
+        assert!(matches!(
+            second_rx.try_recv().unwrap(),
+            StreamMessage::PriceChange(PriceChange { market, .. }) if market == "0xabc"
+        ));
     }
 
     #[test]
