@@ -179,7 +179,6 @@ pub mod buffer_pool;
 pub mod client;
 pub mod connection_manager;
 pub mod decode;
-pub mod dns_cache;
 pub mod errors;
 pub mod fill;
 pub mod http_config;

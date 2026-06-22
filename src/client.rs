@@ -100,8 +100,6 @@ pub struct ClobClient {
     builder_code: Option<String>,
     order_builder: Option<crate::orders::OrderBuilder>,
     #[allow(dead_code)]
-    dns_cache: Option<std::sync::Arc<crate::dns_cache::DnsCache>>,
-    #[allow(dead_code)]
     connection_manager: Option<std::sync::Arc<crate::connection_manager::ConnectionManager>>,
     #[allow(dead_code)]
     buffer_pool: std::sync::Arc<crate::buffer_pool::BufferPool>,
@@ -146,7 +144,6 @@ impl ClobClient {
             api_creds,
             builder_code: auth.builder_code,
             order_builder,
-            dns_cache: None,
             connection_manager,
             buffer_pool,
         }
