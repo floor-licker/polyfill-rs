@@ -15,21 +15,21 @@
 
   <text class="group" x="40" y="38">Steady typed total, p50</text>
   <text class="label" x="40" y="68">polyfill-rs</text>
-  <rect class="polyfill" x="210" y="54" width="584" height="18" rx="3"/>
-  <text class="value" x="812" y="68">209.9 ms</text>
+  <rect class="polyfill" x="210" y="54" width="565" height="18" rx="3"/>
+  <text class="value" x="793" y="68">228.2 ms</text>
   <text class="label" x="40" y="96">rs-clob-client-v2</text>
   <rect class="compare" x="210" y="82" width="600" height="18" rx="3"/>
-  <text class="value" x="828" y="96">215.9 ms</text>
+  <text class="value" x="828" y="96">242.3 ms</text>
 
   <line class="rule" x1="40" y1="128" x2="940" y2="128"/>
 
   <text class="group" x="40" y="158">Network-only byte fetch, p50</text>
   <text class="label" x="40" y="188">polyfill-rs</text>
   <rect class="polyfill" x="210" y="174" width="600" height="18" rx="3"/>
-  <text class="value" x="828" y="188">382.5 ms</text>
+  <text class="value" x="828" y="188">200.0 ms</text>
   <text class="label" x="40" y="216">rs-clob-client-v2</text>
-  <rect class="compare" x="210" y="202" width="471" height="18" rx="3"/>
-  <text class="value" x="699" y="216">300.1 ms</text>
+  <rect class="compare" x="210" y="202" width="370" height="18" rx="3"/>
+  <text class="value" x="598" y="216">123.3 ms</text>
 
   <line class="rule" x1="40" y1="248" x2="940" y2="248"/>
 
