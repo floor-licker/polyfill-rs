@@ -1,7 +1,7 @@
 use alloy_signer_local::PrivateKeySigner;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use polyfill_rs::{
-    auth::create_l2_headers,
+    auth::{create_l2_headers_with_body_bytes, PreparedApiCredentials},
     orders::{OrderBuilder, BYTES32_ZERO},
     types::{
         ApiCredentials, CreateOrderOptions, FastOrderDelta, OrderDelta, OrderType, PostOrder,
@@ -108,6 +108,7 @@ fn benchmark_order_submit_payload_auth(c: &mut Criterion) {
         secret: "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1".to_string(),
         passphrase: "benchmark-passphrase".to_string(),
     };
+    let prepared_api_creds = PreparedApiCredentials::new(api_creds.clone());
 
     c.bench_function("order_submit_body_and_l2_headers", |b| {
         b.iter(|| {
@@ -117,8 +118,14 @@ fn benchmark_order_submit_payload_auth(c: &mut Criterion) {
                 black_box(post_options),
             );
             let body_bytes = serde_json::to_vec(black_box(&body)).unwrap();
-            let headers =
-                create_l2_headers(&signer, &api_creds, "POST", "/order", Some(&body)).unwrap();
+            let headers = create_l2_headers_with_body_bytes(
+                &signer,
+                &prepared_api_creds,
+                "POST",
+                "/order",
+                Some(&body_bytes),
+            )
+            .unwrap();
             black_box((body_bytes, headers))
         })
     });
