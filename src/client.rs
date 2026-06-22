@@ -974,6 +974,35 @@ impl ClobClient {
         self.get_clob_market_info(&market.condition_id).await
     }
 
+    /// Prepare reusable order-path state for repeated orders on one token.
+    ///
+    /// This resolves tick-size/neg-risk once, then caches fixed order-path inputs such as the
+    /// parsed token ID, exchange address, normalized bytes32 values, and EIP-712 domain.
+    pub async fn prepare_order_path(
+        &self,
+        token_id: &str,
+        options: Option<&CreateOrderOptions>,
+        builder_code: Option<&str>,
+        metadata: Option<&str>,
+    ) -> Result<crate::orders::PreparedOrderPath> {
+        let order_builder = self
+            .order_builder
+            .as_ref()
+            .ok_or_else(|| PolyfillError::auth("Order builder not initialized"))?;
+
+        let create_order_options = self.get_filled_order_options(token_id, options).await?;
+        let builder_code = builder_code.or(self.builder_code.as_deref());
+
+        order_builder.prepare_order_path(
+            self.chain_id,
+            token_id,
+            create_order_options.tick_size.expect("Should be filled"),
+            create_order_options.neg_risk.expect("Should be filled"),
+            builder_code,
+            metadata,
+        )
+    }
+
     /// Create an order
     pub async fn create_order(
         &self,
@@ -2516,8 +2545,9 @@ pub type PolyfillClient = ClobClient;
 mod tests {
     use super::{ClobClient, OrderArgs as ClientOrderArgs};
     use crate::types::{
-        OrderType, PostOrderOptions, PricesHistoryInterval, RfqCreateQuote, RfqCreateRequest,
-        RfqOrderExecutionRequest, RfqQuotesParams, RfqRequestsParams, Side, SignedOrderRequest,
+        CreateOrderOptions, OrderType, PostOrderOptions, PricesHistoryInterval, RfqCreateQuote,
+        RfqCreateRequest, RfqOrderExecutionRequest, RfqQuotesParams, RfqRequestsParams, Side,
+        SignedOrderRequest,
     };
     use crate::{ApiCredentials, ClientConfig, PolyfillError};
     use mockito::{Matcher, Server};
@@ -3286,6 +3316,57 @@ mod tests {
         assert_eq!(default_args.price, Decimal::ZERO);
         assert_eq!(default_args.size, Decimal::ZERO);
         assert_eq!(default_args.side, Side::BUY);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_prepare_order_path_uses_client_builder_code() {
+        let mut server = Server::new_async().await;
+        let tick_size_mock = server
+            .mock("GET", "/tick-size")
+            .match_query(Matcher::UrlEncoded("token_id".into(), "123456".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"minimum_tick_size":"0.01"}"#)
+            .create_async()
+            .await;
+
+        let client = ClobClient::from_config(ClientConfig {
+            base_url: server.url(),
+            chain: 137,
+            private_key: Some(
+                "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
+            ),
+            builder_code: Some(
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            ),
+            ..ClientConfig::default()
+        })
+        .expect("test auth client with builder code");
+        let options = CreateOrderOptions {
+            tick_size: Some(Decimal::from_str("0.01").unwrap()),
+            neg_risk: Some(false),
+        };
+
+        let prepared = client
+            .prepare_order_path("123456", Some(&options), None, None)
+            .await
+            .unwrap();
+        let order = prepared
+            .create_limit_order(
+                Side::BUY,
+                Decimal::from_str("0.45").unwrap(),
+                Decimal::from_str("12.34").unwrap(),
+                Some(1_900_000_000),
+            )
+            .unwrap();
+
+        tick_size_mock.assert_async().await;
+        assert_eq!(order.token_id, "123456");
+        assert_eq!(
+            order.builder,
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(order.metadata, crate::orders::BYTES32_ZERO);
     }
 
     #[tokio::test(flavor = "multi_thread")]

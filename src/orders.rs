@@ -3,7 +3,9 @@
 //! This module handles the complex process of creating and signing orders
 //! for the Polymarket CLOB, including EIP-712 signature generation.
 
-use crate::auth::{sign_order_message, SignedOrderMessage};
+use crate::auth::{
+    sign_order_message, sign_order_message_with_domain, PreparedOrderDomain, SignedOrderMessage,
+};
 use crate::errors::{PolyfillError, Result};
 use crate::types::{
     CreateOrderOptions, MarketOrderArgs, OrderArgs, OrderType, Side, SignedOrderRequest,
@@ -33,6 +35,7 @@ pub enum SigType {
 }
 
 /// Rounding configuration for different tick sizes
+#[derive(Clone, Copy)]
 pub struct RoundConfig {
     price: u32,
     size: u32,
@@ -47,10 +50,28 @@ pub struct ContractConfig {
 }
 
 /// Order builder for creating and signing orders
+#[derive(Clone)]
 pub struct OrderBuilder {
     signer: PrivateKeySigner,
+    signer_address: Address,
+    signer_checksum: String,
     sig_type: SigType,
     funder: Address,
+    funder_checksum: String,
+}
+
+/// Prepared low-latency order path for a single market/token configuration.
+#[derive(Clone)]
+pub struct PreparedOrderPath {
+    builder: OrderBuilder,
+    token_id: String,
+    token_id_u256: U256,
+    round_config: RoundConfig,
+    domain: PreparedOrderDomain,
+    builder_bytes: B256,
+    builder_code: String,
+    metadata_bytes: B256,
+    metadata: String,
 }
 
 const POLYGON_PROXY_FACTORY: &str = "0xaB45c5A4B0c941a2F231C04C3f49182e1A254052";
@@ -97,6 +118,28 @@ pub fn get_contract_config(chain_id: u64, neg_risk: bool) -> Option<ContractConf
         }),
         _ => None,
     }
+}
+
+fn exchange_address_for(chain_id: u64, neg_risk: bool) -> Result<Address> {
+    let contract_config = get_contract_config(chain_id, neg_risk).ok_or_else(|| {
+        PolyfillError::config("No contract found with given chain_id and neg_risk")
+    })?;
+
+    Address::from_str(&contract_config.exchange)
+        .map_err(|e| PolyfillError::config(format!("Invalid exchange address: {}", e)))
+}
+
+fn parse_token_id(token_id: &str) -> Result<U256> {
+    U256::from_str_radix(token_id, 10)
+        .map_err(|e| PolyfillError::validation(format!("Incorrect tokenId format: {}", e)))
+}
+
+fn parse_optional_bytes32(name: &str, value: Option<&str>) -> Result<(B256, String)> {
+    let normalized = normalize_optional_bytes32(name, value)?;
+    let parsed = B256::from_str(&normalized)
+        .map_err(|e| PolyfillError::validation(format!("Invalid {name} bytes32 value: {e}")))?;
+
+    Ok((parsed, normalized))
 }
 
 pub fn sig_type_from_u8(signature_type: u8) -> Result<SigType> {
@@ -303,18 +346,59 @@ impl OrderBuilder {
         funder: Option<Address>,
     ) -> Self {
         let sig_type = sig_type.unwrap_or(SigType::Eoa);
-        let funder = funder.unwrap_or(signer.address());
+        let signer_address = signer.address();
+        let signer_checksum = signer_address.to_checksum(None);
+        let funder = funder.unwrap_or(signer_address);
+        let funder_checksum = funder.to_checksum(None);
 
         OrderBuilder {
             signer,
+            signer_address,
+            signer_checksum,
             sig_type,
             funder,
+            funder_checksum,
         }
     }
 
     /// Get signature type as u8
     pub fn get_sig_type(&self) -> u8 {
         self.sig_type as u8
+    }
+
+    /// Prepare reusable order-path state for one market/token.
+    ///
+    /// This caches tick-size rounding, exchange address parsing, token ID parsing, normalized
+    /// bytes32 fields, and the EIP-712 domain. Use this for latency-sensitive repeated order
+    /// creation on the same token.
+    pub fn prepare_order_path(
+        &self,
+        chain_id: u64,
+        token_id: impl Into<String>,
+        tick_size: Decimal,
+        neg_risk: bool,
+        builder_code: Option<&str>,
+        metadata: Option<&str>,
+    ) -> Result<PreparedOrderPath> {
+        let token_id = token_id.into();
+        let token_id_u256 = parse_token_id(&token_id)?;
+        let round_config = *parse_round_config(tick_size)?;
+        let exchange = exchange_address_for(chain_id, neg_risk)?;
+        let domain = PreparedOrderDomain::new(chain_id, exchange);
+        let (builder_bytes, builder_code) = parse_optional_bytes32("builder_code", builder_code)?;
+        let (metadata_bytes, metadata) = parse_optional_bytes32("metadata", metadata)?;
+
+        Ok(PreparedOrderPath {
+            builder: self.clone(),
+            token_id,
+            token_id_u256,
+            round_config,
+            domain,
+            builder_bytes,
+            builder_code,
+            metadata_bytes,
+            metadata,
+        })
     }
 
     /// Fix amount rounding according to configuration
@@ -459,12 +543,7 @@ impl OrderBuilder {
             .neg_risk
             .ok_or_else(|| PolyfillError::validation("Cannot create order without neg_risk"))?;
 
-        let contract_config = get_contract_config(chain_id, neg_risk).ok_or_else(|| {
-            PolyfillError::config("No contract found with given chain_id and neg_risk")
-        })?;
-
-        let exchange_address = Address::from_str(&contract_config.exchange)
-            .map_err(|e| PolyfillError::config(format!("Invalid exchange address: {}", e)))?;
+        let exchange_address = exchange_address_for(chain_id, neg_risk)?;
 
         self.build_signed_order(
             order_args.token_id.clone(),
@@ -502,12 +581,7 @@ impl OrderBuilder {
             .neg_risk
             .ok_or_else(|| PolyfillError::validation("Cannot create order without neg_risk"))?;
 
-        let contract_config = get_contract_config(chain_id, neg_risk).ok_or_else(|| {
-            PolyfillError::config("No contract found with given chain_id and neg_risk")
-        })?;
-
-        let exchange_address = Address::from_str(&contract_config.exchange)
-            .map_err(|e| PolyfillError::config(format!("Invalid exchange address: {}", e)))?;
+        let exchange_address = exchange_address_for(chain_id, neg_risk)?;
 
         self.build_signed_order(
             order_args.token_id.clone(),
@@ -542,35 +616,30 @@ impl OrderBuilder {
             .expect("Time went backwards")
             .as_millis();
 
-        let u256_token_id = U256::from_str_radix(&token_id, 10)
-            .map_err(|e| PolyfillError::validation(format!("Incorrect tokenId format: {}", e)))?;
-        let builder = normalize_optional_bytes32("builder_code", builder_code)?;
-        let metadata = normalize_optional_bytes32("metadata", metadata)?;
+        let u256_token_id = parse_token_id(&token_id)?;
+        let (builder_bytes, builder) = parse_optional_bytes32("builder_code", builder_code)?;
+        let (metadata_bytes, metadata) = parse_optional_bytes32("metadata", metadata)?;
 
         let order = SignedOrderMessage {
             salt: U256::from(seed),
             maker: self.funder,
-            signer: self.signer.address(),
+            signer: self.signer_address,
             token_id: u256_token_id,
             maker_amount,
             taker_amount,
             side: side as u8,
             signature_type: self.sig_type as u8,
             timestamp: U256::from(timestamp),
-            metadata: B256::from_str(&metadata).map_err(|e| {
-                PolyfillError::validation(format!("Invalid metadata bytes32 value: {e}"))
-            })?,
-            builder: B256::from_str(&builder).map_err(|e| {
-                PolyfillError::validation(format!("Invalid builder_code bytes32 value: {e}"))
-            })?,
+            metadata: metadata_bytes,
+            builder: builder_bytes,
         };
 
         let signature = sign_order_message(&self.signer, order, chain_id, exchange)?;
 
         Ok(SignedOrderRequest {
             salt: seed,
-            maker: self.funder.to_checksum(None),
-            signer: self.signer.address().to_checksum(None),
+            maker: self.funder_checksum.clone(),
+            signer: self.signer_checksum.clone(),
             token_id,
             maker_amount: maker_amount.to_string(),
             taker_amount: taker_amount.to_string(),
@@ -580,6 +649,90 @@ impl OrderBuilder {
             timestamp: timestamp.to_string(),
             metadata,
             builder,
+            signature,
+        })
+    }
+}
+
+impl PreparedOrderPath {
+    /// Create and sign a limit order using the cached market/token context.
+    pub fn create_limit_order(
+        &self,
+        side: Side,
+        price: Decimal,
+        size: Decimal,
+        expiration: Option<u64>,
+    ) -> Result<SignedOrderRequest> {
+        let (maker_amount, taker_amount) =
+            self.builder
+                .get_order_amounts(side, size, price, &self.round_config)?;
+
+        self.build_signed_order(side, maker_amount, taker_amount, expiration.unwrap_or(0))
+    }
+
+    /// Create and sign a market order using the cached market/token context.
+    pub fn create_market_order(
+        &self,
+        side: Side,
+        amount: Decimal,
+        price: Decimal,
+        order_type: OrderType,
+    ) -> Result<SignedOrderRequest> {
+        if !matches!(order_type, OrderType::FOK | OrderType::FAK) {
+            return Err(PolyfillError::validation(
+                "Market orders only support FOK and FAK order types",
+            ));
+        }
+
+        let (maker_amount, taker_amount) =
+            self.builder
+                .get_market_order_amounts(side, amount, price, &self.round_config)?;
+
+        self.build_signed_order(side, maker_amount, taker_amount, 0)
+    }
+
+    fn build_signed_order(
+        &self,
+        side: Side,
+        maker_amount: U256,
+        taker_amount: U256,
+        expiration: u64,
+    ) -> Result<SignedOrderRequest> {
+        let seed = generate_seed();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+
+        let order = SignedOrderMessage {
+            salt: U256::from(seed),
+            maker: self.builder.funder,
+            signer: self.builder.signer_address,
+            token_id: self.token_id_u256,
+            maker_amount,
+            taker_amount,
+            side: side as u8,
+            signature_type: self.builder.sig_type as u8,
+            timestamp: U256::from(timestamp),
+            metadata: self.metadata_bytes,
+            builder: self.builder_bytes,
+        };
+
+        let signature = sign_order_message_with_domain(&self.builder.signer, order, &self.domain)?;
+
+        Ok(SignedOrderRequest {
+            salt: seed,
+            maker: self.builder.funder_checksum.clone(),
+            signer: self.builder.signer_checksum.clone(),
+            token_id: self.token_id.clone(),
+            maker_amount: maker_amount.to_string(),
+            taker_amount: taker_amount.to_string(),
+            expiration: expiration.to_string(),
+            side: side.as_str().to_string(),
+            signature_type: self.builder.sig_type as u8,
+            timestamp: timestamp.to_string(),
+            metadata: self.metadata.clone(),
+            builder: self.builder_code.clone(),
             signature,
         })
     }
@@ -764,6 +917,77 @@ mod tests {
         assert!(!object.contains_key("feeRateBps"));
         assert_eq!(order.builder, BYTES32_ZERO);
         assert_eq!(order.metadata, BYTES32_ZERO);
+    }
+
+    #[test]
+    fn test_prepared_order_path_creates_equivalent_limit_order_fields() {
+        let builder = test_builder();
+        let args = OrderArgs {
+            token_id: "123456".to_string(),
+            price: Decimal::from_str("0.45").unwrap(),
+            size: Decimal::from_str("12.34").unwrap(),
+            side: Side::BUY,
+            expiration: Some(1_900_000_000),
+            builder_code: Some(BYTES32_ZERO.to_string()),
+            metadata: None,
+        };
+        let options = CreateOrderOptions {
+            tick_size: Some(Decimal::from_str("0.01").unwrap()),
+            neg_risk: Some(false),
+        };
+
+        let order = builder.create_order(137, &args, &options).unwrap();
+        let prepared = builder
+            .prepare_order_path(
+                137,
+                args.token_id.clone(),
+                options.tick_size.unwrap(),
+                options.neg_risk.unwrap(),
+                args.builder_code.as_deref(),
+                args.metadata.as_deref(),
+            )
+            .unwrap();
+        let prepared_order = prepared
+            .create_limit_order(args.side, args.price, args.size, args.expiration)
+            .unwrap();
+
+        assert_eq!(prepared_order.maker, order.maker);
+        assert_eq!(prepared_order.signer, order.signer);
+        assert_eq!(prepared_order.token_id, order.token_id);
+        assert_eq!(prepared_order.maker_amount, order.maker_amount);
+        assert_eq!(prepared_order.taker_amount, order.taker_amount);
+        assert_eq!(prepared_order.expiration, order.expiration);
+        assert_eq!(prepared_order.side, order.side);
+        assert_eq!(prepared_order.signature_type, order.signature_type);
+        assert_eq!(prepared_order.metadata, order.metadata);
+        assert_eq!(prepared_order.builder, order.builder);
+        assert!(prepared_order.signature.starts_with("0x"));
+    }
+
+    #[test]
+    fn test_prepared_market_order_rejects_unsupported_order_type() {
+        let builder = test_builder();
+        let prepared = builder
+            .prepare_order_path(
+                137,
+                "123456",
+                Decimal::from_str("0.01").unwrap(),
+                false,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let err = prepared
+            .create_market_order(
+                Side::BUY,
+                Decimal::from_str("10").unwrap(),
+                Decimal::from_str("0.45").unwrap(),
+                OrderType::GTC,
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, PolyfillError::Validation { .. }));
     }
 
     #[test]
