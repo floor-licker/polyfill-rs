@@ -37,17 +37,21 @@ fn bench_delta_application(c: &mut Criterion) {
         book.apply_delta(delta).unwrap();
     }
 
+    let mut sequence = 10;
+
     c.bench_function("delta_application", |b| {
         b.iter(|| {
+            sequence += 1;
             let delta = OrderDelta {
                 token_id: "test_token".to_string(),
                 timestamp: chrono::Utc::now(),
                 side: black_box(Side::SELL),
                 price: black_box(dec!(0.52)),
                 size: black_box(dec!(50)),
-                sequence: black_box(11),
+                sequence: black_box(sequence),
             };
             book.apply_delta(delta).unwrap();
+            black_box(book.sequence);
         });
     });
 }
@@ -161,23 +165,40 @@ fn bench_high_frequency_updates(c: &mut Criterion) {
 }
 
 fn bench_concurrent_access(c: &mut Criterion) {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut initial_book = OrderBook::new("test_token".to_string(), 100);
+
+    for i in 1..=20 {
+        let price = Decimal::from(50 + i) / Decimal::from(100);
+        let delta = OrderDelta {
+            token_id: "test_token".to_string(),
+            timestamp: chrono::Utc::now(),
+            side: if i % 2 == 0 { Side::BUY } else { Side::SELL },
+            price,
+            size: dec!(100),
+            sequence: i,
+        };
+        initial_book.apply_delta(delta).unwrap();
+    }
+
+    let book = Arc::new(RwLock::new(initial_book));
+    let sequence = Arc::new(AtomicU64::new(20));
+
     c.bench_function("concurrent_access", |b| {
         b.iter(|| {
-            let book = Arc::new(RwLock::new(OrderBook::new("test_token".to_string(), 100)));
-            let book_clone = book.clone();
-
-            // Simulate concurrent reads and writes
-            let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
                 let mut tasks = Vec::new();
 
-                // Spawn writer tasks
                 for i in 1..=10 {
                     let book = book.clone();
+                    let sequence = sequence.clone();
                     tasks.push(tokio::spawn(async move {
+                        let mut book = book.write().await;
+                        let sequence = sequence.fetch_add(1, Ordering::Relaxed) + 1;
                         let price = Decimal::from(50 + i) / Decimal::from(100);
                         let delta = OrderDelta {
                             token_id: "test_token".to_string(),
@@ -185,26 +206,23 @@ fn bench_concurrent_access(c: &mut Criterion) {
                             side: if i % 2 == 0 { Side::BUY } else { Side::SELL },
                             price,
                             size: dec!(100),
-                            sequence: i,
+                            sequence,
                         };
-                        let mut book = book.write().await;
                         book.apply_delta(delta).unwrap();
+                        black_box(book.sequence);
                     }));
                 }
 
-                // Spawn reader tasks
                 for _ in 0..20 {
-                    let book = book_clone.clone();
+                    let book = book.clone();
                     tasks.push(tokio::spawn(async move {
                         let book = book.read().await;
-                        let _bid = book.best_bid();
-                        let _ask = book.best_ask();
+                        black_box((book.best_bid(), book.best_ask()));
                     }));
                 }
 
-                // Wait for all tasks
                 for task in tasks {
-                    let _ = task.await;
+                    task.await.unwrap();
                 }
             });
         });
