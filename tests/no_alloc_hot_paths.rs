@@ -113,6 +113,47 @@ fn no_alloc_mid_and_spread_fast() {
 }
 
 #[test]
+fn no_alloc_book_analysis_fast_paths() {
+    let token_id = "test_token";
+    let token_hash = token_id_hash(token_id);
+    let mut book = OrderBookImpl::new(token_id.to_string(), 100);
+
+    book.apply_delta_fast(mk_delta(token_hash, Side::BUY, 7500, 1_000_000, 1))
+        .unwrap();
+    book.apply_delta_fast(mk_delta(token_hash, Side::BUY, 7400, 500_000, 2))
+        .unwrap();
+    book.apply_delta_fast(mk_delta(token_hash, Side::SELL, 7600, 800_000, 3))
+        .unwrap();
+    book.apply_delta_fast(mk_delta(token_hash, Side::SELL, 7700, 1_200_000, 4))
+        .unwrap();
+
+    let impact_size = Decimal::from_str("150.0").unwrap();
+    let min_price = Decimal::from_str("0.74").unwrap();
+    let max_price = Decimal::from_str("0.77").unwrap();
+    let min_average_price = Decimal::from_str("0.76").unwrap();
+    let expected_buy_liquidity = Decimal::from_str("200.0").unwrap();
+    let expected_sell_liquidity = Decimal::from_str("150.0").unwrap();
+
+    let _ = allocation_count();
+
+    let guard = NoAllocGuard::new();
+    let impact = book
+        .calculate_market_impact(Side::BUY, impact_size)
+        .unwrap();
+    assert!(impact.average_price > min_average_price);
+    assert_eq!(
+        book.liquidity_in_range(min_price, max_price, Side::BUY),
+        expected_buy_liquidity
+    );
+    assert_eq!(
+        book.liquidity_in_range(min_price, max_price, Side::SELL),
+        expected_sell_liquidity
+    );
+    assert!(book.is_valid());
+    guard.assert_no_allocations();
+}
+
+#[test]
 fn no_alloc_apply_delta_fast_existing_level_update() {
     let token_id = "test_token";
     let token_hash = token_id_hash(token_id);
