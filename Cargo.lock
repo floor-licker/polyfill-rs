@@ -3367,6 +3367,7 @@ dependencies = [
  "hickory-resolver",
  "hmac",
  "mockito",
+ "parking_lot",
  "polymarket_client_sdk_v2",
  "proptest",
  "rand 0.8.6",

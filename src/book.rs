@@ -4,9 +4,10 @@ use crate::errors::{PolyfillError, Result};
 use crate::types::*;
 use crate::utils::math;
 use chrono::Utc;
+use parking_lot::RwLock;
 use rust_decimal::Decimal;
-use std::collections::BTreeMap; // BTreeMap keeps prices sorted automatically - crucial for order books
-use std::sync::{Arc, RwLock}; // For thread-safe access across multiple tasks
+use std::collections::{BTreeMap, HashMap}; // BTreeMap keeps prices sorted automatically - crucial for order books
+use std::sync::Arc; // For shared access across multiple tasks
 use tracing::{debug, trace, warn}; // Logging for debugging and monitoring
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +15,8 @@ struct StoredLevel {
     qty: Qty,
     generation: u64,
 }
+
+const DEFAULT_BOOK_SHARDS: usize = 64;
 
 /// High-performance order book implementation
 ///
@@ -834,27 +837,57 @@ pub struct MarketImpact {
 /// With depth limiting: 1000 tokens × 50 levels × 32 bytes = 1.6MB (20x less memory)
 #[derive(Debug)]
 pub struct OrderBookManager {
-    books: Arc<RwLock<std::collections::HashMap<String, OrderBook>>>, // Token ID -> OrderBook
+    shards: Arc<[BookShard]>, // Token ID -> shard-local OrderBook
     max_depth: usize,
+}
+
+#[derive(Debug, Default)]
+struct BookShard {
+    books: RwLock<HashMap<String, OrderBook>>,
+}
+
+#[inline]
+fn shard_index(token_id: &str, shard_count: usize) -> usize {
+    debug_assert!(shard_count > 0);
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for &byte in token_id.as_bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash as usize) % shard_count
 }
 
 impl OrderBookManager {
     /// Create a new order book manager
     /// Starts with an empty collection of books
     pub fn new(max_depth: usize) -> Self {
-        Self {
-            books: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            max_depth,
-        }
+        Self::with_shard_count(max_depth, DEFAULT_BOOK_SHARDS)
+    }
+
+    /// Create a new order book manager with an explicit shard count.
+    ///
+    /// This is primarily useful for tests and tuning. A shard count of zero is
+    /// treated as one shard.
+    pub fn with_shard_count(max_depth: usize, shard_count: usize) -> Self {
+        let shard_count = shard_count.max(1);
+        let shards = (0..shard_count)
+            .map(|_| BookShard::default())
+            .collect::<Vec<_>>()
+            .into();
+
+        Self { shards, max_depth }
+    }
+
+    #[inline]
+    fn shard_for(&self, token_id: &str) -> &BookShard {
+        &self.shards[shard_index(token_id, self.shards.len())]
     }
 
     /// Get or create an order book for a token
     /// If we don't have a book for this token yet, create a new empty one
     pub fn get_or_create_book(&self, token_id: &str) -> Result<OrderBook> {
-        let mut books = self
-            .books
-            .write()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+        let shard = self.shard_for(token_id);
+        let mut books = shard.books.write();
 
         if let Some(book) = books.get(token_id) {
             Ok(book.clone()) // Return a copy of the existing book
@@ -875,10 +908,8 @@ impl OrderBookManager {
         token_id: &str,
         f: impl FnOnce(&mut OrderBook) -> Result<R>,
     ) -> Result<R> {
-        let mut books = self
-            .books
-            .write()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+        let shard = self.shard_for(token_id);
+        let mut books = shard.books.write();
 
         let book = books.get_mut(token_id).ok_or_else(|| {
             PolyfillError::market_data(
@@ -893,10 +924,8 @@ impl OrderBookManager {
     /// Update a book with a delta
     /// This is called when we receive real-time updates from the exchange
     pub fn apply_delta(&self, delta: OrderDelta) -> Result<()> {
-        let mut books = self
-            .books
-            .write()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+        let shard = self.shard_for(delta.token_id.as_str());
+        let mut books = shard.books.write();
 
         // Find the book for this token (must already exist)
         let book = books.get_mut(&delta.token_id).ok_or_else(|| {
@@ -915,18 +944,13 @@ impl OrderBookManager {
     /// This is the preferred way to ingest `StreamMessage::Book` updates into
     /// the in-memory order books (avoids rebuilding snapshots via per-level deltas).
     pub fn apply_book_update(&self, update: &BookUpdate) -> Result<()> {
-        let mut books = self
-            .books
-            .write()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+        let shard = self.shard_for(update.asset_id.as_str());
+        let mut books = shard.books.write();
 
-        if let Some(book) = books.get_mut(update.asset_id.as_str()) {
-            return book.apply_book_update(update);
+        if !books.contains_key(update.asset_id.as_str()) {
+            let token_id = update.asset_id.clone();
+            books.insert(token_id.clone(), OrderBook::new(token_id, self.max_depth));
         }
-
-        // First time we've seen this token; allocating the key and book is part of warmup.
-        let token_id = update.asset_id.clone();
-        books.insert(token_id.clone(), OrderBook::new(token_id, self.max_depth));
 
         books
             .get_mut(update.asset_id.as_str())
@@ -937,10 +961,8 @@ impl OrderBookManager {
     /// Get a book snapshot
     /// Returns a copy of the current book state that won't change
     pub fn get_book(&self, token_id: &str) -> Result<crate::types::OrderBook> {
-        let books = self
-            .books
-            .read()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+        let shard = self.shard_for(token_id);
+        let books = shard.books.read();
 
         books
             .get(token_id)
@@ -956,26 +978,27 @@ impl OrderBookManager {
     /// Get all available books
     /// Returns snapshots of every book we're currently tracking
     pub fn get_all_books(&self) -> Result<Vec<crate::types::OrderBook>> {
-        let books = self
-            .books
-            .read()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+        let mut snapshots = Vec::new();
+        for shard in self.shards.iter() {
+            let books = shard.books.read();
+            snapshots.extend(books.values().map(|book| book.snapshot()));
+        }
 
-        Ok(books.values().map(|book| book.snapshot()).collect())
+        Ok(snapshots)
     }
 
     /// Remove stale books
     /// Cleans up books that haven't been updated recently (probably disconnected)
     /// This prevents memory leaks from accumulating dead books
     pub fn cleanup_stale_books(&self, max_age: std::time::Duration) -> Result<usize> {
-        let mut books = self
-            .books
-            .write()
-            .map_err(|_| PolyfillError::internal_simple("Failed to acquire book lock"))?;
+        let mut removed = 0usize;
 
-        let initial_count = books.len();
-        books.retain(|_, book| !book.is_stale(max_age)); // Keep only non-stale books
-        let removed = initial_count - books.len();
+        for shard in self.shards.iter() {
+            let mut books = shard.books.write();
+            let initial_count = books.len();
+            books.retain(|_, book| !book.is_stale(max_age)); // Keep only non-stale books
+            removed += initial_count - books.len();
+        }
 
         if removed > 0 {
             debug!("Removed {} stale order books", removed);
@@ -1051,6 +1074,51 @@ mod tests {
         assert_eq!(book.token_id, "test_token");
         assert_eq!(book.bids.len(), 0); // Should start empty
         assert_eq!(book.asks.len(), 0); // Should start empty
+    }
+
+    #[test]
+    fn test_order_book_manager_routes_tokens_to_shards() {
+        let shard_count = 4;
+        let first_token = "test_token_0";
+        let first_shard = shard_index(first_token, shard_count);
+        let second_token = (1..100)
+            .map(|idx| format!("test_token_{idx}"))
+            .find(|token| shard_index(token, shard_count) != first_shard)
+            .expect("test tokens should cover multiple shards");
+
+        let manager = OrderBookManager::with_shard_count(10, shard_count);
+        manager.get_or_create_book(first_token).unwrap();
+        manager.get_or_create_book(&second_token).unwrap();
+
+        manager
+            .apply_delta(OrderDelta {
+                token_id: first_token.to_string(),
+                timestamp: Utc::now(),
+                side: Side::BUY,
+                price: dec!(0.50),
+                size: dec!(100),
+                sequence: 1,
+            })
+            .unwrap();
+        manager
+            .apply_delta(OrderDelta {
+                token_id: second_token.clone(),
+                timestamp: Utc::now(),
+                side: Side::SELL,
+                price: dec!(0.60),
+                size: dec!(200),
+                sequence: 1,
+            })
+            .unwrap();
+
+        let first_book = manager.get_book(first_token).unwrap();
+        let second_book = manager.get_book(&second_token).unwrap();
+
+        assert_eq!(first_book.bids.len(), 1);
+        assert_eq!(first_book.asks.len(), 0);
+        assert_eq!(second_book.bids.len(), 0);
+        assert_eq!(second_book.asks.len(), 1);
+        assert_eq!(manager.get_all_books().unwrap().len(), 2);
     }
 
     #[test]
