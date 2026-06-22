@@ -21,7 +21,7 @@ use reqwest::{Method, RequestBuilder, Response};
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
@@ -44,6 +44,12 @@ struct TokenRequest<'a> {
 struct PriceRequest<'a> {
     token_id: &'a str,
     side: &'a str,
+}
+
+#[derive(Deserialize)]
+struct DataPage<T> {
+    data: Vec<T>,
+    next_cursor: String,
 }
 
 fn polymarket_default_headers() -> HeaderMap {
@@ -1389,34 +1395,18 @@ impl ClobClient {
                 .into_iter()
                 .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
 
-            let resp = r
+            let page = r
                 .send()
                 .await
                 .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?
-                .json::<Value>()
+                .json::<DataPage<crate::types::OpenOrder>>()
                 .await
                 .map_err(|e| {
                     PolyfillError::parse(format!("Failed to parse response: {}", e), None)
                 })?;
 
-            let new_cursor = resp["next_cursor"]
-                .as_str()
-                .ok_or_else(|| {
-                    PolyfillError::parse("Failed to parse next cursor".to_string(), None)
-                })?
-                .to_owned();
-
-            next_cursor = new_cursor;
-
-            let results = resp["data"].clone();
-            let orders =
-                serde_json::from_value::<Vec<crate::types::OpenOrder>>(results).map_err(|e| {
-                    PolyfillError::parse(
-                        format!("Failed to parse data from order response: {}", e),
-                        None,
-                    )
-                })?;
-            output.extend(orders);
+            next_cursor = page.next_cursor;
+            output.extend(page.data);
         }
 
         Ok(output)
@@ -1472,27 +1462,18 @@ impl ClobClient {
                 .into_iter()
                 .fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v));
 
-            let resp = r
+            let page = r
                 .send()
                 .await
                 .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?
-                .json::<Value>()
+                .json::<DataPage<Value>>()
                 .await
                 .map_err(|e| {
                     PolyfillError::parse(format!("Failed to parse response: {}", e), None)
                 })?;
 
-            let new_cursor = resp["next_cursor"]
-                .as_str()
-                .ok_or_else(|| {
-                    PolyfillError::parse("Failed to parse next cursor".to_string(), None)
-                })?
-                .to_owned();
-
-            next_cursor = new_cursor;
-
-            let results = resp["data"].clone();
-            output.push(results);
+            next_cursor = page.next_cursor;
+            output.extend(page.data);
         }
 
         Ok(output)
@@ -3500,6 +3481,123 @@ mod tests {
             Some(&"already filled".to_string())
         );
         assert_eq!(cancel_all.canceled, vec!["order-9".to_string()]);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_orders_parses_typed_pages() {
+        let mut server = Server::new_async().await;
+        let first_page = server
+            .mock("GET", "/data/orders")
+            .match_query(Matcher::UrlEncoded("next_cursor".into(), "MA==".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "data": [{
+                        "associate_trades": ["trade-1"],
+                        "id": "order-1",
+                        "status": "LIVE",
+                        "market": "market-1",
+                        "original_size": "10",
+                        "outcome": "Yes",
+                        "maker_address": "0x1111111111111111111111111111111111111111",
+                        "owner": "0x2222222222222222222222222222222222222222",
+                        "price": "0.55",
+                        "side": "BUY",
+                        "size_matched": "1.5",
+                        "asset_id": "asset-1",
+                        "expiration": "0",
+                        "type": "GTC",
+                        "created_at": "1713916800"
+                    }],
+                    "next_cursor": "CURSOR1"
+                }"#,
+            )
+            .create_async()
+            .await;
+        let second_page = server
+            .mock("GET", "/data/orders")
+            .match_query(Matcher::UrlEncoded("next_cursor".into(), "CURSOR1".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "data": [{
+                        "associate_trades": [],
+                        "id": "order-2",
+                        "status": "LIVE",
+                        "market": "market-1",
+                        "original_size": "20",
+                        "outcome": "No",
+                        "maker_address": "0x1111111111111111111111111111111111111111",
+                        "owner": "0x2222222222222222222222222222222222222222",
+                        "price": "0.45",
+                        "side": "SELL",
+                        "size_matched": "0",
+                        "asset_id": "asset-2",
+                        "expiration": "0",
+                        "type": "GTC",
+                        "created_at": "1713916810"
+                    }],
+                    "next_cursor": "LTE="
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_l2_auth(&server.url());
+        let orders = client.get_orders(None, None).await.unwrap();
+
+        first_page.assert_async().await;
+        second_page.assert_async().await;
+        assert_eq!(orders.len(), 2);
+        assert_eq!(orders[0].id, "order-1");
+        assert_eq!(orders[1].id, "order-2");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_trades_flattens_paginated_data() {
+        let mut server = Server::new_async().await;
+        let first_page = server
+            .mock("GET", "/data/trades")
+            .match_query(Matcher::UrlEncoded("next_cursor".into(), "MA==".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "data": [{"id": "trade-1", "price": "0.55"}],
+                    "next_cursor": "CURSOR1"
+                }"#,
+            )
+            .create_async()
+            .await;
+        let second_page = server
+            .mock("GET", "/data/trades")
+            .match_query(Matcher::UrlEncoded("next_cursor".into(), "CURSOR1".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "data": [
+                        {"id": "trade-2", "price": "0.45"},
+                        {"id": "trade-3", "price": "0.60"}
+                    ],
+                    "next_cursor": "LTE="
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let client = create_test_client_with_l2_auth(&server.url());
+        let trades = client.get_trades(None, None).await.unwrap();
+
+        first_page.assert_async().await;
+        second_page.assert_async().await;
+        assert_eq!(trades.len(), 3);
+        assert_eq!(trades[0]["id"], "trade-1");
+        assert_eq!(trades[1]["id"], "trade-2");
+        assert_eq!(trades[2]["id"], "trade-3");
+        assert!(trades.iter().all(|trade| trade.is_object()));
     }
 
     #[tokio::test(flavor = "multi_thread")]
