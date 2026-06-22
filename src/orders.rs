@@ -6,16 +6,15 @@
 use crate::auth::{sign_order_message, SignedOrderMessage};
 use crate::errors::{PolyfillError, Result};
 use crate::types::{
-    CreateOrderOptions, MarketOrderArgs, OrderArgs, OrderType, Side, SignedOrderRequest,
+    decimal_to_price, CreateOrderOptions, MarketOrderArgs, OrderArgs, OrderType, Side,
+    SignedOrderRequest,
 };
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
 use rand::Rng;
 use rust_decimal::Decimal;
 use rust_decimal::RoundingStrategy::{AwayFromZero, MidpointTowardZero, ToZero};
-use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const BYTES32_ZERO: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -61,43 +60,27 @@ const PROXY_INIT_CODE_HASH: &str =
 const SAFE_INIT_CODE_HASH: &str =
     "0x2bce2127ff07fb632d16c8347c4ebf501f4841168bed00d9e6ef715ddb6fcecf";
 
-/// Rounding configurations for different tick sizes
-static ROUNDING_CONFIG: LazyLock<HashMap<Decimal, RoundConfig>> = LazyLock::new(|| {
-    HashMap::from([
-        (
-            Decimal::from_str("0.1").unwrap(),
-            RoundConfig {
-                price: 1,
-                size: 2,
-                amount: 3,
-            },
-        ),
-        (
-            Decimal::from_str("0.01").unwrap(),
-            RoundConfig {
-                price: 2,
-                size: 2,
-                amount: 4,
-            },
-        ),
-        (
-            Decimal::from_str("0.001").unwrap(),
-            RoundConfig {
-                price: 3,
-                size: 2,
-                amount: 5,
-            },
-        ),
-        (
-            Decimal::from_str("0.0001").unwrap(),
-            RoundConfig {
-                price: 4,
-                size: 2,
-                amount: 6,
-            },
-        ),
-    ])
-});
+const ROUND_CONFIG_0_1: RoundConfig = RoundConfig {
+    price: 1,
+    size: 2,
+    amount: 3,
+};
+const ROUND_CONFIG_0_01: RoundConfig = RoundConfig {
+    price: 2,
+    size: 2,
+    amount: 4,
+};
+const ROUND_CONFIG_0_001: RoundConfig = RoundConfig {
+    price: 3,
+    size: 2,
+    amount: 5,
+};
+const ROUND_CONFIG_0_0001: RoundConfig = RoundConfig {
+    price: 4,
+    size: 2,
+    amount: 6,
+};
+const TOKEN_UNIT_SCALE: Decimal = Decimal::from_parts(1_000_000, 0, 0, false, 0);
 
 /// Get contract configuration for chain
 pub fn get_contract_config(chain_id: u64, neg_risk: bool) -> Option<ContractConfig> {
@@ -193,7 +176,7 @@ fn generate_seed() -> u64 {
 
 /// Convert decimal to token units (multiply by 1e6)
 fn decimal_to_token_u32(amt: Decimal) -> u32 {
-    let mut amt = Decimal::from_scientific("1e6").expect("1e6 is not scientific") * amt;
+    let mut amt = TOKEN_UNIT_SCALE * amt;
     if amt.scale() > 0 {
         amt = amt.round_dp_with_strategy(0, MidpointTowardZero);
     }
@@ -201,9 +184,18 @@ fn decimal_to_token_u32(amt: Decimal) -> u32 {
 }
 
 fn parse_round_config(tick_size: Decimal) -> Result<&'static RoundConfig> {
-    ROUNDING_CONFIG
-        .get(&tick_size)
-        .ok_or_else(|| PolyfillError::validation(format!("Unsupported tick size {tick_size}")))
+    let tick_size_ticks = decimal_to_price(tick_size)
+        .map_err(|_| PolyfillError::validation(format!("Unsupported tick size {tick_size}")))?;
+
+    match tick_size_ticks {
+        1000 => Ok(&ROUND_CONFIG_0_1),
+        100 => Ok(&ROUND_CONFIG_0_01),
+        10 => Ok(&ROUND_CONFIG_0_001),
+        1 => Ok(&ROUND_CONFIG_0_0001),
+        _ => Err(PolyfillError::validation(format!(
+            "Unsupported tick size {tick_size}"
+        ))),
+    }
 }
 
 pub(crate) fn validate_bytes32_hex(field: &str, value: &str) -> Result<()> {

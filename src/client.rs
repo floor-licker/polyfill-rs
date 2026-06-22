@@ -3,7 +3,7 @@
 //! This module provides a production-ready client for interacting with
 //! Polymarket, optimized for high-frequency trading environments.
 
-use crate::auth::{create_l1_headers, create_l2_headers};
+use crate::auth::{create_l1_headers, create_l2_headers, create_l2_headers_with_body_bytes};
 use crate::errors::{PolyfillError, Result};
 use crate::http_config::{create_colocated_client, create_internet_client, prewarm_connections};
 use crate::types::{
@@ -13,11 +13,12 @@ use crate::types::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
-use reqwest::header::HeaderName;
+use reqwest::header::{HeaderName, CONTENT_TYPE};
 use reqwest::Client;
 use reqwest::{Method, RequestBuilder};
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
+use serde::Serialize;
 use serde_json::Value;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
@@ -863,6 +864,23 @@ impl ClobClient {
         headers.fold(req, |r, (k, v)| r.header(HeaderName::from_static(k), v))
     }
 
+    fn serialize_json_body<T: ?Sized + Serialize>(body: &T) -> Result<Vec<u8>> {
+        serde_json::to_vec(body)
+            .map_err(|e| PolyfillError::parse(format!("Failed to serialize body: {e}"), None))
+    }
+
+    fn create_request_with_json_bytes(
+        &self,
+        method: Method,
+        endpoint: &str,
+        headers: impl Iterator<Item = (&'static str, String)>,
+        body_bytes: Vec<u8>,
+    ) -> RequestBuilder {
+        self.create_request_with_headers(method, endpoint, headers)
+            .header(CONTENT_TYPE, "application/json")
+            .body(body_bytes)
+    }
+
     /// Get neg risk for a token
     pub async fn get_neg_risk(&self, token_id: &str) -> Result<bool> {
         let response = self
@@ -1140,11 +1158,23 @@ impl ClobClient {
         // Owner field must reference the credential principal identifier
         // to maintain consistency with the authentication context layer
         let body = PostOrder::new(order, api_creds.api_key.clone(), options);
+        let body_bytes = Self::serialize_json_body(&body)?;
 
-        let headers = create_l2_headers(signer, api_creds, "POST", "/order", Some(&body))?;
-        let req = self.create_request_with_headers(Method::POST, "/order", headers.into_iter());
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            "POST",
+            "/order",
+            Some(&body_bytes),
+        )?;
+        let req = self.create_request_with_json_bytes(
+            Method::POST,
+            "/order",
+            headers.into_iter(),
+            body_bytes,
+        );
 
-        let response = req.json(&body).send().await?;
+        let response = req.send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
@@ -1201,11 +1231,23 @@ impl ClobClient {
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
         let body = std::collections::HashMap::from([("orderID", order_id)]);
+        let body_bytes = Self::serialize_json_body(&body)?;
 
-        let headers = create_l2_headers(signer, api_creds, "DELETE", "/order", Some(&body))?;
-        let req = self.create_request_with_headers(Method::DELETE, "/order", headers.into_iter());
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            "DELETE",
+            "/order",
+            Some(&body_bytes),
+        )?;
+        let req = self.create_request_with_json_bytes(
+            Method::DELETE,
+            "/order",
+            headers.into_iter(),
+            body_bytes,
+        );
 
-        let response = req.json(&body).send().await?;
+        let response = req.send().await?;
         if !response.status().is_success() {
             return Err(PolyfillError::api(
                 response.status().as_u16(),
@@ -1230,10 +1272,22 @@ impl ClobClient {
             .as_ref()
             .ok_or_else(|| PolyfillError::auth("API credentials not set"))?;
 
-        let headers = create_l2_headers(signer, api_creds, "DELETE", "/orders", Some(order_ids))?;
-        let req = self.create_request_with_headers(Method::DELETE, "/orders", headers.into_iter());
+        let body_bytes = Self::serialize_json_body(order_ids)?;
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            "DELETE",
+            "/orders",
+            Some(&body_bytes),
+        )?;
+        let req = self.create_request_with_json_bytes(
+            Method::DELETE,
+            "/orders",
+            headers.into_iter(),
+            body_bytes,
+        );
 
-        let response = req.json(order_ids).send().await?;
+        let response = req.send().await?;
         if !response.status().is_success() {
             return Err(PolyfillError::api(
                 response.status().as_u16(),
@@ -1741,19 +1795,18 @@ impl ClobClient {
             ("market", market.unwrap_or("")),
             ("asset_id", asset_id.unwrap_or("")),
         ]);
+        let body_bytes = Self::serialize_json_body(&body)?;
 
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            method.as_str(),
+            endpoint,
+            Some(&body_bytes),
+        )?;
 
         let response = self
-            .http_client
-            .request(method, format!("{}{}", self.base_url, endpoint))
-            .headers(
-                headers
-                    .into_iter()
-                    .map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap()))
-                    .collect(),
-            )
-            .json(&body)
+            .create_request_with_json_bytes(method, endpoint, headers.into_iter(), body_bytes)
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
@@ -1905,24 +1958,17 @@ impl ClobClient {
 
         let method = Method::POST;
         let endpoint = "/orders-scoring";
-        let headers = create_l2_headers(
+        let body_bytes = Self::serialize_json_body(order_ids)?;
+        let headers = create_l2_headers_with_body_bytes(
             signer,
             api_creds,
             method.as_str(),
             endpoint,
-            Some(order_ids),
+            Some(&body_bytes),
         )?;
 
         let response = self
-            .http_client
-            .request(method, format!("{}{}", self.base_url, endpoint))
-            .headers(
-                headers
-                    .into_iter()
-                    .map(|(k, v)| (HeaderName::from_static(k), v.parse().unwrap()))
-                    .collect(),
-            )
-            .json(order_ids)
+            .create_request_with_json_bytes(method, endpoint, headers.into_iter(), body_bytes)
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
@@ -1953,12 +1999,17 @@ impl ClobClient {
 
         let method = Method::POST;
         let endpoint = "/rfq/request";
-        let headers =
-            create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(request))?;
+        let body_bytes = Self::serialize_json_body(request)?;
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            method.as_str(),
+            endpoint,
+            Some(&body_bytes),
+        )?;
 
         let response = self
-            .create_request_with_headers(method, endpoint, headers.into_iter())
-            .json(request)
+            .create_request_with_json_bytes(method, endpoint, headers.into_iter(), body_bytes)
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
@@ -1992,11 +2043,17 @@ impl ClobClient {
         let body = crate::types::RfqCancelRequest {
             request_id: request_id.to_string(),
         };
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+        let body_bytes = Self::serialize_json_body(&body)?;
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            method.as_str(),
+            endpoint,
+            Some(&body_bytes),
+        )?;
 
         let response = self
-            .create_request_with_headers(method, endpoint, headers.into_iter())
-            .json(&body)
+            .create_request_with_json_bytes(method, endpoint, headers.into_iter(), body_bytes)
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
@@ -2068,11 +2125,17 @@ impl ClobClient {
 
         let method = Method::POST;
         let endpoint = "/rfq/quote";
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(quote))?;
+        let body_bytes = Self::serialize_json_body(quote)?;
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            method.as_str(),
+            endpoint,
+            Some(&body_bytes),
+        )?;
 
         let response = self
-            .create_request_with_headers(method, endpoint, headers.into_iter())
-            .json(quote)
+            .create_request_with_json_bytes(method, endpoint, headers.into_iter(), body_bytes)
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
@@ -2106,11 +2169,17 @@ impl ClobClient {
         let body = crate::types::RfqCancelQuote {
             quote_id: quote_id.to_string(),
         };
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(&body))?;
+        let body_bytes = Self::serialize_json_body(&body)?;
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            method.as_str(),
+            endpoint,
+            Some(&body_bytes),
+        )?;
 
         let response = self
-            .create_request_with_headers(method, endpoint, headers.into_iter())
-            .json(&body)
+            .create_request_with_json_bytes(method, endpoint, headers.into_iter(), body_bytes)
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
@@ -2259,11 +2328,17 @@ impl ClobClient {
 
         let method = Method::POST;
         let endpoint = "/rfq/request/accept";
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(body))?;
+        let body_bytes = Self::serialize_json_body(body)?;
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            method.as_str(),
+            endpoint,
+            Some(&body_bytes),
+        )?;
 
         let response = self
-            .create_request_with_headers(method, endpoint, headers.into_iter())
-            .json(body)
+            .create_request_with_json_bytes(method, endpoint, headers.into_iter(), body_bytes)
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
@@ -2294,11 +2369,17 @@ impl ClobClient {
 
         let method = Method::POST;
         let endpoint = "/rfq/quote/approve";
-        let headers = create_l2_headers(signer, api_creds, method.as_str(), endpoint, Some(body))?;
+        let body_bytes = Self::serialize_json_body(body)?;
+        let headers = create_l2_headers_with_body_bytes(
+            signer,
+            api_creds,
+            method.as_str(),
+            endpoint,
+            Some(&body_bytes),
+        )?;
 
         let response = self
-            .create_request_with_headers(method, endpoint, headers.into_iter())
-            .json(body)
+            .create_request_with_json_bytes(method, endpoint, headers.into_iter(), body_bytes)
             .send()
             .await
             .map_err(|e| PolyfillError::network(format!("Request failed: {}", e), e))?;
