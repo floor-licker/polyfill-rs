@@ -6,8 +6,8 @@
 use crate::auth::{sign_order_message, SignedOrderMessage};
 use crate::errors::{PolyfillError, Result};
 use crate::types::{
-    decimal_to_price, CreateOrderOptions, MarketOrderArgs, OrderArgs, OrderType, Side,
-    SignedOrderRequest,
+    CreateOrderOptions, MarketOrderArgs, OrderArgs, OrderType, Side, SignedOrderRequest,
+    SCALE_FACTOR,
 };
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
@@ -184,7 +184,15 @@ fn decimal_to_token_u32(amt: Decimal) -> u32 {
 }
 
 fn parse_round_config(tick_size: Decimal) -> Result<&'static RoundConfig> {
-    let tick_size_ticks = decimal_to_price(tick_size)
+    let scaled = tick_size * Decimal::from(SCALE_FACTOR);
+    if !scaled.is_integer() {
+        return Err(PolyfillError::validation(format!(
+            "Unsupported tick size {tick_size}"
+        )));
+    }
+
+    let tick_size_ticks: u32 = scaled
+        .try_into()
         .map_err(|_| PolyfillError::validation(format!("Unsupported tick size {tick_size}")))?;
 
     match tick_size_ticks {
@@ -610,6 +618,29 @@ mod tests {
         // Test large number
         let result = decimal_to_token_u32(Decimal::from_str("1000.0").unwrap());
         assert_eq!(result, 1_000_000_000);
+    }
+
+    #[test]
+    fn test_parse_round_config_accepts_exact_supported_tick_sizes() {
+        let config = parse_round_config(Decimal::from_str("0.1").unwrap()).unwrap();
+        assert_eq!(config.price, 1);
+
+        let config = parse_round_config(Decimal::from_str("0.0100").unwrap()).unwrap();
+        assert_eq!(config.price, 2);
+
+        let config = parse_round_config(Decimal::from_str("0.001").unwrap()).unwrap();
+        assert_eq!(config.price, 3);
+
+        let config = parse_round_config(Decimal::from_str("0.00010").unwrap()).unwrap();
+        assert_eq!(config.price, 4);
+    }
+
+    #[test]
+    fn test_parse_round_config_rejects_fractional_or_unsupported_tick_sizes() {
+        for tick_size in ["0.00005", "0.00009", "0.00011", "0.0002", "0", "-0.01"] {
+            let result = parse_round_config(Decimal::from_str(tick_size).unwrap());
+            assert!(matches!(result, Err(PolyfillError::Validation { .. })));
+        }
     }
 
     #[test]
