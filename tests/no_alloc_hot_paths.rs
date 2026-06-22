@@ -1,6 +1,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
+use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
@@ -101,6 +102,88 @@ fn mk_delta(
         size: size_units,
         sequence,
     }
+}
+
+fn seed_book_levels(
+    manager: &OrderBookManager,
+    asset_id: &str,
+    bid_ticks: &[i64],
+    ask_ticks: &[i64],
+) {
+    let mut sequence = 1u64;
+    for &price_ticks in bid_ticks {
+        manager
+            .apply_delta(polyfill_rs::types::OrderDelta {
+                token_id: asset_id.to_string(),
+                timestamp: chrono::Utc::now(),
+                side: Side::BUY,
+                price: Decimal::new(price_ticks, 4),
+                size: Decimal::from_str("100.0").unwrap(),
+                sequence,
+            })
+            .unwrap();
+        sequence += 1;
+    }
+
+    for &price_ticks in ask_ticks {
+        manager
+            .apply_delta(polyfill_rs::types::OrderDelta {
+                token_id: asset_id.to_string(),
+                timestamp: chrono::Utc::now(),
+                side: Side::SELL,
+                price: Decimal::new(price_ticks, 4),
+                size: Decimal::from_str("100.0").unwrap(),
+                sequence,
+            })
+            .unwrap();
+        sequence += 1;
+    }
+}
+
+fn ws_book_message(
+    asset_id: &str,
+    timestamp: u64,
+    bid_ticks: &[i64],
+    ask_ticks: &[i64],
+) -> Vec<u8> {
+    let mut json = String::with_capacity(160 + (bid_ticks.len() + ask_ticks.len()) * 40);
+    write!(
+        &mut json,
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":{timestamp},\"bids\":["
+    )
+    .unwrap();
+
+    for (idx, price_ticks) in bid_ticks.iter().enumerate() {
+        if idx > 0 {
+            json.push(',');
+        }
+        write!(
+            &mut json,
+            "{{\"price\":\"{}\",\"size\":\"100.0000\"}}",
+            Decimal::new(*price_ticks, 4)
+        )
+        .unwrap();
+    }
+
+    json.push_str("],\"asks\":[");
+    for (idx, price_ticks) in ask_ticks.iter().enumerate() {
+        if idx > 0 {
+            json.push(',');
+        }
+        write!(
+            &mut json,
+            "{{\"price\":\"{}\",\"size\":\"100.0000\"}}",
+            Decimal::new(*price_ticks, 4)
+        )
+        .unwrap();
+    }
+
+    json.push_str("]}");
+    json.into_bytes()
+}
+
+fn contiguous_ticks(start: i64, len: usize, step: i64) -> Vec<i64> {
+    (0..len).map(|idx| start + (idx as i64 * step)).collect()
 }
 
 #[test]
@@ -325,6 +408,93 @@ fn no_alloc_ws_book_update_processor_apply_existing_levels() {
         .process_bytes(msg.as_mut_slice(), &manager)
         .unwrap();
     guard.assert_no_heap_traffic();
+}
+
+#[test]
+fn no_alloc_ws_book_update_processor_one_new_level_with_reserved_capacity() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+    seed_book_levels(&manager, asset_id, &[7500], &[7600]);
+
+    let mut processor = WsBookUpdateProcessor::new(4096);
+    let mut warmup_msg = ws_book_message(asset_id, 10, &[7500], &[7600]);
+    processor
+        .process_bytes(warmup_msg.as_mut_slice(), &manager)
+        .unwrap();
+    let mut parser_capacity_warmup = ws_book_message(asset_id, 10, &[7500, 7400], &[7600]);
+    processor
+        .process_bytes(parser_capacity_warmup.as_mut_slice(), &manager)
+        .unwrap();
+
+    let mut msg = ws_book_message(asset_id, 11, &[7500, 7400], &[7600]);
+
+    let _ = heap_operation_count();
+
+    let guard = NoHeapTrafficGuard::new();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
+    guard.assert_no_heap_traffic();
+}
+
+#[test]
+fn no_alloc_ws_book_update_processor_one_removed_level() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+    seed_book_levels(&manager, asset_id, &[7500, 7400], &[7600]);
+
+    let mut processor = WsBookUpdateProcessor::new(4096);
+    let mut warmup_msg = ws_book_message(asset_id, 10, &[7500, 7400], &[7600]);
+    processor
+        .process_bytes(warmup_msg.as_mut_slice(), &manager)
+        .unwrap();
+
+    let mut msg = ws_book_message(asset_id, 11, &[7500], &[7600]);
+
+    let _ = heap_operation_count();
+
+    let guard = NoHeapTrafficGuard::new();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
+    guard.assert_no_heap_traffic();
+}
+
+#[test]
+fn ws_book_update_processor_full_churn_64_levels_touches_allocator() {
+    let asset_id = "test_asset_id";
+    let levels_per_side = 64;
+    let manager = OrderBookManager::new(levels_per_side);
+    manager.get_or_create_book(asset_id).unwrap();
+
+    let initial_bids = contiguous_ticks(7500, levels_per_side, -1);
+    let initial_asks = contiguous_ticks(7600, levels_per_side, 1);
+    seed_book_levels(&manager, asset_id, &initial_bids, &initial_asks);
+
+    let mut warmup_msg = ws_book_message(asset_id, 1000, &initial_bids, &initial_asks);
+    let mut processor = WsBookUpdateProcessor::new(warmup_msg.len());
+    processor
+        .process_bytes(warmup_msg.as_mut_slice(), &manager)
+        .unwrap();
+
+    let churn_bids = contiguous_ticks(7300, levels_per_side, -1);
+    let churn_asks = contiguous_ticks(7800, levels_per_side, 1);
+    let mut msg = ws_book_message(asset_id, 1001, &churn_bids, &churn_asks);
+
+    let _ = heap_operation_count();
+
+    let before = heap_operation_count();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
+    let after = heap_operation_count();
+
+    assert!(
+        after > before,
+        "expected 64-level full churn to touch the allocator while old and new levels coexist"
+    );
 }
 
 #[test]
