@@ -139,10 +139,7 @@ fn process_stream_object<'tape, 'input>(
             applied += apply_levels(book, Side::SELL, asks)?;
         }
 
-        book.finish_ws_book_update(
-            |price_ticks| ws_levels_contain_price(bids, price_ticks),
-            |price_ticks| ws_levels_contain_price(asks, price_ticks),
-        );
+        book.finish_ws_book_update();
         Ok(applied)
     })?;
 
@@ -186,35 +183,6 @@ fn apply_levels<'tape, 'input>(
     }
 
     Ok(applied)
-}
-
-fn ws_levels_contain_price<'tape, 'input>(
-    levels: Option<simd_json::tape::Array<'tape, 'input>>,
-    price_ticks: Price,
-) -> bool {
-    let Some(levels) = levels else {
-        return false;
-    };
-
-    levels.iter().any(|level| {
-        let Some(obj) = level.as_object() else {
-            return false;
-        };
-        let Some(price_str) = obj.get("price").and_then(|v| v.into_string()) else {
-            return false;
-        };
-        let Some(size_str) = obj.get("size").and_then(|v| v.into_string()) else {
-            return false;
-        };
-        let Ok(level_price_ticks) = parse_price_ticks_4dp(price_str) else {
-            return false;
-        };
-        let Ok(size_units) = parse_qty_scaled_4dp(size_str) else {
-            return false;
-        };
-
-        size_units != 0 && level_price_ticks == price_ticks
-    })
 }
 
 #[inline]

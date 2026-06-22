@@ -9,6 +9,12 @@ use std::collections::BTreeMap; // BTreeMap keeps prices sorted automatically - 
 use std::sync::{Arc, RwLock}; // For thread-safe access across multiple tasks
 use tracing::{debug, trace, warn}; // Logging for debugging and monitoring
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StoredLevel {
+    qty: Qty,
+    generation: u64,
+}
+
 /// High-performance order book implementation
 ///
 /// This is the core data structure that holds all the live buy/sell orders for a token.
@@ -40,20 +46,23 @@ pub struct OrderBook {
     /// Key = price in ticks (like 6500 for $0.65), Value = size in fixed-point units
     ///
     /// BEFORE (slow): bids: BTreeMap<Decimal, Decimal>,
-    /// AFTER (fast):  bids: BTreeMap<Price, Qty>,
+    /// AFTER (fast):  bids: BTreeMap<Price, StoredLevel>,
     ///
     /// Why this is faster:
     /// - Integer comparisons are ~10x faster than Decimal comparisons
     /// - No memory allocation for each price level
     /// - Better CPU cache utilization (smaller data structures)
-    bids: BTreeMap<Price, Qty>,
+    bids: BTreeMap<Price, StoredLevel>,
 
     /// Ask side (price -> size, sorted ascending) - NOW USING FIXED-POINT!
     /// BTreeMap keeps lowest asks first - people selling at cheapest prices
     ///
     /// BEFORE (slow): asks: BTreeMap<Decimal, Decimal>,
-    /// AFTER (fast):  asks: BTreeMap<Price, Qty>,
-    asks: BTreeMap<Price, Qty>,
+    /// AFTER (fast):  asks: BTreeMap<Price, StoredLevel>,
+    asks: BTreeMap<Price, StoredLevel>,
+
+    /// Snapshot generation used to retain book levels without rescanning input payloads.
+    snapshot_generation: u64,
 
     /// Minimum tick size for this market in ticks (like 10 for $0.001 increments)
     /// Some markets only allow certain price increments
@@ -93,6 +102,7 @@ impl OrderBook {
             timestamp: Utc::now(),
             bids: BTreeMap::new(), // Empty to start - using Price/Qty types
             asks: BTreeMap::new(), // Empty to start - using Price/Qty types
+            snapshot_generation: 0,
             tick_size_ticks: None, // We'll set this later when we learn about the market
             max_depth,
         }
@@ -123,17 +133,14 @@ impl OrderBook {
         // self.bids.iter().next_back().map(|(&price, &size)| BookLevel { price, size })
 
         // AFTER (fast, ~5ns, no allocation for the lookup):
-        self.bids
-            .iter()
-            .next_back()
-            .map(|(&price_ticks, &size_units)| {
-                // Convert from internal fixed-point to external Decimal format
-                // This conversion only happens at the API boundary
-                BookLevel {
-                    price: price_to_decimal(price_ticks),
-                    size: qty_to_decimal(size_units),
-                }
-            })
+        self.bids.iter().next_back().map(|(&price_ticks, level)| {
+            // Convert from internal fixed-point to external Decimal format
+            // This conversion only happens at the API boundary
+            BookLevel {
+                price: price_to_decimal(price_ticks),
+                size: qty_to_decimal(level.qty),
+            }
+        })
     }
 
     /// Get the current best ask (lowest price someone is willing to sell at)
@@ -145,12 +152,12 @@ impl OrderBook {
         // self.asks.iter().next().map(|(&price, &size)| BookLevel { price, size })
 
         // AFTER (fast, ~5ns, no allocation for the lookup):
-        self.asks.iter().next().map(|(&price_ticks, &size_units)| {
+        self.asks.iter().next().map(|(&price_ticks, level)| {
             // Convert from internal fixed-point to external Decimal format
             // This conversion only happens at the API boundary
             BookLevel {
                 price: price_to_decimal(price_ticks),
-                size: qty_to_decimal(size_units),
+                size: qty_to_decimal(level.qty),
             }
         })
     }
@@ -161,7 +168,7 @@ impl OrderBook {
         self.bids
             .iter()
             .next_back()
-            .map(|(&price, &size)| FastBookLevel::new(price, size))
+            .map(|(&price, level)| FastBookLevel::new(price, level.qty))
     }
 
     /// Get the current best ask in fast internal format
@@ -170,7 +177,7 @@ impl OrderBook {
         self.asks
             .iter()
             .next()
-            .map(|(&price, &size)| FastBookLevel::new(price, size))
+            .map(|(&price, level)| FastBookLevel::new(price, level.qty))
     }
 
     /// Get the current spread (difference between best ask and best bid)
@@ -251,9 +258,9 @@ impl OrderBook {
             .iter()
             .rev() // Reverse because we want highest prices first
             .take(depth) // Only take the top N levels
-            .map(|(&price_ticks, &size_units)| BookLevel {
+            .map(|(&price_ticks, level)| BookLevel {
                 price: price_to_decimal(price_ticks),
-                size: qty_to_decimal(size_units),
+                size: qty_to_decimal(level.qty),
             })
             .collect()
     }
@@ -268,9 +275,9 @@ impl OrderBook {
         self.asks
             .iter() // Already in ascending order, so no need to reverse
             .take(depth) // Only take the top N levels
-            .map(|(&price_ticks, &size_units)| BookLevel {
+            .map(|(&price_ticks, level)| BookLevel {
                 price: price_to_decimal(price_ticks),
-                size: qty_to_decimal(size_units),
+                size: qty_to_decimal(level.qty),
             })
             .collect()
     }
@@ -283,7 +290,7 @@ impl OrderBook {
             .iter()
             .rev() // Reverse because we want highest prices first
             .take(depth) // Only take the top N levels
-            .map(|(&price, &size)| FastBookLevel::new(price, size))
+            .map(|(&price, level)| FastBookLevel::new(price, level.qty))
             .collect()
     }
 
@@ -294,7 +301,7 @@ impl OrderBook {
         self.asks
             .iter() // Already in ascending order, so no need to reverse
             .take(depth) // Only take the top N levels
-            .map(|(&price, &size)| FastBookLevel::new(price, size))
+            .map(|(&price, level)| FastBookLevel::new(price, level.qty))
             .collect()
     }
 
@@ -415,6 +422,7 @@ impl OrderBook {
         self.sequence = timestamp;
         self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp as i64)
             .unwrap_or_else(Utc::now);
+        self.begin_snapshot();
 
         Ok(true)
     }
@@ -435,22 +443,14 @@ impl OrderBook {
             }
         }
 
-        match side {
-            Side::BUY => self.apply_bid_delta_fast(price_ticks, size_units),
-            Side::SELL => self.apply_ask_delta_fast(price_ticks, size_units),
-        }
+        self.apply_snapshot_level(side, price_ticks, size_units);
 
         Ok(())
     }
 
     /// Finish applying a WS `book` snapshot.
-    pub(crate) fn finish_ws_book_update(
-        &mut self,
-        mut has_bid: impl FnMut(Price) -> bool,
-        mut has_ask: impl FnMut(Price) -> bool,
-    ) {
-        self.bids.retain(|price_ticks, _| has_bid(*price_ticks));
-        self.asks.retain(|price_ticks, _| has_ask(*price_ticks));
+    pub(crate) fn finish_ws_book_update(&mut self) {
+        self.finish_snapshot();
         self.trim_depth();
     }
 
@@ -479,6 +479,7 @@ impl OrderBook {
         self.sequence = update.timestamp;
         self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(update.timestamp as i64)
             .unwrap_or_else(Utc::now);
+        self.begin_snapshot();
 
         // Apply bids (BUY) and asks (SELL) as level upserts.
         for level in &update.bids {
@@ -493,11 +494,7 @@ impl OrderBook {
                 }
             }
 
-            if size_units == 0 {
-                self.bids.remove(&price_ticks);
-            } else {
-                self.bids.insert(price_ticks, size_units);
-            }
+            self.apply_snapshot_level(Side::BUY, price_ticks, size_units);
         }
 
         for level in &update.asks {
@@ -512,17 +509,10 @@ impl OrderBook {
                 }
             }
 
-            if size_units == 0 {
-                self.asks.remove(&price_ticks);
-            } else {
-                self.asks.insert(price_ticks, size_units);
-            }
+            self.apply_snapshot_level(Side::SELL, price_ticks, size_units);
         }
 
-        self.bids
-            .retain(|price_ticks, _| book_update_has_level(&update.bids, *price_ticks));
-        self.asks
-            .retain(|price_ticks, _| book_update_has_level(&update.asks, *price_ticks));
+        self.finish_snapshot();
         self.trim_depth();
         Ok(())
     }
@@ -568,7 +558,13 @@ impl OrderBook {
         if size_units == 0 {
             self.bids.remove(&price_ticks); // No more buyers at this price
         } else {
-            self.bids.insert(price_ticks, size_units); // Update total size at this price
+            self.bids.insert(
+                price_ticks,
+                StoredLevel {
+                    qty: size_units,
+                    generation: self.snapshot_generation,
+                },
+            ); // Update total size at this price
         }
     }
 
@@ -588,8 +584,47 @@ impl OrderBook {
         if size_units == 0 {
             self.asks.remove(&price_ticks); // No more sellers at this price
         } else {
-            self.asks.insert(price_ticks, size_units); // Update total size at this price
+            self.asks.insert(
+                price_ticks,
+                StoredLevel {
+                    qty: size_units,
+                    generation: self.snapshot_generation,
+                },
+            ); // Update total size at this price
         }
+    }
+
+    #[inline]
+    fn begin_snapshot(&mut self) {
+        self.snapshot_generation = self.snapshot_generation.wrapping_add(1);
+    }
+
+    #[inline]
+    fn apply_snapshot_level(&mut self, side: Side, price_ticks: Price, size_units: Qty) {
+        let generation = self.snapshot_generation;
+        let map = match side {
+            Side::BUY => &mut self.bids,
+            Side::SELL => &mut self.asks,
+        };
+
+        if size_units == 0 {
+            map.remove(&price_ticks);
+        } else {
+            map.insert(
+                price_ticks,
+                StoredLevel {
+                    qty: size_units,
+                    generation,
+                },
+            );
+        }
+    }
+
+    #[inline]
+    fn finish_snapshot(&mut self) {
+        let generation = self.snapshot_generation;
+        self.bids.retain(|_, level| level.generation == generation);
+        self.asks.retain(|_, level| level.generation == generation);
     }
 
     /// Trim the book to maintain depth limits
@@ -716,12 +751,20 @@ impl OrderBook {
         match side {
             Side::BUY => {
                 // How much we can buy at this price (look at asks)
-                let size_units = self.asks.get(&price_ticks).copied().unwrap_or_default();
+                let size_units = self
+                    .asks
+                    .get(&price_ticks)
+                    .map(|level| level.qty)
+                    .unwrap_or_default();
                 qty_to_decimal(size_units)
             },
             Side::SELL => {
                 // How much we can sell at this price (look at bids)
-                let size_units = self.bids.get(&price_ticks).copied().unwrap_or_default();
+                let size_units = self
+                    .bids
+                    .get(&price_ticks)
+                    .map(|level| level.qty)
+                    .unwrap_or_default();
                 qty_to_decimal(size_units)
             },
         }
@@ -755,7 +798,7 @@ impl OrderBook {
         };
 
         // Sum up the sizes, converting from fixed-point back to Decimal
-        let total_size_units: i64 = levels.into_iter().map(|(_, &size)| size).sum();
+        let total_size_units: i64 = levels.into_iter().map(|(_, level)| level.qty).sum();
         qty_to_decimal(total_size_units)
     }
 
@@ -767,19 +810,6 @@ impl OrderBook {
             _ => true,                                       // Empty book is technically valid
         }
     }
-}
-
-fn book_update_has_level(levels: &[OrderSummary], price_ticks: Price) -> bool {
-    levels.iter().any(|level| {
-        let Ok(level_price_ticks) = decimal_to_price(level.price) else {
-            return false;
-        };
-        let Ok(size_units) = decimal_to_qty(level.size) else {
-            return false;
-        };
-
-        size_units != 0 && level_price_ticks == price_ticks
-    })
 }
 
 /// Market impact calculation result
@@ -978,8 +1008,8 @@ impl OrderBook {
         let bid_count = self.bids.len();
         let ask_count = self.asks.len();
         // Sum up all bid/ask sizes, converting from fixed-point back to Decimal
-        let total_bid_size_units: i64 = self.bids.values().sum();
-        let total_ask_size_units: i64 = self.asks.values().sum();
+        let total_bid_size_units: i64 = self.bids.values().map(|level| level.qty).sum();
+        let total_ask_size_units: i64 = self.asks.values().map(|level| level.qty).sum();
         let total_bid_size = qty_to_decimal(total_bid_size_units);
         let total_ask_size = qty_to_decimal(total_ask_size_units);
 
