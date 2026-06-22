@@ -669,69 +669,27 @@ impl OrderBook {
     /// 2. Use a different trading strategy
     /// 3. Accept that there's not enough liquidity right now
     pub fn calculate_market_impact(&self, side: Side, size: Decimal) -> Option<MarketImpact> {
-        // PERFORMANCE NOTE: This method still uses Decimal for external compatibility,
-        // but the internal order book lookups now use our fast fixed-point data structures.
-        //
-        // BEFORE: Each level lookup involved Decimal operations (~50ns each)
-        // AFTER: Level lookups use integer operations (~5ns each)
-        //
-        // For a 10-level impact calculation: 500ns → 50ns (10x speedup)
-
-        // Get the levels we'd be trading against
-        let levels = match side {
-            Side::BUY => self.asks(None),  // If buying, we hit the ask side
-            Side::SELL => self.bids(None), // If selling, we hit the bid side
+        let size_units = decimal_to_qty(size).ok()?;
+        let (filled_units, total_notional, best_price_ticks) = match side {
+            Side::BUY => fill_market_impact(self.asks.iter(), size_units)?,
+            Side::SELL => fill_market_impact(self.bids.iter().rev(), size_units)?,
         };
 
-        if levels.is_empty() {
-            return None; // No liquidity available
-        }
-
-        let mut remaining_size = size;
-        let mut total_cost = Decimal::ZERO;
-        let mut weighted_price = Decimal::ZERO;
-
-        // Walk through each price level, filling as much as we can
-        for level in levels {
-            let fill_size = std::cmp::min(remaining_size, level.size);
-            let level_cost = fill_size * level.price;
-
-            total_cost += level_cost;
-            weighted_price += level_cost; // This accumulates the weighted average
-            remaining_size -= fill_size;
-
-            if remaining_size.is_zero() {
-                break; // We've filled our entire order
-            }
-        }
-
-        if remaining_size > Decimal::ZERO {
-            // Not enough liquidity to fill the whole order
-            // This is a perfect example of why we don't need infinite depth:
-            // If we can't fill your order with the top N levels, you probably
-            // shouldn't be placing that order anyway - it would move the market too much
-            return None;
-        }
-
-        let avg_price = weighted_price / size;
-
-        // Calculate how much we moved the market compared to the best price
-        let impact = match side {
-            Side::BUY => {
-                let best_ask = self.best_ask()?.price;
-                (avg_price - best_ask) / best_ask // How much worse than best ask
-            },
-            Side::SELL => {
-                let best_bid = self.best_bid()?.price;
-                (best_bid - avg_price) / best_bid // How much worse than best bid
-            },
+        let total_cost = Decimal::from_i128_with_scale(total_notional, 8);
+        let filled_size = qty_to_decimal(filled_units);
+        let avg_price = total_cost / filled_size;
+        let best_price = price_to_decimal(best_price_ticks);
+        let impact = if side == Side::BUY {
+            (avg_price - best_price) / best_price
+        } else {
+            (best_price - avg_price) / best_price
         };
 
         Some(MarketImpact {
             average_price: avg_price,
             impact_pct: impact,
             total_cost,
-            size_filled: size,
+            size_filled: filled_size,
         })
     }
 
@@ -791,28 +749,69 @@ impl OrderBook {
             Err(_) => return Decimal::ZERO, // Invalid price
         };
 
-        let levels: Vec<_> = match side {
-            Side::BUY => self.asks.range(min_price_ticks..=max_price_ticks).collect(),
+        let total_size_units: Qty = match side {
+            Side::BUY => self
+                .asks
+                .range(min_price_ticks..=max_price_ticks)
+                .map(|(_, level)| level.qty)
+                .sum(),
             Side::SELL => self
                 .bids
                 .range(min_price_ticks..=max_price_ticks)
-                .rev()
-                .collect(),
+                .map(|(_, level)| level.qty)
+                .sum(),
         };
 
-        // Sum up the sizes, converting from fixed-point back to Decimal
-        let total_size_units: i64 = levels.into_iter().map(|(_, level)| level.qty).sum();
         qty_to_decimal(total_size_units)
     }
 
     /// Validate that prices are properly ordered
     /// A healthy book should have best bid < best ask (otherwise there's an arbitrage opportunity)
     pub fn is_valid(&self) -> bool {
-        match (self.best_bid(), self.best_ask()) {
-            (Some(bid), Some(ask)) => bid.price < ask.price, // Normal market condition
-            _ => true,                                       // Empty book is technically valid
+        self.best_prices_fast()
+            .map(|(best_bid_ticks, best_ask_ticks)| best_bid_ticks < best_ask_ticks)
+            .unwrap_or(true)
+    }
+}
+
+fn fill_market_impact<'a>(
+    levels: impl Iterator<Item = (&'a Price, &'a StoredLevel)>,
+    size_units: Qty,
+) -> Option<(Qty, i128, Price)> {
+    if size_units <= 0 {
+        return None;
+    }
+
+    let mut remaining_units = size_units;
+    let mut filled_units = 0;
+    let mut total_notional = 0i128;
+    let mut best_price_ticks = None;
+
+    for (&price_ticks, level) in levels {
+        if best_price_ticks.is_none() {
+            best_price_ticks = Some(price_ticks);
+        }
+
+        if level.qty <= 0 {
+            continue;
+        }
+
+        let fill_units = remaining_units.min(level.qty);
+        let fill_notional = (price_ticks as i128).checked_mul(fill_units as i128)?;
+        total_notional = total_notional.checked_add(fill_notional)?;
+        filled_units += fill_units;
+        remaining_units -= fill_units;
+
+        if remaining_units == 0 {
+            break;
         }
     }
+
+    if remaining_units > 0 {
+        return None;
+    }
+
+    Some((filled_units, total_notional, best_price_ticks?))
 }
 
 /// Market impact calculation result
