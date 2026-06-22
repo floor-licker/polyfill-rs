@@ -6,7 +6,7 @@ use crate::utils::math;
 use chrono::Utc;
 use parking_lot::RwLock;
 use rust_decimal::Decimal;
-use std::collections::{BTreeMap, HashMap}; // BTreeMap keeps prices sorted automatically - crucial for order books
+use std::collections::HashMap;
 use std::sync::Arc; // For shared access across multiple tasks
 use tracing::{debug, trace, warn}; // Logging for debugging and monitoring
 
@@ -14,6 +14,127 @@ use tracing::{debug, trace, warn}; // Logging for debugging and monitoring
 struct StoredLevel {
     qty: Qty,
     generation: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BookSideKind {
+    Bid,
+    Ask,
+}
+
+#[derive(Debug, Clone)]
+struct BookSide {
+    levels: Vec<(Price, StoredLevel)>,
+    kind: BookSideKind,
+}
+
+impl BookSide {
+    fn new(kind: BookSideKind, max_depth: usize) -> Self {
+        Self {
+            levels: Vec::with_capacity(max_depth.saturating_add(8)),
+            kind,
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.levels.len()
+    }
+
+    #[inline]
+    fn search(&self, price: Price) -> std::result::Result<usize, usize> {
+        match self.kind {
+            // Bids are stored highest price first.
+            BookSideKind::Bid => self
+                .levels
+                .binary_search_by(|(level_price, _)| price.cmp(level_price)),
+            // Asks are stored lowest price first.
+            BookSideKind::Ask => self
+                .levels
+                .binary_search_by(|(level_price, _)| level_price.cmp(&price)),
+        }
+    }
+
+    #[inline]
+    fn best(&self) -> Option<(Price, &StoredLevel)> {
+        self.levels.first().map(|(price, level)| (*price, level))
+    }
+
+    #[inline]
+    fn get(&self, price: Price) -> Option<&StoredLevel> {
+        self.search(price)
+            .ok()
+            .and_then(|idx| self.levels.get(idx).map(|(_, level)| level))
+    }
+
+    #[inline]
+    fn upsert(&mut self, price: Price, level: StoredLevel) {
+        match self.search(price) {
+            Ok(idx) if level.qty == 0 => {
+                self.levels.remove(idx);
+            },
+            Ok(idx) => {
+                self.levels[idx].1 = level;
+            },
+            Err(idx) if level.qty != 0 => {
+                self.levels.insert(idx, (price, level));
+            },
+            Err(_) => {},
+        }
+    }
+
+    #[inline]
+    fn retain_generation(&mut self, generation: u64) {
+        self.levels
+            .retain(|(_, level)| level.generation == generation);
+    }
+
+    #[inline]
+    fn trim_depth(&mut self, max_depth: usize) {
+        if self.levels.len() > max_depth {
+            self.levels.truncate(max_depth);
+        }
+    }
+
+    #[inline]
+    fn iter_top(&self, depth: usize) -> impl Iterator<Item = (Price, &StoredLevel)> {
+        self.levels
+            .iter()
+            .take(depth)
+            .map(|(price, level)| (*price, level))
+    }
+
+    #[inline]
+    fn iter_all(&self) -> impl Iterator<Item = (Price, &StoredLevel)> {
+        self.levels.iter().map(|(price, level)| (*price, level))
+    }
+
+    fn sum_range(&self, min_price: Price, max_price: Price) -> Qty {
+        let mut total = 0;
+        for (price, level) in &self.levels {
+            match self.kind {
+                BookSideKind::Bid => {
+                    if *price > max_price {
+                        continue;
+                    }
+                    if *price < min_price {
+                        break;
+                    }
+                },
+                BookSideKind::Ask => {
+                    if *price < min_price {
+                        continue;
+                    }
+                    if *price > max_price {
+                        break;
+                    }
+                },
+            }
+
+            total += level.qty;
+        }
+        total
+    }
 }
 
 const DEFAULT_BOOK_SHARDS: usize = 64;
@@ -45,24 +166,24 @@ pub struct OrderBook {
     pub timestamp: chrono::DateTime<Utc>,
 
     /// Bid side (price -> size, sorted descending) - NOW USING FIXED-POINT!
-    /// BTreeMap automatically keeps highest bids first, which is what we want
+    /// Stored as a sorted vector with highest bids first for cache-local top-of-book iteration.
     /// Key = price in ticks (like 6500 for $0.65), Value = size in fixed-point units
     ///
     /// BEFORE (slow): bids: BTreeMap<Decimal, Decimal>,
-    /// AFTER (fast):  bids: BTreeMap<Price, StoredLevel>,
+    /// AFTER (fast):  bids: sorted Vec<(Price, StoredLevel)>,
     ///
     /// Why this is faster:
     /// - Integer comparisons are ~10x faster than Decimal comparisons
     /// - No memory allocation for each price level
     /// - Better CPU cache utilization (smaller data structures)
-    bids: BTreeMap<Price, StoredLevel>,
+    bids: BookSide,
 
     /// Ask side (price -> size, sorted ascending) - NOW USING FIXED-POINT!
-    /// BTreeMap keeps lowest asks first - people selling at cheapest prices
+    /// Stored as a sorted vector with lowest asks first - people selling at cheapest prices.
     ///
     /// BEFORE (slow): asks: BTreeMap<Decimal, Decimal>,
-    /// AFTER (fast):  asks: BTreeMap<Price, StoredLevel>,
-    asks: BTreeMap<Price, StoredLevel>,
+    /// AFTER (fast):  asks: sorted Vec<(Price, StoredLevel)>,
+    asks: BookSide,
 
     /// Snapshot generation used to retain book levels without rescanning input payloads.
     snapshot_generation: u64,
@@ -103,8 +224,8 @@ impl OrderBook {
             token_id_hash,
             sequence: 0, // Start at 0, will increment as we get updates
             timestamp: Utc::now(),
-            bids: BTreeMap::new(), // Empty to start - using Price/Qty types
-            asks: BTreeMap::new(), // Empty to start - using Price/Qty types
+            bids: BookSide::new(BookSideKind::Bid, max_depth), // Empty to start
+            asks: BookSide::new(BookSideKind::Ask, max_depth), // Empty to start
             snapshot_generation: 0,
             tick_size_ticks: None, // We'll set this later when we learn about the market
             max_depth,
@@ -128,7 +249,7 @@ impl OrderBook {
     }
 
     /// Get the current best bid (highest price someone is willing to pay)
-    /// Uses next_back() because BTreeMap sorts ascending, but we want the highest bid
+    /// Bids are stored highest price first.
     ///
     /// PERFORMANCE: Now returns data in external format but internally uses fast lookups
     pub fn best_bid(&self) -> Option<BookLevel> {
@@ -136,7 +257,7 @@ impl OrderBook {
         // self.bids.iter().next_back().map(|(&price, &size)| BookLevel { price, size })
 
         // AFTER (fast, ~5ns, no allocation for the lookup):
-        self.bids.iter().next_back().map(|(&price_ticks, level)| {
+        self.bids.best().map(|(price_ticks, level)| {
             // Convert from internal fixed-point to external Decimal format
             // This conversion only happens at the API boundary
             BookLevel {
@@ -147,7 +268,7 @@ impl OrderBook {
     }
 
     /// Get the current best ask (lowest price someone is willing to sell at)
-    /// Uses next() because BTreeMap sorts ascending, so first item is lowest ask
+    /// Asks are stored lowest price first.
     ///
     /// PERFORMANCE: Now returns data in external format but internally uses fast lookups
     pub fn best_ask(&self) -> Option<BookLevel> {
@@ -155,7 +276,7 @@ impl OrderBook {
         // self.asks.iter().next().map(|(&price, &size)| BookLevel { price, size })
 
         // AFTER (fast, ~5ns, no allocation for the lookup):
-        self.asks.iter().next().map(|(&price_ticks, level)| {
+        self.asks.best().map(|(price_ticks, level)| {
             // Convert from internal fixed-point to external Decimal format
             // This conversion only happens at the API boundary
             BookLevel {
@@ -169,18 +290,16 @@ impl OrderBook {
     /// Use this for internal calculations to avoid conversion overhead
     pub fn best_bid_fast(&self) -> Option<FastBookLevel> {
         self.bids
-            .iter()
-            .next_back()
-            .map(|(&price, level)| FastBookLevel::new(price, level.qty))
+            .best()
+            .map(|(price, level)| FastBookLevel::new(price, level.qty))
     }
 
     /// Get the current best ask in fast internal format
     /// Use this for internal calculations to avoid conversion overhead
     pub fn best_ask_fast(&self) -> Option<FastBookLevel> {
         self.asks
-            .iter()
-            .next()
-            .map(|(&price, level)| FastBookLevel::new(price, level.qty))
+            .best()
+            .map(|(price, level)| FastBookLevel::new(price, level.qty))
     }
 
     /// Get the current spread (difference between best ask and best bid)
@@ -231,9 +350,9 @@ impl OrderBook {
     /// Get best bid and ask prices in fast internal format
     /// Helper method to avoid code duplication and minimize conversions
     fn best_prices_fast(&self) -> Option<(Price, Price)> {
-        let best_bid_ticks = self.bids.iter().next_back()?.0;
-        let best_ask_ticks = self.asks.iter().next()?.0;
-        Some((*best_bid_ticks, *best_ask_ticks))
+        let best_bid_ticks = self.bids.best()?.0;
+        let best_ask_ticks = self.asks.best()?.0;
+        Some((best_bid_ticks, best_ask_ticks))
     }
 
     /// Get the current spread in fast internal format (PERFORMANCE OPTIMIZED)
@@ -258,10 +377,8 @@ impl OrderBook {
     pub fn bids(&self, depth: Option<usize>) -> Vec<BookLevel> {
         let depth = depth.unwrap_or(self.max_depth);
         self.bids
-            .iter()
-            .rev() // Reverse because we want highest prices first
-            .take(depth) // Only take the top N levels
-            .map(|(&price_ticks, level)| BookLevel {
+            .iter_top(depth)
+            .map(|(price_ticks, level)| BookLevel {
                 price: price_to_decimal(price_ticks),
                 size: qty_to_decimal(level.qty),
             })
@@ -276,9 +393,8 @@ impl OrderBook {
     pub fn asks(&self, depth: Option<usize>) -> Vec<BookLevel> {
         let depth = depth.unwrap_or(self.max_depth);
         self.asks
-            .iter() // Already in ascending order, so no need to reverse
-            .take(depth) // Only take the top N levels
-            .map(|(&price_ticks, level)| BookLevel {
+            .iter_top(depth)
+            .map(|(price_ticks, level)| BookLevel {
                 price: price_to_decimal(price_ticks),
                 size: qty_to_decimal(level.qty),
             })
@@ -290,10 +406,8 @@ impl OrderBook {
     pub fn bids_fast(&self, depth: Option<usize>) -> Vec<FastBookLevel> {
         let depth = depth.unwrap_or(self.max_depth);
         self.bids
-            .iter()
-            .rev() // Reverse because we want highest prices first
-            .take(depth) // Only take the top N levels
-            .map(|(&price, level)| FastBookLevel::new(price, level.qty))
+            .iter_top(depth)
+            .map(|(price, level)| FastBookLevel::new(price, level.qty))
             .collect()
     }
 
@@ -302,9 +416,8 @@ impl OrderBook {
     pub fn asks_fast(&self, depth: Option<usize>) -> Vec<FastBookLevel> {
         let depth = depth.unwrap_or(self.max_depth);
         self.asks
-            .iter() // Already in ascending order, so no need to reverse
-            .take(depth) // Only take the top N levels
-            .map(|(&price, level)| FastBookLevel::new(price, level.qty))
+            .iter_top(depth)
+            .map(|(price, level)| FastBookLevel::new(price, level.qty))
             .collect()
     }
 
@@ -432,7 +545,7 @@ impl OrderBook {
 
     /// Apply a single WS `book` level (already converted to internal fixed-point).
     ///
-    /// Note: Insertions of new price levels may allocate (BTreeMap node growth). In a strict
+    /// Note: Insertions of new price levels may allocate (Vec growth/shifting). In a strict
     /// zero-alloc hot path, all expected levels must be warmed up ahead of time.
     pub(crate) fn apply_ws_book_level_fast(
         &mut self,
@@ -466,7 +579,7 @@ impl OrderBook {
     /// Notes:
     /// - This replaces the snapshot for both sides.
     /// - Levels omitted from the message are removed.
-    /// - Insertions of *new* price levels may allocate (BTreeMap node growth).
+    /// - Insertions of *new* price levels may allocate or shift vector entries.
     pub fn apply_book_update(&mut self, update: &BookUpdate) -> Result<()> {
         if update.asset_id != self.token_id {
             return Err(PolyfillError::validation("Token ID mismatch"));
@@ -558,17 +671,13 @@ impl OrderBook {
         // }
 
         // AFTER (fast, ~5ns, no allocation):
-        if size_units == 0 {
-            self.bids.remove(&price_ticks); // No more buyers at this price
-        } else {
-            self.bids.insert(
-                price_ticks,
-                StoredLevel {
-                    qty: size_units,
-                    generation: self.snapshot_generation,
-                },
-            ); // Update total size at this price
-        }
+        self.bids.upsert(
+            price_ticks,
+            StoredLevel {
+                qty: size_units,
+                generation: self.snapshot_generation,
+            },
+        );
     }
 
     /// Apply an ask-side delta (someone wants to sell) - FAST VERSION
@@ -584,17 +693,13 @@ impl OrderBook {
         // }
 
         // AFTER (fast, ~5ns, no allocation):
-        if size_units == 0 {
-            self.asks.remove(&price_ticks); // No more sellers at this price
-        } else {
-            self.asks.insert(
-                price_ticks,
-                StoredLevel {
-                    qty: size_units,
-                    generation: self.snapshot_generation,
-                },
-            ); // Update total size at this price
-        }
+        self.asks.upsert(
+            price_ticks,
+            StoredLevel {
+                qty: size_units,
+                generation: self.snapshot_generation,
+            },
+        );
     }
 
     #[inline]
@@ -605,29 +710,25 @@ impl OrderBook {
     #[inline]
     fn apply_snapshot_level(&mut self, side: Side, price_ticks: Price, size_units: Qty) {
         let generation = self.snapshot_generation;
-        let map = match side {
+        let book_side = match side {
             Side::BUY => &mut self.bids,
             Side::SELL => &mut self.asks,
         };
 
-        if size_units == 0 {
-            map.remove(&price_ticks);
-        } else {
-            map.insert(
-                price_ticks,
-                StoredLevel {
-                    qty: size_units,
-                    generation,
-                },
-            );
-        }
+        book_side.upsert(
+            price_ticks,
+            StoredLevel {
+                qty: size_units,
+                generation,
+            },
+        );
     }
 
     #[inline]
     fn finish_snapshot(&mut self) {
         let generation = self.snapshot_generation;
-        self.bids.retain(|_, level| level.generation == generation);
-        self.asks.retain(|_, level| level.generation == generation);
+        self.bids.retain_generation(generation);
+        self.asks.retain_generation(generation);
     }
 
     /// Trim the book to maintain depth limits
@@ -644,21 +745,11 @@ impl OrderBook {
     fn trim_depth(&mut self) {
         // For bids, remove the LOWEST prices (worst bids) if we have too many
         // Example: If best bid is $0.65, we don't care about bids at $0.10
-        if self.bids.len() > self.max_depth {
-            let to_remove = self.bids.len() - self.max_depth;
-            for _ in 0..to_remove {
-                self.bids.pop_first(); // Remove lowest bid prices (furthest from market)
-            }
-        }
+        self.bids.trim_depth(self.max_depth);
 
         // For asks, remove the HIGHEST prices (worst asks) if we have too many
         // Example: If best ask is $0.67, we don't care about asks at $0.95
-        if self.asks.len() > self.max_depth {
-            let to_remove = self.asks.len() - self.max_depth;
-            for _ in 0..to_remove {
-                self.asks.pop_last(); // Remove highest ask prices (furthest from market)
-            }
-        }
+        self.asks.trim_depth(self.max_depth);
     }
 
     /// Calculate the market impact for a given order size
@@ -671,8 +762,8 @@ impl OrderBook {
     pub fn calculate_market_impact(&self, side: Side, size: Decimal) -> Option<MarketImpact> {
         let size_units = decimal_to_qty(size).ok()?;
         let (filled_units, total_notional, best_price_ticks) = match side {
-            Side::BUY => fill_market_impact(self.asks.iter(), size_units)?,
-            Side::SELL => fill_market_impact(self.bids.iter().rev(), size_units)?,
+            Side::BUY => fill_market_impact(self.asks.iter_all(), size_units)?,
+            Side::SELL => fill_market_impact(self.bids.iter_all(), size_units)?,
         };
 
         let total_cost = Decimal::from_i128_with_scale(total_notional, 8);
@@ -714,7 +805,7 @@ impl OrderBook {
                 // How much we can buy at this price (look at asks)
                 let size_units = self
                     .asks
-                    .get(&price_ticks)
+                    .get(price_ticks)
                     .map(|level| level.qty)
                     .unwrap_or_default();
                 qty_to_decimal(size_units)
@@ -723,7 +814,7 @@ impl OrderBook {
                 // How much we can sell at this price (look at bids)
                 let size_units = self
                     .bids
-                    .get(&price_ticks)
+                    .get(price_ticks)
                     .map(|level| level.qty)
                     .unwrap_or_default();
                 qty_to_decimal(size_units)
@@ -750,16 +841,8 @@ impl OrderBook {
         };
 
         let total_size_units: Qty = match side {
-            Side::BUY => self
-                .asks
-                .range(min_price_ticks..=max_price_ticks)
-                .map(|(_, level)| level.qty)
-                .sum(),
-            Side::SELL => self
-                .bids
-                .range(min_price_ticks..=max_price_ticks)
-                .map(|(_, level)| level.qty)
-                .sum(),
+            Side::BUY => self.asks.sum_range(min_price_ticks, max_price_ticks),
+            Side::SELL => self.bids.sum_range(min_price_ticks, max_price_ticks),
         };
 
         qty_to_decimal(total_size_units)
@@ -775,7 +858,7 @@ impl OrderBook {
 }
 
 fn fill_market_impact<'a>(
-    levels: impl Iterator<Item = (&'a Price, &'a StoredLevel)>,
+    levels: impl Iterator<Item = (Price, &'a StoredLevel)>,
     size_units: Qty,
 ) -> Option<(Qty, i128, Price)> {
     if size_units <= 0 {
@@ -787,7 +870,7 @@ fn fill_market_impact<'a>(
     let mut total_notional = 0i128;
     let mut best_price_ticks = None;
 
-    for (&price_ticks, level) in levels {
+    for (price_ticks, level) in levels {
         if best_price_ticks.is_none() {
             best_price_ticks = Some(price_ticks);
         }
@@ -1030,8 +1113,8 @@ impl OrderBook {
         let bid_count = self.bids.len();
         let ask_count = self.asks.len();
         // Sum up all bid/ask sizes, converting from fixed-point back to Decimal
-        let total_bid_size_units: i64 = self.bids.values().map(|level| level.qty).sum();
-        let total_ask_size_units: i64 = self.asks.values().map(|level| level.qty).sum();
+        let total_bid_size_units: i64 = self.bids.iter_all().map(|(_, level)| level.qty).sum();
+        let total_ask_size_units: i64 = self.asks.iter_all().map(|(_, level)| level.qty).sum();
         let total_bid_size = qty_to_decimal(total_bid_size_units);
         let total_ask_size = qty_to_decimal(total_ask_size_units);
 
@@ -1139,6 +1222,70 @@ mod tests {
         assert_eq!(book.sequence, 1); // Sequence should update
         assert_eq!(book.best_bid().unwrap().price, dec!(0.5)); // Should be our bid
         assert_eq!(book.best_bid().unwrap().size, dec!(100)); // Should be our size
+    }
+
+    #[test]
+    fn test_sorted_side_ordering_and_removal() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+
+        for (sequence, price) in [(1, dec!(0.73)), (2, dec!(0.75)), (3, dec!(0.74))] {
+            book.apply_delta(OrderDelta {
+                token_id: "test_token".to_string(),
+                timestamp: Utc::now(),
+                side: Side::BUY,
+                price,
+                size: dec!(100),
+                sequence,
+            })
+            .unwrap();
+        }
+
+        for (sequence, price) in [(4, dec!(0.78)), (5, dec!(0.76)), (6, dec!(0.77))] {
+            book.apply_delta(OrderDelta {
+                token_id: "test_token".to_string(),
+                timestamp: Utc::now(),
+                side: Side::SELL,
+                price,
+                size: dec!(100),
+                sequence,
+            })
+            .unwrap();
+        }
+
+        let bids: Vec<_> = book
+            .bids(Some(3))
+            .into_iter()
+            .map(|level| level.price)
+            .collect();
+        let asks: Vec<_> = book
+            .asks(Some(3))
+            .into_iter()
+            .map(|level| level.price)
+            .collect();
+        assert_eq!(bids, vec![dec!(0.75), dec!(0.74), dec!(0.73)]);
+        assert_eq!(asks, vec![dec!(0.76), dec!(0.77), dec!(0.78)]);
+
+        book.apply_delta(OrderDelta {
+            token_id: "test_token".to_string(),
+            timestamp: Utc::now(),
+            side: Side::BUY,
+            price: dec!(0.75),
+            size: Decimal::ZERO,
+            sequence: 7,
+        })
+        .unwrap();
+        book.apply_delta(OrderDelta {
+            token_id: "test_token".to_string(),
+            timestamp: Utc::now(),
+            side: Side::SELL,
+            price: dec!(0.76),
+            size: Decimal::ZERO,
+            sequence: 8,
+        })
+        .unwrap();
+
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.74));
+        assert_eq!(book.best_ask().unwrap().price, dec!(0.77));
     }
 
     #[test]

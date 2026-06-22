@@ -11,8 +11,8 @@ At the time that this project was started, `polymarket-rs-client` was a Polymark
 I also want to take a moment to clarify what zero-alloc means because I've now recieved double digit messages about this on twitter/x and telegram. In general, zero alloc means either zero alloc in hot paths (which can be a bit more arbitrary) or atlernatively it can mean zero alloc after init/warm-up, which is the objective of this repository. Succinctly that means that **the per-message handling loop never touches the heap**. 
 
 Notably order book paths that introduce new allocations by design:
-- First time seeing a token/book (HashMap insert + key clone): `src/book.rs:~788`
-- New price levels (BTreeMap node growth): `src/book.rs:~409`
+- First time seeing a token/book (HashMap insert + key clone): `src/book.rs`
+- New price levels (sorted Vec insert/growth): `src/book.rs`
 
 
 ## Quick Start
@@ -68,10 +68,10 @@ Real-world Polymarket API latency broken down by request phase:
 
 | Operation | Performance | Notes |
 |-----------|-------------|-------|
-| **Order Book Updates (1000 ops)** | 159.6 µs ± 32 µs | 6,260 updates/sec, zero-allocation |
-| **Spread/Mid Calculations** | 70 ns ± 77 ns | 14.3M ops/sec, optimized BTreeMap |
+| **Order Book Updates (1000 ops)** | 69.6 µs | ~14.4M updates/sec, zero-allocation for warmed existing levels |
+| **Spread/Mid Calculations** | 26.6 ns | best bid/ask + spread + mid over sorted-vector book sides |
 | **JSON Parsing (480KB)** | ~0.5 ms | SIMD-backed parsing for large REST market responses and benchmarked polyfill typed parse path |
-| **WS `book` hot path (decode + apply)** | ~0.23 µs / 1.73 µs / 6.74 µs | 1 / 16 / 64 levels-per-side, strict fixed-point tape parser with generation-marked snapshot retention (see `benches/ws_hot_path.rs`) |
+| **WS `book` hot path (decode + apply)** | ~0.24 µs / 1.56 µs / 5.92 µs | 1 / 16 / 64 levels-per-side, strict fixed-point tape parser with generation-marked snapshot retention (see `benches/ws_hot_path.rs`) |
 
 Run the WS hot-path benchmark locally with `cargo bench --bench ws_hot_path`.
 
