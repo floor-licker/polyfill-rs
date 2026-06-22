@@ -131,8 +131,16 @@ fn process_stream_object<'tape, 'input>(
     let timestamp = parse_u64(timestamp_value)
         .ok_or_else(|| PolyfillError::parse("Invalid timestamp", None))?;
 
-    let bids = obj.get("bids").and_then(|v| v.as_array());
-    let asks = obj.get("asks").and_then(|v| v.as_array());
+    let bids = obj
+        .get("bids")
+        .ok_or_else(|| PolyfillError::parse("Missing bids", None))?
+        .as_array()
+        .ok_or_else(|| PolyfillError::parse("Invalid bids", None))?;
+    let asks = obj
+        .get("asks")
+        .ok_or_else(|| PolyfillError::parse("Missing asks", None))?
+        .as_array()
+        .ok_or_else(|| PolyfillError::parse("Invalid asks", None))?;
 
     let result = books.with_book_mut(asset_id, |book| {
         parsed_levels.clear();
@@ -141,12 +149,8 @@ fn process_stream_object<'tape, 'input>(
             return Ok(0);
         }
 
-        if let Some(bids) = bids {
-            collect_levels(Side::BUY, bids, parsed_levels)?;
-        }
-        if let Some(asks) = asks {
-            collect_levels(Side::SELL, asks, parsed_levels)?;
-        }
+        collect_levels(Side::BUY, bids, parsed_levels)?;
+        collect_levels(Side::SELL, asks, parsed_levels)?;
 
         let parsed_count = parsed_levels.len();
         if book.apply_ws_book_snapshot_fast(asset_id, timestamp, parsed_levels)? {
@@ -371,5 +375,40 @@ mod tests {
         assert_eq!(snapshot.bids[0].size, dec!(10));
         assert_eq!(snapshot.asks[0].price, dec!(0.60));
         assert_eq!(snapshot.asks[0].size, dec!(20));
+    }
+
+    #[test]
+    fn processor_missing_side_keeps_existing_snapshot() {
+        let books = OrderBookManager::new(10);
+        books.get_or_create_book("test_asset_id").unwrap();
+        books
+            .apply_book_update(&BookUpdate {
+                asset_id: "test_asset_id".to_string(),
+                market: "0xabc".to_string(),
+                timestamp: 1000,
+                bids: vec![OrderSummary {
+                    price: dec!(0.50),
+                    size: dec!(10),
+                }],
+                asks: vec![OrderSummary {
+                    price: dec!(0.60),
+                    size: dec!(20),
+                }],
+                hash: None,
+            })
+            .unwrap();
+
+        let mut processor = WsBookUpdateProcessor::new(1024);
+        let mut missing_asks = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1001,"bids":[{"price":"0.5100","size":"11.0000"}]}"#.to_vec();
+        assert!(processor
+            .process_bytes(missing_asks.as_mut_slice(), &books)
+            .is_err());
+
+        let snapshot = books.get_book("test_asset_id").unwrap();
+        assert_eq!(snapshot.sequence, 1000);
+        assert_eq!(snapshot.bids.len(), 1);
+        assert_eq!(snapshot.asks.len(), 1);
+        assert_eq!(snapshot.bids[0].price, dec!(0.50));
+        assert_eq!(snapshot.asks[0].price, dec!(0.60));
     }
 }
