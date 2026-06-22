@@ -77,7 +77,7 @@ Run the WS hot-path benchmark locally with `cargo bench --bench ws_hot_path`.
 
 **Key Performance Optimizations:**
 
-The 21.4% performance improvement comes from SIMD-accelerated JSON parsing (1.77x faster than serde_json), HTTP/2 tuning with 512KB stream windows optimized for 469KB payloads, integrated DNS caching, connection keep-alive, and buffer pooling to reduce allocation overhead.
+The 21.4% performance improvement comes from SIMD-accelerated JSON parsing (1.77x faster than serde_json), HTTP/2 tuning with 512KB stream windows optimized for 469KB payloads, explicit Polymarket request headers, and opt-in connection prewarming/keep-alive support.
 
 ### Memory Architecture
 
