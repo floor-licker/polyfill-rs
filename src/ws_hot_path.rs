@@ -52,16 +52,20 @@ impl WsBookUpdateProcessor {
             .expect("WsBookUpdateProcessor tape must be present")
             .reset();
 
-        simd_json::fill_tape(bytes, &mut self.buffers, &mut tape).map_err(|e| {
-            PolyfillError::parse("Failed to parse WebSocket JSON", Some(Box::new(e)))
-        })?;
-
-        let root = tape.as_value();
-        let stats = process_root_value(root, books)?;
+        let result = match simd_json::fill_tape(bytes, &mut self.buffers, &mut tape) {
+            Ok(()) => {
+                let root = tape.as_value();
+                process_root_value(root, books)
+            },
+            Err(e) => Err(PolyfillError::parse(
+                "Failed to parse WebSocket JSON",
+                Some(Box::new(e)),
+            )),
+        };
 
         // Reset the tape to detach lifetimes and keep capacity for reuse.
         self.tape = Some(tape.reset());
-        Ok(stats)
+        result
     }
 
     /// Convenience: process an owned text message without allocating an additional buffer.
@@ -288,5 +292,30 @@ mod tests {
         assert!(parse_qty_scaled_4dp("-50.5").is_err());
         assert!(parse_qty_scaled_4dp("0.00004").is_err());
         assert!(parse_qty_scaled_4dp("0.00005").is_err());
+    }
+
+    #[test]
+    fn processor_recovers_after_parse_and_validation_errors() {
+        let books = OrderBookManager::new(10);
+        books.get_or_create_book("test_asset_id").unwrap();
+        let mut processor = WsBookUpdateProcessor::new(1024);
+
+        let mut malformed_json = br#"{"event_type":"#.to_vec();
+        assert!(processor
+            .process_bytes(malformed_json.as_mut_slice(), &books)
+            .is_err());
+
+        let mut invalid_level = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1000,"bids":[{"price":"0.75001","size":"1.0000"}],"asks":[]}"#.to_vec();
+        assert!(processor
+            .process_bytes(invalid_level.as_mut_slice(), &books)
+            .is_err());
+
+        let mut valid_update = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1001,"bids":[{"price":"0.7500","size":"1.0000"}],"asks":[]}"#.to_vec();
+        let stats = processor
+            .process_bytes(valid_update.as_mut_slice(), &books)
+            .unwrap();
+
+        assert_eq!(stats.book_messages, 1);
+        assert_eq!(stats.book_levels_applied, 1);
     }
 }
