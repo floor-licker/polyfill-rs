@@ -81,7 +81,7 @@ The 21.4% performance improvement comes from SIMD-accelerated JSON parsing (1.77
 
 ### Memory Architecture
 
-Pre-allocated pools eliminate allocation latency spikes. Configurable book depth limiting prevents memory bloat. Hot data structures group frequently-accessed fields for cache line efficiency.
+Configurable book depth limiting prevents memory bloat. Hot data structures group frequently-accessed fields for cache line efficiency. Allocation-sensitive hot paths are covered by targeted no-allocation tests where the implementation is currently allocation-free.
 
 ### Architectural Principles
 
