@@ -17,6 +17,13 @@ struct StoredLevel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ParsedBookLevel {
+    pub side: Side,
+    pub price_ticks: Price,
+    pub size_units: Qty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BookSideKind {
     Bid,
     Ask,
@@ -519,14 +526,12 @@ impl OrderBook {
         Ok(())
     }
 
-    /// Begin applying a WebSocket `book` update (hot-path oriented).
-    ///
-    /// This is intended for in-place WS processing where we *stream* levels out of a decoded
-    /// message, without constructing intermediate `BookUpdate` structs.
-    ///
-    /// Returns `Ok(true)` if the update should be applied, or `Ok(false)` if the update is stale
-    /// and should be skipped.
-    pub(crate) fn begin_ws_book_update(&mut self, asset_id: &str, timestamp: u64) -> Result<bool> {
+    /// Return whether a WebSocket `book` snapshot should be applied.
+    pub(crate) fn should_apply_ws_book_update(
+        &self,
+        asset_id: &str,
+        timestamp: u64,
+    ) -> Result<bool> {
         if asset_id != self.token_id {
             return Err(PolyfillError::validation("Token ID mismatch"));
         }
@@ -535,39 +540,27 @@ impl OrderBook {
             return Ok(false);
         }
 
-        self.sequence = timestamp;
-        self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp as i64)
-            .unwrap_or_else(Utc::now);
-        self.begin_snapshot();
-
         Ok(true)
     }
 
-    /// Apply a single WS `book` level (already converted to internal fixed-point).
+    /// Atomically apply a WebSocket `book` snapshot.
     ///
-    /// Note: Insertions of new price levels may allocate (Vec growth/shifting). In a strict
-    /// zero-alloc hot path, all expected levels must be warmed up ahead of time.
-    pub(crate) fn apply_ws_book_level_fast(
+    /// The caller should parse levels into `ParsedBookLevel`s before calling this method. This
+    /// method validates tick alignment before mutating sequence/generation or book levels, so a
+    /// malformed snapshot leaves the existing book unchanged.
+    pub(crate) fn apply_ws_book_snapshot_fast(
         &mut self,
-        side: Side,
-        price_ticks: Price,
-        size_units: Qty,
-    ) -> Result<()> {
-        if let Some(tick_size_ticks) = self.tick_size_ticks {
-            if tick_size_ticks > 0 && !price_ticks.is_multiple_of(tick_size_ticks) {
-                return Err(PolyfillError::validation("Price not aligned to tick size"));
-            }
+        asset_id: &str,
+        timestamp: u64,
+        levels: &[ParsedBookLevel],
+    ) -> Result<bool> {
+        if !self.should_apply_ws_book_update(asset_id, timestamp)? {
+            return Ok(false);
         }
 
-        self.apply_snapshot_level(side, price_ticks, size_units);
+        self.apply_validated_snapshot(timestamp, levels)?;
 
-        Ok(())
-    }
-
-    /// Finish applying a WS `book` snapshot.
-    pub(crate) fn finish_ws_book_update(&mut self) {
-        self.finish_snapshot();
-        self.trim_depth();
+        Ok(true)
     }
 
     /// Apply a WebSocket `book` update for this token.
@@ -592,40 +585,38 @@ impl OrderBook {
             return Ok(());
         }
 
+        // Validate the whole snapshot before mutating this book. A malformed level must not leave
+        // behind a partial generation or an advanced sequence number.
+        for level in &update.bids {
+            let parsed = self.parse_snapshot_summary(Side::BUY, level)?;
+            self.validate_snapshot_level(parsed)?;
+        }
+
+        for level in &update.asks {
+            let parsed = self.parse_snapshot_summary(Side::SELL, level)?;
+            self.validate_snapshot_level(parsed)?;
+        }
+
         self.sequence = update.timestamp;
         self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(update.timestamp as i64)
             .unwrap_or_else(Utc::now);
         self.begin_snapshot();
 
-        // Apply bids (BUY) and asks (SELL) as level upserts.
+        // Re-parse after validation to preserve the existing no-allocation behavior for
+        // `BookUpdate` snapshots. Decimal conversion is deterministic, so these conversions cannot
+        // fail after the validation pass above.
         for level in &update.bids {
-            let price_ticks = decimal_to_price(level.price)
-                .map_err(|_| PolyfillError::validation("Invalid price"))?;
-            let size_units = decimal_to_qty(level.size)
-                .map_err(|_| PolyfillError::validation("Invalid size"))?;
-
-            if let Some(tick_size_ticks) = self.tick_size_ticks {
-                if tick_size_ticks > 0 && !price_ticks.is_multiple_of(tick_size_ticks) {
-                    return Err(PolyfillError::validation("Price not aligned to tick size"));
-                }
-            }
-
-            self.apply_snapshot_level(Side::BUY, price_ticks, size_units);
+            let parsed = self
+                .parse_snapshot_summary(Side::BUY, level)
+                .expect("book update bid level was validated before mutation");
+            self.apply_snapshot_level(parsed.side, parsed.price_ticks, parsed.size_units);
         }
 
         for level in &update.asks {
-            let price_ticks = decimal_to_price(level.price)
-                .map_err(|_| PolyfillError::validation("Invalid price"))?;
-            let size_units = decimal_to_qty(level.size)
-                .map_err(|_| PolyfillError::validation("Invalid size"))?;
-
-            if let Some(tick_size_ticks) = self.tick_size_ticks {
-                if tick_size_ticks > 0 && !price_ticks.is_multiple_of(tick_size_ticks) {
-                    return Err(PolyfillError::validation("Price not aligned to tick size"));
-                }
-            }
-
-            self.apply_snapshot_level(Side::SELL, price_ticks, size_units);
+            let parsed = self
+                .parse_snapshot_summary(Side::SELL, level)
+                .expect("book update ask level was validated before mutation");
+            self.apply_snapshot_level(parsed.side, parsed.price_ticks, parsed.size_units);
         }
 
         self.finish_snapshot();
@@ -705,6 +696,55 @@ impl OrderBook {
     #[inline]
     fn begin_snapshot(&mut self) {
         self.snapshot_generation = self.snapshot_generation.wrapping_add(1);
+    }
+
+    #[inline]
+    fn parse_snapshot_summary(&self, side: Side, level: &OrderSummary) -> Result<ParsedBookLevel> {
+        let price_ticks = decimal_to_price(level.price)
+            .map_err(|_| PolyfillError::validation("Invalid price"))?;
+        let size_units =
+            decimal_to_qty(level.size).map_err(|_| PolyfillError::validation("Invalid size"))?;
+
+        Ok(ParsedBookLevel {
+            side,
+            price_ticks,
+            size_units,
+        })
+    }
+
+    #[inline]
+    fn validate_snapshot_level(&self, level: ParsedBookLevel) -> Result<()> {
+        if let Some(tick_size_ticks) = self.tick_size_ticks {
+            if tick_size_ticks > 0 && !level.price_ticks.is_multiple_of(tick_size_ticks) {
+                return Err(PolyfillError::validation("Price not aligned to tick size"));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn apply_validated_snapshot(
+        &mut self,
+        timestamp: u64,
+        levels: &[ParsedBookLevel],
+    ) -> Result<()> {
+        for &level in levels {
+            self.validate_snapshot_level(level)?;
+        }
+
+        self.sequence = timestamp;
+        self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp as i64)
+            .unwrap_or_else(Utc::now);
+        self.begin_snapshot();
+
+        for &level in levels {
+            self.apply_snapshot_level(level.side, level.price_ticks, level.size_units);
+        }
+
+        self.finish_snapshot();
+        self.trim_depth();
+
+        Ok(())
     }
 
     #[inline]
@@ -1344,6 +1384,60 @@ mod tests {
         assert_eq!(book.best_bid().unwrap().size, dec!(25));
         assert_eq!(book.best_ask().unwrap().price, dec!(0.53));
         assert_eq!(book.best_ask().unwrap().size, dec!(45));
+    }
+
+    #[test]
+    fn test_book_update_error_keeps_existing_snapshot() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+        book.set_tick_size_ticks(100);
+
+        book.apply_book_update(&BookUpdate {
+            asset_id: "test_token".to_string(),
+            market: "0xabc".to_string(),
+            timestamp: 100,
+            bids: vec![OrderSummary {
+                price: dec!(0.50),
+                size: dec!(10),
+            }],
+            asks: vec![OrderSummary {
+                price: dec!(0.60),
+                size: dec!(20),
+            }],
+            hash: None,
+        })
+        .unwrap();
+
+        let err = book
+            .apply_book_update(&BookUpdate {
+                asset_id: "test_token".to_string(),
+                market: "0xabc".to_string(),
+                timestamp: 101,
+                bids: vec![
+                    OrderSummary {
+                        price: dec!(0.51),
+                        size: dec!(11),
+                    },
+                    OrderSummary {
+                        price: dec!(0.515),
+                        size: dec!(12),
+                    },
+                ],
+                asks: vec![OrderSummary {
+                    price: dec!(0.61),
+                    size: dec!(21),
+                }],
+                hash: None,
+            })
+            .unwrap_err();
+
+        assert!(err.to_string().contains("Price not aligned"));
+        assert_eq!(book.sequence, 100);
+        assert_eq!(book.bids(None).len(), 1);
+        assert_eq!(book.asks(None).len(), 1);
+        assert_eq!(book.best_bid().unwrap().price, dec!(0.50));
+        assert_eq!(book.best_bid().unwrap().size, dec!(10));
+        assert_eq!(book.best_ask().unwrap().price, dec!(0.60));
+        assert_eq!(book.best_ask().unwrap().size, dec!(20));
     }
 
     #[test]

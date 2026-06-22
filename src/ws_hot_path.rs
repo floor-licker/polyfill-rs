@@ -7,7 +7,7 @@
 //! may still allocate when producing `Message::Text(String)`. This module aims to
 //! make the *processing* layer allocation-free so we can enforce it with tests.
 
-use crate::book::OrderBookManager;
+use crate::book::{OrderBookManager, ParsedBookLevel};
 use crate::errors::{PolyfillError, Result};
 use crate::types::{Price, Qty, Side, MAX_PRICE_TICKS, MAX_QTY, MIN_PRICE_TICKS, SCALE_FACTOR};
 use simd_json::prelude::*;
@@ -26,6 +26,7 @@ pub struct WsBookApplyStats {
 pub struct WsBookUpdateProcessor {
     buffers: simd_json::Buffers,
     tape: Option<simd_json::Tape<'static>>,
+    parsed_levels: Vec<ParsedBookLevel>,
 }
 
 impl WsBookUpdateProcessor {
@@ -37,6 +38,7 @@ impl WsBookUpdateProcessor {
             buffers: simd_json::Buffers::new(input_len_hint),
             // Store an empty tape with a `'static` lifetime so we can reuse its allocation.
             tape: Some(simd_json::Tape::null().reset()),
+            parsed_levels: Vec::with_capacity((input_len_hint / 32).max(8)),
         }
     }
 
@@ -55,7 +57,7 @@ impl WsBookUpdateProcessor {
         let result = match simd_json::fill_tape(bytes, &mut self.buffers, &mut tape) {
             Ok(()) => {
                 let root = tape.as_value();
-                process_root_value(root, books)
+                process_root_value(root, books, &mut self.parsed_levels)
             },
             Err(e) => Err(PolyfillError::parse(
                 "Failed to parse WebSocket JSON",
@@ -82,9 +84,10 @@ impl WsBookUpdateProcessor {
 fn process_root_value<'tape, 'input>(
     value: simd_json::tape::Value<'tape, 'input>,
     books: &OrderBookManager,
+    parsed_levels: &mut Vec<ParsedBookLevel>,
 ) -> Result<WsBookApplyStats> {
     if let Some(obj) = value.as_object() {
-        return process_stream_object(obj, books);
+        return process_stream_object(obj, books, parsed_levels);
     }
 
     let Some(arr) = value.as_array() else {
@@ -96,7 +99,7 @@ fn process_root_value<'tape, 'input>(
         let Some(obj) = elem.as_object() else {
             continue;
         };
-        let stats = process_stream_object(obj, books)?;
+        let stats = process_stream_object(obj, books, parsed_levels)?;
         total.book_messages += stats.book_messages;
         total.book_levels_applied += stats.book_levels_applied;
     }
@@ -107,6 +110,7 @@ fn process_root_value<'tape, 'input>(
 fn process_stream_object<'tape, 'input>(
     obj: simd_json::tape::Object<'tape, 'input>,
     books: &OrderBookManager,
+    parsed_levels: &mut Vec<ParsedBookLevel>,
 ) -> Result<WsBookApplyStats> {
     let Some(event_type) = obj.get("event_type").and_then(|v| v.into_string()) else {
         return Ok(WsBookApplyStats::default());
@@ -127,25 +131,36 @@ fn process_stream_object<'tape, 'input>(
     let timestamp = parse_u64(timestamp_value)
         .ok_or_else(|| PolyfillError::parse("Invalid timestamp", None))?;
 
-    let bids = obj.get("bids").and_then(|v| v.as_array());
-    let asks = obj.get("asks").and_then(|v| v.as_array());
+    let bids = obj
+        .get("bids")
+        .ok_or_else(|| PolyfillError::parse("Missing bids", None))?
+        .as_array()
+        .ok_or_else(|| PolyfillError::parse("Invalid bids", None))?;
+    let asks = obj
+        .get("asks")
+        .ok_or_else(|| PolyfillError::parse("Missing asks", None))?
+        .as_array()
+        .ok_or_else(|| PolyfillError::parse("Invalid asks", None))?;
 
-    let levels_applied = books.with_book_mut(asset_id, |book| {
-        if !book.begin_ws_book_update(asset_id, timestamp)? {
+    let result = books.with_book_mut(asset_id, |book| {
+        parsed_levels.clear();
+
+        if !book.should_apply_ws_book_update(asset_id, timestamp)? {
             return Ok(0);
         }
 
-        let mut applied = 0usize;
-        if let Some(bids) = bids {
-            applied += apply_levels(book, Side::BUY, bids)?;
-        }
-        if let Some(asks) = asks {
-            applied += apply_levels(book, Side::SELL, asks)?;
-        }
+        collect_levels(Side::BUY, bids, parsed_levels)?;
+        collect_levels(Side::SELL, asks, parsed_levels)?;
 
-        book.finish_ws_book_update();
-        Ok(applied)
-    })?;
+        let parsed_count = parsed_levels.len();
+        if book.apply_ws_book_snapshot_fast(asset_id, timestamp, parsed_levels)? {
+            Ok(parsed_count)
+        } else {
+            Ok(0)
+        }
+    });
+    parsed_levels.clear();
+    let levels_applied = result?;
 
     Ok(WsBookApplyStats {
         book_messages: 1,
@@ -159,10 +174,10 @@ fn parse_u64<'tape, 'input>(value: simd_json::tape::Value<'tape, 'input>) -> Opt
         .or_else(|| value.into_string().and_then(|s| s.parse::<u64>().ok()))
 }
 
-fn apply_levels<'tape, 'input>(
-    book: &mut crate::book::OrderBook,
+fn collect_levels<'tape, 'input>(
     side: Side,
     levels: simd_json::tape::Array<'tape, 'input>,
+    parsed_levels: &mut Vec<ParsedBookLevel>,
 ) -> Result<usize> {
     let mut applied = 0usize;
     for level in levels.iter() {
@@ -182,7 +197,11 @@ fn apply_levels<'tape, 'input>(
         let price_ticks = parse_price_ticks_4dp(price_str)?;
         let size_units = parse_qty_scaled_4dp(size_str)?;
 
-        book.apply_ws_book_level_fast(side, price_ticks, size_units)?;
+        parsed_levels.push(ParsedBookLevel {
+            side,
+            price_ticks,
+            size_units,
+        });
         applied += 1;
     }
 
@@ -273,6 +292,8 @@ fn parse_scaled_4_u64(value: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{BookUpdate, OrderSummary};
+    use rust_decimal_macros::dec;
 
     #[test]
     fn fixed_point_parser_matches_expected_price_ticks() {
@@ -317,5 +338,77 @@ mod tests {
 
         assert_eq!(stats.book_messages, 1);
         assert_eq!(stats.book_levels_applied, 1);
+    }
+
+    #[test]
+    fn processor_error_keeps_existing_snapshot() {
+        let books = OrderBookManager::new(10);
+        books.get_or_create_book("test_asset_id").unwrap();
+        books
+            .apply_book_update(&BookUpdate {
+                asset_id: "test_asset_id".to_string(),
+                market: "0xabc".to_string(),
+                timestamp: 1000,
+                bids: vec![OrderSummary {
+                    price: dec!(0.50),
+                    size: dec!(10),
+                }],
+                asks: vec![OrderSummary {
+                    price: dec!(0.60),
+                    size: dec!(20),
+                }],
+                hash: None,
+            })
+            .unwrap();
+
+        let mut processor = WsBookUpdateProcessor::new(1024);
+        let mut invalid_snapshot = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1001,"bids":[{"price":"0.5100","size":"11.0000"},{"price":"0.51001","size":"12.0000"}],"asks":[{"price":"0.6100","size":"21.0000"}]}"#.to_vec();
+        assert!(processor
+            .process_bytes(invalid_snapshot.as_mut_slice(), &books)
+            .is_err());
+
+        let snapshot = books.get_book("test_asset_id").unwrap();
+        assert_eq!(snapshot.sequence, 1000);
+        assert_eq!(snapshot.bids.len(), 1);
+        assert_eq!(snapshot.asks.len(), 1);
+        assert_eq!(snapshot.bids[0].price, dec!(0.50));
+        assert_eq!(snapshot.bids[0].size, dec!(10));
+        assert_eq!(snapshot.asks[0].price, dec!(0.60));
+        assert_eq!(snapshot.asks[0].size, dec!(20));
+    }
+
+    #[test]
+    fn processor_missing_side_keeps_existing_snapshot() {
+        let books = OrderBookManager::new(10);
+        books.get_or_create_book("test_asset_id").unwrap();
+        books
+            .apply_book_update(&BookUpdate {
+                asset_id: "test_asset_id".to_string(),
+                market: "0xabc".to_string(),
+                timestamp: 1000,
+                bids: vec![OrderSummary {
+                    price: dec!(0.50),
+                    size: dec!(10),
+                }],
+                asks: vec![OrderSummary {
+                    price: dec!(0.60),
+                    size: dec!(20),
+                }],
+                hash: None,
+            })
+            .unwrap();
+
+        let mut processor = WsBookUpdateProcessor::new(1024);
+        let mut missing_asks = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1001,"bids":[{"price":"0.5100","size":"11.0000"}]}"#.to_vec();
+        assert!(processor
+            .process_bytes(missing_asks.as_mut_slice(), &books)
+            .is_err());
+
+        let snapshot = books.get_book("test_asset_id").unwrap();
+        assert_eq!(snapshot.sequence, 1000);
+        assert_eq!(snapshot.bids.len(), 1);
+        assert_eq!(snapshot.asks.len(), 1);
+        assert_eq!(snapshot.bids[0].price, dec!(0.50));
+        assert_eq!(snapshot.asks[0].price, dec!(0.60));
     }
 }
