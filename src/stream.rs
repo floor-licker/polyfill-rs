@@ -429,8 +429,24 @@ impl<'a> WebSocketBookApplier<'a> {
     }
 
     /// Apply a single WS text payload (useful for custom transports and for testing).
+    ///
+    /// This convenience method consumes an owned `String`, so it may release that
+    /// buffer after processing. Use [`Self::apply_bytes_message`] for the
+    /// allocation-sensitive path when the caller owns a reusable mutable buffer.
     pub fn apply_text_message(&mut self, text: String) -> Result<WsBookApplyStats> {
         let stats = self.processor.process_text(text, self.books)?;
+        self.stream.stats.messages_received += 1;
+        self.stream.stats.last_message_time = Some(Utc::now());
+        Ok(stats)
+    }
+
+    /// Apply a single WS payload from a caller-owned mutable byte buffer.
+    ///
+    /// The buffer is mutated by `simd-json`. After processor warmup, this is the
+    /// allocation-sensitive book-applier entry point because no owned message buffer
+    /// is created or dropped by this method.
+    pub fn apply_bytes_message(&mut self, bytes: &mut [u8]) -> Result<WsBookApplyStats> {
+        let stats = self.processor.process_bytes(bytes, self.books)?;
         self.stream.stats.messages_received += 1;
         self.stream.stats.last_message_time = Some(Utc::now());
         Ok(stats)

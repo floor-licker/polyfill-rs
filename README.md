@@ -4,15 +4,16 @@
 [![Documentation](https://docs.rs/polyfill-rs/badge.svg)](https://docs.rs/polyfill-rs)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 
-A high-performance Polymarket Rust client with latency-optimized data structures and zero-allocation hot paths. The `0.4.x` line is V2-native and intentionally breaking for authenticated trading flows.
+A high-performance Polymarket Rust client with latency-optimized data structures and allocator-conscious hot paths. The `0.4.x` line is V2-native and intentionally breaking for authenticated trading flows.
 
 At the time that this project was started, `polymarket-rs-client` was a Polymarket Rust Client with a few GitHub stars, but which seemed to be unmaintained. I took on the task of creating a Rust client which could beat the benchmarks quoted in the README.md of that project, with the added constraint of also maintaining zero alloc hot paths.
 
-I also want to take a moment to clarify what zero-alloc means because I've now recieved double digit messages about this on twitter/x and telegram. In general, zero alloc means either zero alloc in hot paths (which can be a bit more arbitrary) or atlernatively it can mean zero alloc after init/warm-up, which is the objective of this repository. Succinctly that means that **the per-message handling loop never touches the heap**. 
+I also want to take a moment to clarify what zero-alloc means because I've now recieved double digit messages about this on twitter/x and telegram. In this repository the strict claim is limited to tested, warmed hot paths: existing-level book updates and selected read-side calculations are covered by no-heap-traffic tests that count allocations, reallocations, and deallocations. Snapshot churn, first-seen books, and new price levels can still touch the allocator by design.
 
-Notably order book paths that introduce new allocations by design:
+Notably order book paths that can touch the allocator by design:
 - First time seeing a token/book (HashMap insert + key clone): `src/book.rs`
-- New price levels (sorted Vec insert/growth): `src/book.rs`
+- New price levels when a sorted side needs to grow: `src/book.rs`
+- Book removal/drop paths that release owned buffers: `src/book.rs`
 
 
 ## Quick Start
@@ -68,7 +69,7 @@ Real-world Polymarket API latency broken down by request phase:
 
 | Operation | Performance | Notes |
 |-----------|-------------|-------|
-| **Order Book Updates (1000 ops)** | 69.6 µs | ~14.4M updates/sec, zero-allocation for warmed existing levels |
+| **Order Book Updates (1000 ops)** | 69.6 µs | ~14.4M updates/sec, no allocator traffic for warmed existing-level paths |
 | **Spread/Mid Calculations** | 26.6 ns | best bid/ask + spread + mid over sorted-vector book sides |
 | **JSON Parsing (480KB)** | ~0.5 ms | SIMD-backed parsing for large REST market responses and benchmarked polyfill typed parse path |
 | **WS `book` hot path (decode + apply)** | ~0.24 µs / 1.56 µs / 5.92 µs | 1 / 16 / 64 levels-per-side, strict fixed-point tape parser with generation-marked snapshot retention (see `benches/ws_hot_path.rs`) |
@@ -81,7 +82,7 @@ The 21.4% performance improvement comes from HTTP/2 tuning with 512KB stream win
 
 ### Memory Architecture
 
-Configurable book depth limiting prevents memory bloat. Hot data structures group frequently-accessed fields for cache line efficiency. Allocation-sensitive hot paths are covered by targeted no-allocation tests where the implementation is currently allocation-free.
+Configurable book depth limiting prevents memory bloat. Hot data structures group frequently-accessed fields for cache line efficiency. Allocation-sensitive hot paths are covered by targeted no-heap-traffic tests where the implementation currently avoids allocation, reallocation, and deallocation.
 
 ### Architectural Principles
 

@@ -1,7 +1,8 @@
 //! Zero-allocation-ish WebSocket hot-path processing.
 //!
 //! This module is focused on the "decode + apply" path for WS `book` events:
-//! after warmup, processing a message should not perform heap allocations.
+//! after warmup, existing-level happy-path processing should not perform heap
+//! allocation, reallocation, or deallocation.
 //!
 //! Important: using the current tokio-tungstenite transport, the *network layer*
 //! may still allocate when producing `Message::Text(String)`. This module aims to
