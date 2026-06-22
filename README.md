@@ -75,9 +75,11 @@ Real-world Polymarket API latency broken down by request phase:
 
 Run the WS hot-path benchmark locally with `cargo bench --bench ws_hot_path`.
 
+**Parsing paths:** `polyfill-rs` keeps two parsing layers on purpose. The allocation-sensitive WS `book` path uses `WsBookUpdateProcessor` in `src/ws_hot_path.rs`, which walks a reusable `simd-json` tape and applies fixed-point book levels directly. The generic stream parser in `src/decode.rs` is an ergonomic compatibility path: it parses through `serde_json::Value` so it can tolerate batches, unknown event types, and mixed message shapes. Likewise, several generic numeric/decimal deserializers in `src/decode.rs` accept string-or-number API fields through `serde_json::Value`; they are not the zero-allocation hot path.
+
 **Key Performance Optimizations:**
 
-The 21.4% performance improvement comes from HTTP/2 tuning with 512KB stream windows optimized for 469KB payloads, explicit Polymarket request headers, SIMD-backed parsing for large REST market responses, and opt-in connection prewarming/keep-alive support.
+The 21.4% performance improvement comes from HTTP/2 tuning with 512KB stream windows optimized for 469KB payloads, explicit Polymarket request headers, SIMD-backed parsing where the client uses the typed fast-response helper for large REST market responses, and opt-in connection prewarming/keep-alive support.
 
 ### Memory Architecture
 

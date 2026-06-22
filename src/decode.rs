@@ -1,7 +1,14 @@
-//! Data decoding utilities for Polymarket client
+//! Data decoding utilities for the Polymarket client.
 //!
-//! This module provides high-performance decoding functions for various
-//! data formats used in trading environments.
+//! This module contains the ergonomic decoding layer used for broad API compatibility:
+//! tolerant string-or-number deserializers, raw REST response adapters, and generic
+//! WebSocket message parsing. Some helpers intentionally parse through
+//! [`serde_json::Value`] to support Polymarket fields that vary between strings,
+//! numbers, nulls, and mixed event batches.
+//!
+//! The zero-allocation WS `book` processing path is separate. Use
+//! [`crate::ws_hot_path::WsBookUpdateProcessor`] when applying high-throughput book
+//! messages directly to [`crate::book::OrderBookManager`].
 
 use crate::errors::{PolyfillError, Result};
 use crate::types::*;
@@ -12,12 +19,15 @@ use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::str::FromStr;
 
-/// Fast string to number deserializers
+/// Flexible string-or-number deserializers for inconsistent API fields.
 pub mod deserializers {
     use super::*;
     use std::fmt::Display;
 
-    /// Deserialize number from string or number
+    /// Deserialize a number from a string or JSON number.
+    ///
+    /// This compatibility helper accepts multiple API shapes by first decoding into
+    /// `serde_json::Value`. It is not intended for allocation-sensitive hot paths.
     pub fn number_from_string<'de, T, D>(deserializer: D) -> std::result::Result<T, D::Error>
     where
         D: Deserializer<'de>,
@@ -44,7 +54,10 @@ pub mod deserializers {
         }
     }
 
-    /// Deserialize optional number from string
+    /// Deserialize an optional number from a string, JSON number, or null.
+    ///
+    /// This compatibility helper accepts multiple API shapes by first decoding into
+    /// `serde_json::Value`. It is not intended for allocation-sensitive hot paths.
     pub fn optional_number_from_string<'de, T, D>(
         deserializer: D,
     ) -> std::result::Result<Option<T>, D::Error>
@@ -120,6 +133,9 @@ pub mod deserializers {
 
     /// Deserialize an optional Decimal from string/number/null.
     ///
+    /// This compatibility helper accepts multiple API shapes by first decoding into
+    /// `serde_json::Value`. It is not intended for allocation-sensitive hot paths.
+    ///
     /// - `null` => `None`
     /// - `""` => `None`
     /// - invalid values => error
@@ -152,6 +168,9 @@ pub mod deserializers {
     }
 
     /// Like `optional_decimal_from_string`, but returns `None` on parse errors.
+    ///
+    /// This compatibility helper accepts multiple API shapes by first decoding into
+    /// `serde_json::Value`. It is not intended for allocation-sensitive hot paths.
     pub fn optional_decimal_from_string_default_on_error<'de, D>(
         deserializer: D,
     ) -> std::result::Result<Option<Decimal>, D::Error>
@@ -176,6 +195,10 @@ pub mod deserializers {
 
     /// Deserialize a Decimal from string/number.
     ///
+    /// This compatibility helper accepts multiple API shapes through
+    /// `optional_decimal_from_string`. It is not intended for allocation-sensitive
+    /// hot paths.
+    ///
     /// - `""` => error
     /// - invalid values => error
     pub fn decimal_from_string<'de, D>(deserializer: D) -> std::result::Result<Decimal, D::Error>
@@ -188,6 +211,10 @@ pub mod deserializers {
     }
 
     /// Deserialize a Decimal from string/number/null, defaulting missing-ish values to zero.
+    ///
+    /// This compatibility helper accepts multiple API shapes through
+    /// `optional_decimal_from_string`. It is not intended for allocation-sensitive
+    /// hot paths.
     pub fn decimal_from_string_or_zero<'de, D>(
         deserializer: D,
     ) -> std::result::Result<Decimal, D::Error>
@@ -455,12 +482,17 @@ impl Decoder<Market> for RawMarketResponse {
     }
 }
 
-/// WebSocket message parsing (official `event_type` shape).
+/// Ergonomic WebSocket message parsing (official `event_type` shape).
 ///
 /// Polymarket WebSocket servers may send either a single JSON object or a batch array.
 /// This parser is tolerant:
 /// - Unknown/unsupported `event_type`s are ignored.
 /// - Invalid entries inside a batch are skipped (do not fail the whole batch).
+///
+/// This is the compatibility parser for general stream consumers. It parses into
+/// `serde_json::Value` first so it can inspect event types and skip unknown messages.
+/// For allocation-sensitive WS `book` updates, use
+/// [`crate::ws_hot_path::WsBookUpdateProcessor`] instead.
 pub fn parse_stream_messages(raw: &str) -> Result<Vec<StreamMessage>> {
     parse_stream_messages_bytes(raw.as_bytes())
 }
