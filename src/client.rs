@@ -35,6 +35,17 @@ struct MarketByTokenResponse {
     condition_id: String,
 }
 
+#[derive(Serialize)]
+struct TokenRequest<'a> {
+    token_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct PriceRequest<'a> {
+    token_id: &'a str,
+    side: &'a str,
+}
+
 fn polymarket_default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -429,13 +440,9 @@ impl ClobClient {
         &self,
         token_ids: &[String],
     ) -> Result<std::collections::HashMap<String, Decimal>> {
-        let request_data: Vec<std::collections::HashMap<&str, String>> = token_ids
+        let request_data: Vec<TokenRequest<'_>> = token_ids
             .iter()
-            .map(|id| {
-                let mut map = std::collections::HashMap::new();
-                map.insert("token_id", id.clone());
-                map
-            })
+            .map(|id| TokenRequest { token_id: id })
             .collect();
 
         let response = self
@@ -1613,13 +1620,9 @@ impl ClobClient {
         &self,
         token_ids: &[String],
     ) -> Result<std::collections::HashMap<String, Decimal>> {
-        let request_data: Vec<std::collections::HashMap<&str, String>> = token_ids
+        let request_data: Vec<TokenRequest<'_>> = token_ids
             .iter()
-            .map(|id| {
-                let mut map = std::collections::HashMap::new();
-                map.insert("token_id", id.clone());
-                map
-            })
+            .map(|id| TokenRequest { token_id: id })
             .collect();
 
         let response = self
@@ -1651,13 +1654,11 @@ impl ClobClient {
         &self,
         book_params: &[crate::types::BookParams],
     ) -> Result<std::collections::HashMap<String, std::collections::HashMap<Side, Decimal>>> {
-        let request_data: Vec<std::collections::HashMap<&str, String>> = book_params
+        let request_data: Vec<PriceRequest<'_>> = book_params
             .iter()
-            .map(|params| {
-                let mut map = std::collections::HashMap::new();
-                map.insert("token_id", params.token_id.clone());
-                map.insert("side", params.side.as_str().to_string());
-                map
+            .map(|params| PriceRequest {
+                token_id: &params.token_id,
+                side: params.side.as_str(),
             })
             .collect();
 
@@ -1682,13 +1683,9 @@ impl ClobClient {
 
     /// Get order book for multiple tokens (batch) - reference implementation compatible
     pub async fn get_order_books(&self, token_ids: &[String]) -> Result<Vec<OrderBookSummary>> {
-        let request_data: Vec<std::collections::HashMap<&str, String>> = token_ids
+        let request_data: Vec<TokenRequest<'_>> = token_ids
             .iter()
-            .map(|id| {
-                let mut map = std::collections::HashMap::new();
-                map.insert("token_id", id.clone());
-                map
-            })
+            .map(|id| TokenRequest { token_id: id })
             .collect();
 
         let response = self
@@ -1758,13 +1755,9 @@ impl ClobClient {
 
     /// Get last trade prices for multiple tokens
     pub async fn get_last_trade_prices(&self, token_ids: &[String]) -> Result<Value> {
-        let request_data: Vec<std::collections::HashMap<&str, String>> = token_ids
+        let request_data: Vec<TokenRequest<'_>> = token_ids
             .iter()
-            .map(|id| {
-                let mut map = std::collections::HashMap::new();
-                map.insert("token_id", id.clone());
-                map
-            })
+            .map(|id| TokenRequest { token_id: id })
             .collect();
 
         let response = self
@@ -3014,6 +3007,9 @@ mod tests {
 
         let mock = server
             .mock("POST", "/midpoints")
+            .match_body(Matcher::JsonString(
+                r#"[{"token_id":"0x123"},{"token_id":"0x456"}]"#.to_string(),
+            ))
             .with_header("content-type", "application/json")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -3089,6 +3085,10 @@ mod tests {
 
         let mock = server
             .mock("POST", "/prices")
+            .match_body(Matcher::JsonString(
+                r#"[{"token_id":"0x123","side":"BUY"},{"token_id":"0x456","side":"SELL"}]"#
+                    .to_string(),
+            ))
             .with_header("content-type", "application/json")
             .with_status(200)
             .with_body(mock_response)
@@ -3248,6 +3248,7 @@ mod tests {
 
         let mock = server
             .mock("POST", "/books")
+            .match_body(Matcher::JsonString(r#"[{"token_id":"0x123"}]"#.to_string()))
             .with_header("content-type", "application/json")
             .with_status(200)
             .with_body(mock_response)
