@@ -175,12 +175,15 @@ fn generate_seed() -> u64 {
 }
 
 /// Convert decimal to token units (multiply by 1e6)
-fn decimal_to_token_u32(amt: Decimal) -> u32 {
+fn decimal_to_token_units(amt: Decimal) -> Result<U256> {
     let mut amt = TOKEN_UNIT_SCALE * amt;
     if amt.scale() > 0 {
         amt = amt.round_dp_with_strategy(0, MidpointTowardZero);
     }
-    amt.try_into().expect("Couldn't round decimal to integer")
+    let units: u128 = amt
+        .try_into()
+        .map_err(|_| PolyfillError::validation(format!("Invalid token amount {amt}")))?;
+    Ok(U256::from(units))
 }
 
 fn parse_round_config(tick_size: Decimal) -> Result<&'static RoundConfig> {
@@ -332,17 +335,17 @@ impl OrderBuilder {
         size: Decimal,
         price: Decimal,
         round_config: &RoundConfig,
-    ) -> (u32, u32) {
+    ) -> Result<(U256, U256)> {
         let raw_price = price.round_dp_with_strategy(round_config.price, MidpointTowardZero);
 
-        match side {
+        let amounts = match side {
             Side::BUY => {
                 let raw_taker_amt = size.round_dp_with_strategy(round_config.size, ToZero);
                 let raw_maker_amt = raw_taker_amt * raw_price;
                 let raw_maker_amt = self.fix_amount_rounding(raw_maker_amt, round_config);
                 (
-                    decimal_to_token_u32(raw_maker_amt),
-                    decimal_to_token_u32(raw_taker_amt),
+                    decimal_to_token_units(raw_maker_amt)?,
+                    decimal_to_token_units(raw_taker_amt)?,
                 )
             },
             Side::SELL => {
@@ -351,11 +354,13 @@ impl OrderBuilder {
                 let raw_taker_amt = self.fix_amount_rounding(raw_taker_amt, round_config);
 
                 (
-                    decimal_to_token_u32(raw_maker_amt),
-                    decimal_to_token_u32(raw_taker_amt),
+                    decimal_to_token_units(raw_maker_amt)?,
+                    decimal_to_token_units(raw_taker_amt)?,
                 )
             },
-        }
+        };
+
+        Ok(amounts)
     }
 
     /// Get order amounts for a market order
@@ -365,18 +370,18 @@ impl OrderBuilder {
         amount: Decimal,
         price: Decimal,
         round_config: &RoundConfig,
-    ) -> (u32, u32) {
+    ) -> Result<(U256, U256)> {
         let raw_price = price.round_dp_with_strategy(round_config.price, MidpointTowardZero);
 
-        match side {
+        let amounts = match side {
             Side::BUY => {
                 let raw_maker_amt = amount.round_dp_with_strategy(round_config.size, ToZero);
                 let raw_taker_amt =
                     self.fix_amount_rounding(raw_maker_amt / raw_price, round_config);
 
                 (
-                    decimal_to_token_u32(raw_maker_amt),
-                    decimal_to_token_u32(raw_taker_amt),
+                    decimal_to_token_units(raw_maker_amt)?,
+                    decimal_to_token_units(raw_taker_amt)?,
                 )
             },
             Side::SELL => {
@@ -385,11 +390,13 @@ impl OrderBuilder {
                     self.fix_amount_rounding(raw_maker_amt * raw_price, round_config);
 
                 (
-                    decimal_to_token_u32(raw_maker_amt),
-                    decimal_to_token_u32(raw_taker_amt),
+                    decimal_to_token_units(raw_maker_amt)?,
+                    decimal_to_token_units(raw_taker_amt)?,
                 )
             },
-        }
+        };
+
+        Ok(amounts)
     }
 
     /// Calculate market price from order book levels
@@ -446,7 +453,7 @@ impl OrderBuilder {
         let round_config = parse_round_config(tick_size)?;
 
         let (maker_amount, taker_amount) =
-            self.get_market_order_amounts(order_args.side, order_args.amount, price, round_config);
+            self.get_market_order_amounts(order_args.side, order_args.amount, price, round_config)?;
 
         let neg_risk = options
             .neg_risk
@@ -489,7 +496,7 @@ impl OrderBuilder {
             order_args.size,
             order_args.price,
             round_config,
-        );
+        )?;
 
         let neg_risk = options
             .neg_risk
@@ -523,8 +530,8 @@ impl OrderBuilder {
         side: Side,
         chain_id: u64,
         exchange: Address,
-        maker_amount: u32,
-        taker_amount: u32,
+        maker_amount: U256,
+        taker_amount: U256,
         expiration: u64,
         builder_code: Option<&str>,
         metadata: Option<&str>,
@@ -545,8 +552,8 @@ impl OrderBuilder {
             maker: self.funder,
             signer: self.signer.address(),
             token_id: u256_token_id,
-            maker_amount: U256::from(maker_amount),
-            taker_amount: U256::from(taker_amount),
+            maker_amount,
+            taker_amount,
             side: side as u8,
             signature_type: self.sig_type as u8,
             timestamp: U256::from(timestamp),
@@ -593,9 +600,9 @@ mod tests {
     }
 
     #[test]
-    fn test_decimal_to_token_u32() {
-        let result = decimal_to_token_u32(Decimal::from_str("1.5").unwrap());
-        assert_eq!(result, 1_500_000);
+    fn test_decimal_to_token_units() {
+        let result = decimal_to_token_units(Decimal::from_str("1.5").unwrap()).unwrap();
+        assert_eq!(result, U256::from(1_500_000));
     }
 
     #[test]
@@ -606,18 +613,30 @@ mod tests {
     }
 
     #[test]
-    fn test_decimal_to_token_u32_edge_cases() {
+    fn test_decimal_to_token_units_edge_cases() {
         // Test zero
-        let result = decimal_to_token_u32(Decimal::ZERO);
-        assert_eq!(result, 0);
+        let result = decimal_to_token_units(Decimal::ZERO).unwrap();
+        assert_eq!(result, U256::ZERO);
 
         // Test small decimal
-        let result = decimal_to_token_u32(Decimal::from_str("0.000001").unwrap());
-        assert_eq!(result, 1);
+        let result = decimal_to_token_units(Decimal::from_str("0.000001").unwrap()).unwrap();
+        assert_eq!(result, U256::from(1));
 
         // Test large number
-        let result = decimal_to_token_u32(Decimal::from_str("1000.0").unwrap());
-        assert_eq!(result, 1_000_000_000);
+        let result = decimal_to_token_units(Decimal::from_str("1000.0").unwrap()).unwrap();
+        assert_eq!(result, U256::from(1_000_000_000));
+    }
+
+    #[test]
+    fn test_decimal_to_token_units_supports_amounts_above_u32() {
+        let result = decimal_to_token_units(Decimal::from_str("5000").unwrap()).unwrap();
+        assert_eq!(result, U256::from(5_000_000_000_u64));
+    }
+
+    #[test]
+    fn test_decimal_to_token_units_rejects_negative_amounts() {
+        let result = decimal_to_token_units(Decimal::from_str("-1").unwrap());
+        assert!(matches!(result, Err(PolyfillError::Validation { .. })));
     }
 
     #[test]
@@ -810,23 +829,27 @@ mod tests {
         let builder = test_builder();
         let round_config = parse_round_config(Decimal::from_str("0.01").unwrap()).unwrap();
 
-        let (buy_maker, buy_taker) = builder.get_market_order_amounts(
-            Side::BUY,
-            Decimal::from_str("10").unwrap(),
-            Decimal::from_str("0.25").unwrap(),
-            round_config,
-        );
-        let (sell_maker, sell_taker) = builder.get_market_order_amounts(
-            Side::SELL,
-            Decimal::from_str("10").unwrap(),
-            Decimal::from_str("0.25").unwrap(),
-            round_config,
-        );
+        let (buy_maker, buy_taker) = builder
+            .get_market_order_amounts(
+                Side::BUY,
+                Decimal::from_str("10").unwrap(),
+                Decimal::from_str("0.25").unwrap(),
+                round_config,
+            )
+            .unwrap();
+        let (sell_maker, sell_taker) = builder
+            .get_market_order_amounts(
+                Side::SELL,
+                Decimal::from_str("10").unwrap(),
+                Decimal::from_str("0.25").unwrap(),
+                round_config,
+            )
+            .unwrap();
 
-        assert_eq!(buy_maker, 10_000_000);
-        assert_eq!(buy_taker, 40_000_000);
-        assert_eq!(sell_maker, 10_000_000);
-        assert_eq!(sell_taker, 2_500_000);
+        assert_eq!(buy_maker, U256::from(10_000_000));
+        assert_eq!(buy_taker, U256::from(40_000_000));
+        assert_eq!(sell_maker, U256::from(10_000_000));
+        assert_eq!(sell_taker, U256::from(2_500_000));
     }
 
     #[test]
