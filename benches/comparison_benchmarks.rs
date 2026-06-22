@@ -89,6 +89,31 @@ fn benchmark_create_order_eip712(c: &mut Criterion) {
             black_box(signed_order)
         })
     });
+
+    let prepared = builder
+        .prepare_order_path(
+            CHAIN_ID,
+            order_args.token_id.clone(),
+            options.tick_size.unwrap(),
+            options.neg_risk.unwrap(),
+            order_args.builder_code.as_deref(),
+            order_args.metadata.as_deref(),
+        )
+        .unwrap();
+
+    c.bench_function("prepared_create_order_eip712_signature", |b| {
+        b.iter(|| {
+            let signed_order = prepared
+                .create_limit_order(
+                    black_box(order_args.side),
+                    black_box(order_args.price),
+                    black_box(order_args.size),
+                    black_box(order_args.expiration),
+                )
+                .unwrap();
+            black_box(signed_order)
+        })
+    });
 }
 
 // Benchmark: Serialize a signed order body and build L2 auth headers for POST /order.

@@ -8,7 +8,7 @@ use crate::types::ApiCredentials;
 use alloy_primitives::{hex::encode_prefixed, Address, B256, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{eip712_domain, sol};
+use alloy_sol_types::{eip712_domain, sol, Eip712Domain};
 use base64::engine::Engine;
 use hmac::{Hmac, Mac};
 use serde::Serialize;
@@ -142,6 +142,25 @@ pub struct SignedOrderMessage {
     pub builder: B256,
 }
 
+/// Prepared EIP-712 domain for signing orders against one exchange contract.
+#[derive(Clone)]
+pub struct PreparedOrderDomain {
+    domain: Eip712Domain,
+}
+
+impl PreparedOrderDomain {
+    pub fn new(chain_id: u64, verifying_contract: Address) -> Self {
+        let domain = eip712_domain!(
+            name: "Polymarket CTF Exchange",
+            version: "2",
+            chain_id: chain_id,
+            verifying_contract: verifying_contract,
+        );
+
+        Self { domain }
+    }
+}
+
 /// Get current Unix timestamp in seconds
 pub fn get_current_unix_time_secs() -> u64 {
     SystemTime::now()
@@ -186,6 +205,16 @@ pub fn sign_order_message(
     chain_id: u64,
     verifying_contract: Address,
 ) -> Result<String> {
+    let domain = PreparedOrderDomain::new(chain_id, verifying_contract);
+    sign_order_message_with_domain(signer, order, &domain)
+}
+
+/// Sign order message using a prepared EIP-712 domain.
+pub fn sign_order_message_with_domain(
+    signer: &PrivateKeySigner,
+    order: SignedOrderMessage,
+    domain: &PreparedOrderDomain,
+) -> Result<String> {
     let order = Order {
         salt: order.salt,
         maker: order.maker,
@@ -200,15 +229,8 @@ pub fn sign_order_message(
         builder: order.builder,
     };
 
-    let domain = eip712_domain!(
-        name: "Polymarket CTF Exchange",
-        version: "2",
-        chain_id: chain_id,
-        verifying_contract: verifying_contract,
-    );
-
     let signature = signer
-        .sign_typed_data_sync(&order, &domain)
+        .sign_typed_data_sync(&order, &domain.domain)
         .map_err(|e| PolyfillError::crypto(format!("Order signature failed: {}", e)))?;
 
     Ok(encode_prefixed(signature.as_bytes()))
