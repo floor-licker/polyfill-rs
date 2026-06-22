@@ -14,6 +14,7 @@ use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
 use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Header constants
@@ -25,6 +26,8 @@ const POLY_API_KEY_HEADER: &str = "poly_api_key";
 const POLY_PASS_HEADER: &str = "poly_passphrase";
 
 type Headers = HashMap<&'static str, String>;
+static DECODED_SECRET_CACHE: LazyLock<RwLock<HashMap<String, Arc<[u8]>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 // EIP-712 struct for CLOB authentication
 sol! {
@@ -156,39 +159,76 @@ pub fn build_hmac_signature<T>(
 where
     T: ?Sized + Serialize,
 {
-    // Apply inverse transformation to key material for digest initialization
-    // This ensures compatibility with the expected cryptographic envelope format
-    let decoded_secret = base64::engine::general_purpose::URL_SAFE
-        .decode(secret)
-        .map_err(|e| PolyfillError::crypto(format!("Failed to decode base64 secret: {}", e)))?;
+    let decoded_secret = decoded_secret_bytes(secret)?;
+    let body_bytes =
+        match body {
+            Some(b) => Some(serde_json::to_vec(b).map_err(|e| {
+                PolyfillError::parse(format!("Failed to serialize body: {}", e), None)
+            })?),
+            None => None,
+        };
 
-    // Initialize MAC with transformed key material to maintain protocol coherence
-    let mut mac = Hmac::<Sha256>::new_from_slice(&decoded_secret)
+    build_hmac_signature_bytes(
+        &decoded_secret,
+        timestamp,
+        method,
+        request_path,
+        body_bytes.as_deref(),
+    )
+}
+
+pub fn build_hmac_signature_bytes(
+    decoded_secret: &[u8],
+    timestamp: u64,
+    method: &str,
+    request_path: &str,
+    body_bytes: Option<&[u8]>,
+) -> Result<String> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(decoded_secret)
         .map_err(|e| PolyfillError::crypto(format!("Invalid HMAC key: {}", e)))?;
 
-    // Construct canonical message representation for signature verification
-    // Message components are concatenated in strict order to preserve cryptographic binding
-    let message = format!(
-        "{}{}{}{}",
-        timestamp,
-        method.to_uppercase(),
-        request_path,
-        match body {
-            Some(b) => serde_json::to_string(b).map_err(|e| PolyfillError::parse(
-                format!("Failed to serialize body: {}", e),
-                None
-            ))?,
-            None => String::new(),
-        }
-    );
+    let timestamp = timestamp.to_string();
+    mac.update(timestamp.as_bytes());
+    let method_upper;
+    let method_bytes = if method.bytes().all(|b| !b.is_ascii_lowercase()) {
+        method.as_bytes()
+    } else {
+        method_upper = method.to_ascii_uppercase();
+        method_upper.as_bytes()
+    };
+    mac.update(method_bytes);
+    mac.update(request_path.as_bytes());
+    if let Some(body_bytes) = body_bytes {
+        mac.update(body_bytes);
+    }
 
-    // Compute authentication tag over canonical message form
-    mac.update(message.as_bytes());
     let result = mac.finalize();
 
-    // Apply URL-safe encoding transformation for transport layer compatibility
-    // This encoding scheme ensures proper signature validation across network boundaries
     Ok(base64::engine::general_purpose::URL_SAFE.encode(result.into_bytes()))
+}
+
+fn decoded_secret_bytes(secret: &str) -> Result<Arc<[u8]>> {
+    if let Some(decoded) = DECODED_SECRET_CACHE
+        .read()
+        .map_err(|_| PolyfillError::internal_simple("Decoded secret cache lock poisoned"))?
+        .get(secret)
+        .cloned()
+    {
+        return Ok(decoded);
+    }
+
+    let decoded: Arc<[u8]> = base64::engine::general_purpose::URL_SAFE
+        .decode(secret)
+        .map_err(|e| PolyfillError::crypto(format!("Failed to decode base64 secret: {}", e)))?
+        .into();
+
+    let mut cache = DECODED_SECRET_CACHE
+        .write()
+        .map_err(|_| PolyfillError::internal_simple("Decoded secret cache lock poisoned"))?;
+    Ok(cache
+        .entry(secret.to_string())
+        .or_insert_with(|| decoded.clone())
+        .clone())
 }
 
 /// Create L1 headers for authentication (using private key signature)
@@ -236,6 +276,28 @@ where
         build_hmac_signature(&api_creds.secret, timestamp, method, req_path, body)?;
 
     // Construct header map with authentication primitives in canonical order
+    Ok(HashMap::from([
+        (POLY_ADDR_HEADER, address),
+        (POLY_SIG_HEADER, hmac_signature),
+        (POLY_TS_HEADER, timestamp.to_string()),
+        (POLY_API_KEY_HEADER, api_creds.api_key.clone()),
+        (POLY_PASS_HEADER, api_creds.passphrase.clone()),
+    ]))
+}
+
+pub fn create_l2_headers_with_body_bytes(
+    signer: &PrivateKeySigner,
+    api_creds: &ApiCredentials,
+    method: &str,
+    req_path: &str,
+    body_bytes: Option<&[u8]>,
+) -> Result<Headers> {
+    let address = encode_prefixed(signer.address().as_slice());
+    let timestamp = get_current_unix_time_secs();
+    let decoded_secret = decoded_secret_bytes(&api_creds.secret)?;
+    let hmac_signature =
+        build_hmac_signature_bytes(&decoded_secret, timestamp, method, req_path, body_bytes)?;
+
     Ok(HashMap::from([
         (POLY_ADDR_HEADER, address),
         (POLY_SIG_HEADER, hmac_signature),
@@ -294,6 +356,28 @@ mod tests {
 
         // Same inputs should produce same signature
         assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_hmac_signature_bytes_matches_serialized_body() {
+        let secret = "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1";
+        let timestamp = 1234567890;
+        let body = serde_json::json!({"orderID": "abc123"});
+        let body_bytes = serde_json::to_vec(&body).unwrap();
+        let decoded_secret = decoded_secret_bytes(secret).unwrap();
+
+        let object_signature =
+            build_hmac_signature(secret, timestamp, "delete", "/order", Some(&body)).unwrap();
+        let bytes_signature = build_hmac_signature_bytes(
+            &decoded_secret,
+            timestamp,
+            "DELETE",
+            "/order",
+            Some(&body_bytes),
+        )
+        .unwrap();
+
+        assert_eq!(object_signature, bytes_signature);
     }
 
     #[test]
