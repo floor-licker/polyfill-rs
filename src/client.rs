@@ -3,7 +3,9 @@
 //! This module provides a production-ready client for interacting with
 //! Polymarket, optimized for high-frequency trading environments.
 
-use crate::auth::{create_l1_headers, create_l2_headers, create_l2_headers_with_body_bytes};
+use crate::auth::{
+    create_l1_headers, create_l2_headers, create_l2_headers_with_body_bytes, PreparedApiCredentials,
+};
 use crate::errors::{PolyfillError, Result};
 use crate::http_config::{create_colocated_client, create_internet_client, prewarm_connections};
 use crate::types::{
@@ -94,7 +96,7 @@ pub struct ClobClient {
     pub base_url: String,
     chain_id: u64,
     signer: Option<PrivateKeySigner>,
-    api_creds: Option<ApiCreds>,
+    api_creds: Option<PreparedApiCredentials>,
     builder_code: Option<String>,
     order_builder: Option<crate::orders::OrderBuilder>,
     #[allow(dead_code)]
@@ -134,12 +136,14 @@ impl ClobClient {
             .clone()
             .map(|signer| crate::orders::OrderBuilder::new(signer, auth.sig_type, auth.funder));
 
+        let api_creds = auth.api_creds.map(PreparedApiCredentials::new);
+
         Self {
             http_client,
             base_url: host.to_string(),
             chain_id,
             signer: auth.signer,
-            api_creds: auth.api_creds,
+            api_creds,
             builder_code: auth.builder_code,
             order_builder,
             dns_cache: None,
@@ -257,7 +261,7 @@ impl ClobClient {
 
     /// Set API credentials
     pub fn set_api_creds(&mut self, api_creds: ApiCreds) {
-        self.api_creds = Some(api_creds);
+        self.api_creds = Some(PreparedApiCredentials::new(api_creds));
     }
 
     /// Start background keep-alive to maintain warm connection

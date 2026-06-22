@@ -13,8 +13,10 @@ use base64::engine::Engine;
 use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::ops::Deref;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Header constants
@@ -26,8 +28,75 @@ const POLY_API_KEY_HEADER: &str = "poly_api_key";
 const POLY_PASS_HEADER: &str = "poly_passphrase";
 
 type Headers = HashMap<&'static str, String>;
-static DECODED_SECRET_CACHE: LazyLock<RwLock<HashMap<String, Arc<[u8]>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub trait HmacApiCredentials {
+    fn api_key(&self) -> &str;
+    fn passphrase(&self) -> &str;
+    fn decoded_secret_bytes(&self) -> Result<Cow<'_, [u8]>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedApiCredentials {
+    credentials: ApiCredentials,
+    decoded_secret: std::result::Result<Arc<[u8]>, String>,
+}
+
+impl PreparedApiCredentials {
+    pub fn new(credentials: ApiCredentials) -> Self {
+        let decoded_secret = base64::engine::general_purpose::URL_SAFE
+            .decode(&credentials.secret)
+            .map(Into::into)
+            .map_err(|e| format!("Failed to decode base64 secret: {}", e));
+
+        Self {
+            credentials,
+            decoded_secret,
+        }
+    }
+
+    pub fn credentials(&self) -> &ApiCredentials {
+        &self.credentials
+    }
+}
+
+impl Deref for PreparedApiCredentials {
+    type Target = ApiCredentials;
+
+    fn deref(&self) -> &Self::Target {
+        &self.credentials
+    }
+}
+
+impl HmacApiCredentials for ApiCredentials {
+    fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    fn passphrase(&self) -> &str {
+        &self.passphrase
+    }
+
+    fn decoded_secret_bytes(&self) -> Result<Cow<'_, [u8]>> {
+        Ok(Cow::Owned(decode_secret_bytes(&self.secret)?))
+    }
+}
+
+impl HmacApiCredentials for PreparedApiCredentials {
+    fn api_key(&self) -> &str {
+        &self.credentials.api_key
+    }
+
+    fn passphrase(&self) -> &str {
+        &self.credentials.passphrase
+    }
+
+    fn decoded_secret_bytes(&self) -> Result<Cow<'_, [u8]>> {
+        match &self.decoded_secret {
+            Ok(decoded_secret) => Ok(Cow::Borrowed(decoded_secret.as_ref())),
+            Err(err) => Err(PolyfillError::crypto(err.clone())),
+        }
+    }
+}
 
 // EIP-712 struct for CLOB authentication
 sol! {
@@ -159,7 +228,7 @@ pub fn build_hmac_signature<T>(
 where
     T: ?Sized + Serialize,
 {
-    let decoded_secret = decoded_secret_bytes(secret)?;
+    let decoded_secret = decode_secret_bytes(secret)?;
     let body_bytes =
         match body {
             Some(b) => Some(serde_json::to_vec(b).map_err(|e| {
@@ -207,28 +276,10 @@ pub fn build_hmac_signature_bytes(
     Ok(base64::engine::general_purpose::URL_SAFE.encode(result.into_bytes()))
 }
 
-fn decoded_secret_bytes(secret: &str) -> Result<Arc<[u8]>> {
-    if let Some(decoded) = DECODED_SECRET_CACHE
-        .read()
-        .map_err(|_| PolyfillError::internal_simple("Decoded secret cache lock poisoned"))?
-        .get(secret)
-        .cloned()
-    {
-        return Ok(decoded);
-    }
-
-    let decoded: Arc<[u8]> = base64::engine::general_purpose::URL_SAFE
+fn decode_secret_bytes(secret: &str) -> Result<Vec<u8>> {
+    base64::engine::general_purpose::URL_SAFE
         .decode(secret)
-        .map_err(|e| PolyfillError::crypto(format!("Failed to decode base64 secret: {}", e)))?
-        .into();
-
-    let mut cache = DECODED_SECRET_CACHE
-        .write()
-        .map_err(|_| PolyfillError::internal_simple("Decoded secret cache lock poisoned"))?;
-    Ok(cache
-        .entry(secret.to_string())
-        .or_insert_with(|| decoded.clone())
-        .clone())
+        .map_err(|e| PolyfillError::crypto(format!("Failed to decode base64 secret: {}", e)))
 }
 
 /// Create L1 headers for authentication (using private key signature)
@@ -259,7 +310,7 @@ pub fn create_l1_headers(signer: &PrivateKeySigner, nonce: Option<U256>) -> Resu
 /// to satisfy bilateral verification requirements at the protocol layer.
 pub fn create_l2_headers<T>(
     signer: &PrivateKeySigner,
-    api_creds: &ApiCredentials,
+    api_creds: &(impl HmacApiCredentials + ?Sized),
     method: &str,
     req_path: &str,
     body: Option<&T>,
@@ -272,29 +323,42 @@ where
     let timestamp = get_current_unix_time_secs();
 
     // Generate cryptographic authenticator using temporal and message context
-    let hmac_signature =
-        build_hmac_signature(&api_creds.secret, timestamp, method, req_path, body)?;
+    let decoded_secret = api_creds.decoded_secret_bytes()?;
+    let body_bytes =
+        match body {
+            Some(b) => Some(serde_json::to_vec(b).map_err(|e| {
+                PolyfillError::parse(format!("Failed to serialize body: {}", e), None)
+            })?),
+            None => None,
+        };
+    let hmac_signature = build_hmac_signature_bytes(
+        &decoded_secret,
+        timestamp,
+        method,
+        req_path,
+        body_bytes.as_deref(),
+    )?;
 
     // Construct header map with authentication primitives in canonical order
     Ok(HashMap::from([
         (POLY_ADDR_HEADER, address),
         (POLY_SIG_HEADER, hmac_signature),
         (POLY_TS_HEADER, timestamp.to_string()),
-        (POLY_API_KEY_HEADER, api_creds.api_key.clone()),
-        (POLY_PASS_HEADER, api_creds.passphrase.clone()),
+        (POLY_API_KEY_HEADER, api_creds.api_key().to_string()),
+        (POLY_PASS_HEADER, api_creds.passphrase().to_string()),
     ]))
 }
 
 pub fn create_l2_headers_with_body_bytes(
     signer: &PrivateKeySigner,
-    api_creds: &ApiCredentials,
+    api_creds: &(impl HmacApiCredentials + ?Sized),
     method: &str,
     req_path: &str,
     body_bytes: Option<&[u8]>,
 ) -> Result<Headers> {
     let address = encode_prefixed(signer.address().as_slice());
     let timestamp = get_current_unix_time_secs();
-    let decoded_secret = decoded_secret_bytes(&api_creds.secret)?;
+    let decoded_secret = api_creds.decoded_secret_bytes()?;
     let hmac_signature =
         build_hmac_signature_bytes(&decoded_secret, timestamp, method, req_path, body_bytes)?;
 
@@ -302,8 +366,8 @@ pub fn create_l2_headers_with_body_bytes(
         (POLY_ADDR_HEADER, address),
         (POLY_SIG_HEADER, hmac_signature),
         (POLY_TS_HEADER, timestamp.to_string()),
-        (POLY_API_KEY_HEADER, api_creds.api_key.clone()),
-        (POLY_PASS_HEADER, api_creds.passphrase.clone()),
+        (POLY_API_KEY_HEADER, api_creds.api_key().to_string()),
+        (POLY_PASS_HEADER, api_creds.passphrase().to_string()),
     ]))
 }
 
@@ -364,7 +428,7 @@ mod tests {
         let timestamp = 1234567890;
         let body = serde_json::json!({"orderID": "abc123"});
         let body_bytes = serde_json::to_vec(&body).unwrap();
-        let decoded_secret = decoded_secret_bytes(secret).unwrap();
+        let decoded_secret = decode_secret_bytes(secret).unwrap();
 
         let object_signature =
             build_hmac_signature(secret, timestamp, "delete", "/order", Some(&body)).unwrap();
