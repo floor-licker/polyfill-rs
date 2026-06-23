@@ -144,17 +144,31 @@ fn process_stream_object<'tape, 'input>(
         .as_array()
         .ok_or_else(|| PolyfillError::parse("Invalid asks", None))?;
 
-    let result = books.with_book_mut(asset_id, |book| {
-        parsed_levels.clear();
+    parsed_levels.clear();
 
-        if !book.should_apply_ws_book_update(asset_id, timestamp, hash)? {
-            return Ok(0);
-        }
+    let should_parse = books.with_book_mut(asset_id, |book| {
+        book.should_apply_ws_book_update(asset_id, timestamp, hash)
+    })?;
+    if !should_parse {
+        return Ok(WsBookApplyStats {
+            book_messages: 1,
+            book_levels_applied: 0,
+        });
+    }
 
+    let parsed_count = match (|| {
         collect_levels(Side::BUY, bids, parsed_levels)?;
         collect_levels(Side::SELL, asks, parsed_levels)?;
+        Ok(parsed_levels.len())
+    })() {
+        Ok(parsed_count) => parsed_count,
+        Err(error) => {
+            parsed_levels.clear();
+            return Err(error);
+        },
+    };
 
-        let parsed_count = parsed_levels.len();
+    let result = books.with_book_mut(asset_id, |book| {
         if book.apply_ws_book_snapshot_fast(asset_id, timestamp, hash, parsed_levels)? {
             Ok(parsed_count)
         } else {
