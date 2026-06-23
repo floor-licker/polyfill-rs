@@ -38,20 +38,20 @@ pub trait HmacApiCredentials {
 #[derive(Debug, Clone)]
 pub struct PreparedApiCredentials {
     credentials: ApiCredentials,
-    decoded_secret: std::result::Result<Arc<[u8]>, String>,
+    decoded_secret: Arc<[u8]>,
 }
 
 impl PreparedApiCredentials {
-    pub fn new(credentials: ApiCredentials) -> Self {
+    pub fn try_new(credentials: ApiCredentials) -> Result<Self> {
         let decoded_secret = base64::engine::general_purpose::URL_SAFE
             .decode(&credentials.secret)
             .map(Into::into)
-            .map_err(|e| format!("Failed to decode base64 secret: {}", e));
+            .map_err(|e| PolyfillError::crypto(format!("Failed to decode base64 secret: {e}")))?;
 
-        Self {
+        Ok(Self {
             credentials,
             decoded_secret,
-        }
+        })
     }
 
     pub fn credentials(&self) -> &ApiCredentials {
@@ -91,10 +91,7 @@ impl HmacApiCredentials for PreparedApiCredentials {
     }
 
     fn decoded_secret_bytes(&self) -> Result<Cow<'_, [u8]>> {
-        match &self.decoded_secret {
-            Ok(decoded_secret) => Ok(Cow::Borrowed(decoded_secret.as_ref())),
-            Err(err) => Err(PolyfillError::crypto(err.clone())),
-        }
+        Ok(Cow::Borrowed(self.decoded_secret.as_ref()))
     }
 }
 

@@ -124,7 +124,7 @@ pub struct ClobClient {
 #[derive(Default)]
 struct ClientAuthConfig {
     signer: Option<PrivateKeySigner>,
-    api_creds: Option<ApiCreds>,
+    api_creds: Option<PreparedApiCredentials>,
     builder_code: Option<String>,
     sig_type: Option<crate::orders::SigType>,
     funder: Option<Address>,
@@ -162,14 +162,12 @@ impl ClobClient {
             .clone()
             .map(|signer| crate::orders::OrderBuilder::new(signer, auth.sig_type, auth.funder));
 
-        let api_creds = auth.api_creds.map(PreparedApiCredentials::new);
-
         Self {
             http_client,
             base_url: host.to_string(),
             chain_id,
             signer: auth.signer,
-            api_creds,
+            api_creds: auth.api_creds,
             builder_code: auth.builder_code,
             order_builder,
             connection_manager,
@@ -223,7 +221,10 @@ impl ClobClient {
             http_client,
             ClientAuthConfig {
                 signer,
-                api_creds: config.api_credentials,
+                api_creds: config
+                    .api_credentials
+                    .map(PreparedApiCredentials::try_new)
+                    .transpose()?,
                 builder_code: config.builder_code,
                 sig_type,
                 funder,
@@ -284,8 +285,9 @@ impl ClobClient {
     }
 
     /// Set API credentials
-    pub fn set_api_creds(&mut self, api_creds: ApiCreds) {
-        self.api_creds = Some(PreparedApiCredentials::new(api_creds));
+    pub fn set_api_creds(&mut self, api_creds: ApiCreds) -> Result<()> {
+        self.api_creds = Some(PreparedApiCredentials::try_new(api_creds)?);
+        Ok(())
     }
 
     /// Start background keep-alive to maintain warm connection
@@ -2637,13 +2639,52 @@ mod tests {
 
         let api_creds = ApiCredentials {
             api_key: "test_key".to_string(),
-            secret: "test_secret".to_string(),
+            secret: "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1".to_string(),
             passphrase: "test_passphrase".to_string(),
         };
 
-        client.set_api_creds(api_creds.clone());
+        client.set_api_creds(api_creds.clone()).unwrap();
         assert!(client.api_creds.is_some());
         assert_eq!(client.api_creds.unwrap().api_key, "test_key");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_from_config_rejects_invalid_api_secret() {
+        let api_creds = ApiCredentials {
+            api_key: "test_key".to_string(),
+            secret: "not valid base64!".to_string(),
+            passphrase: "test_passphrase".to_string(),
+        };
+
+        let err = match ClobClient::from_config(ClientConfig {
+            base_url: "https://test.example.com".to_string(),
+            chain: 137,
+            private_key: Some(
+                "0x1234567890123456789012345678901234567890123456789012345678901234".to_string(),
+            ),
+            api_credentials: Some(api_creds),
+            ..ClientConfig::default()
+        }) {
+            Ok(_) => panic!("expected invalid API credentials to fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("Failed to decode base64 secret"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_set_api_creds_rejects_invalid_api_secret() {
+        let mut client = create_test_client("https://test.example.com");
+        let api_creds = ApiCredentials {
+            api_key: "test_key".to_string(),
+            secret: "not valid base64!".to_string(),
+            passphrase: "test_passphrase".to_string(),
+        };
+
+        let err = client.set_api_creds(api_creds).unwrap_err();
+
+        assert!(client.api_creds.is_none());
+        assert!(err.to_string().contains("Failed to decode base64 secret"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
