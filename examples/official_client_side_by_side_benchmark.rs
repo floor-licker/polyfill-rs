@@ -32,6 +32,11 @@ struct Sample {
     count: usize,
 }
 
+struct RawHttpVariant {
+    name: &'static str,
+    client: reqwest::Client,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Stats {
     mean_ms: f64,
@@ -183,23 +188,6 @@ async fn time_official_cold(host: &str) -> Result<Sample, String> {
     })
 }
 
-async fn time_polyfill_raw(client: &ClobClient, url: &str) -> Result<Sample, String> {
-    let start = Instant::now();
-    let bytes = client
-        .http_client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?
-        .bytes()
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(Sample {
-        elapsed: start.elapsed(),
-        count: bytes.len(),
-    })
-}
-
 async fn time_reqwest_raw(client: &reqwest::Client, url: &str) -> Result<Sample, String> {
     let start = Instant::now();
     let bytes = client
@@ -252,41 +240,32 @@ async fn run_typed_pairs(
     (polyfill_times, official_times)
 }
 
-async fn run_raw_pairs(
-    polyfill_client: &ClobClient,
-    official_style_client: &reqwest::Client,
+async fn run_raw_warmups(variants: &[RawHttpVariant], url: &str, delay: Duration) {
+    for variant in variants {
+        let _ = time_reqwest_raw(&variant.client, url).await;
+        tokio::time::sleep(delay).await;
+    }
+}
+
+async fn run_raw_matrix(
+    variants: &[RawHttpVariant],
     url: &str,
     iterations: usize,
     delay: Duration,
-) -> (Vec<Duration>, Vec<Duration>) {
-    let mut polyfill_times = Vec::with_capacity(iterations);
-    let mut official_style_times = Vec::with_capacity(iterations);
+) -> Vec<Vec<Duration>> {
+    let mut samples = vec![Vec::with_capacity(iterations); variants.len()];
 
-    for i in 1..=iterations {
-        let polyfill_first = i % 2 == 1;
-        let (polyfill_result, official_style_result) = if polyfill_first {
-            let polyfill_result = time_polyfill_raw(polyfill_client, url).await;
+    for iteration in 0..iterations {
+        for offset in 0..variants.len() {
+            let idx = (iteration + offset) % variants.len();
+            if let Ok(sample) = time_reqwest_raw(&variants[idx].client, url).await {
+                samples[idx].push(sample.elapsed);
+            }
             tokio::time::sleep(delay).await;
-            let official_style_result = time_reqwest_raw(official_style_client, url).await;
-            (polyfill_result, official_style_result)
-        } else {
-            let official_style_result = time_reqwest_raw(official_style_client, url).await;
-            tokio::time::sleep(delay).await;
-            let polyfill_result = time_polyfill_raw(polyfill_client, url).await;
-            (polyfill_result, official_style_result)
-        };
-
-        if let Ok(sample) = polyfill_result {
-            polyfill_times.push(sample.elapsed);
         }
-        if let Ok(sample) = official_style_result {
-            official_style_times.push(sample.elapsed);
-        }
-
-        tokio::time::sleep(delay).await;
     }
 
-    (polyfill_times, official_style_times)
+    samples
 }
 
 async fn run_typed_warmups(
@@ -303,7 +282,7 @@ async fn run_typed_warmups(
     }
 }
 
-fn official_style_http_client() -> Result<reqwest::Client, reqwest::Error> {
+fn official_headers() -> reqwest::header::HeaderMap {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::USER_AGENT,
@@ -322,7 +301,84 @@ fn official_style_http_client() -> Result<reqwest::Client, reqwest::Error> {
         reqwest::header::HeaderValue::from_static("application/json"),
     );
 
-    reqwest::Client::builder().default_headers(headers).build()
+    headers
+}
+
+fn polyfill_headers() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static(concat!(
+            "polyfill-rs/",
+            env!("CARGO_PKG_VERSION")
+        )),
+    );
+    headers.insert(
+        reqwest::header::ACCEPT,
+        reqwest::header::HeaderValue::from_static("*/*"),
+    );
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+    headers
+}
+
+fn polyfill_tuned_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .no_proxy()
+        .http2_adaptive_window(true)
+        .http2_initial_stream_window_size(512 * 1024)
+        .tcp_nodelay(true)
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90))
+}
+
+fn polyfill_light_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .no_proxy()
+        .tcp_nodelay(true)
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90))
+}
+
+fn build_raw_http_variants(
+    polyfill_client: &ClobClient,
+) -> Result<Vec<RawHttpVariant>, reqwest::Error> {
+    Ok(vec![
+        RawHttpVariant {
+            name: "polyfill-rs actual HTTP",
+            client: polyfill_client.http_client.clone(),
+        },
+        RawHttpVariant {
+            name: "reqwest default",
+            client: reqwest::Client::builder().build()?,
+        },
+        RawHttpVariant {
+            name: "rs-clob-client-v2 headers",
+            client: reqwest::Client::builder()
+                .default_headers(official_headers())
+                .build()?,
+        },
+        RawHttpVariant {
+            name: "polyfill tuned + official headers",
+            client: polyfill_tuned_builder()
+                .default_headers(official_headers())
+                .build()?,
+        },
+        RawHttpVariant {
+            name: "polyfill tuned + polyfill headers",
+            client: polyfill_tuned_builder()
+                .default_headers(polyfill_headers())
+                .build()?,
+        },
+        RawHttpVariant {
+            name: "polyfill light no h2 tuning",
+            client: polyfill_light_builder()
+                .default_headers(polyfill_headers())
+                .build()?,
+        },
+    ])
 }
 
 fn parse_polyfill_once(bytes: &[u8]) -> BenchResult<Duration> {
@@ -398,7 +454,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let polyfill_client = ClobClient::new(&host);
     let official_client = OfficialClient::new(&host, OfficialConfig::default())?;
-    let official_style_http = official_style_http_client()?;
+    let raw_http_variants = build_raw_http_variants(&polyfill_client)?;
 
     if keepalive {
         polyfill_client
@@ -436,33 +492,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!();
 
-    println!("Steady state: network-only byte fetch");
+    println!("Steady state: network-only byte fetch transport matrix");
     println!("-------------------------------------------------------");
-    let _ = time_polyfill_raw(&polyfill_client, &url).await;
-    tokio::time::sleep(delay).await;
-    let _ = time_reqwest_raw(&official_style_http, &url).await;
-    tokio::time::sleep(delay).await;
-    let (polyfill_raw_times, official_style_raw_times) = run_raw_pairs(
-        &polyfill_client,
-        &official_style_http,
-        &url,
-        iterations,
-        delay,
-    )
-    .await;
-    print_stats(
-        "polyfill-rs HTTP",
-        calc_stats(&polyfill_raw_times),
-        polyfill_raw_times.len(),
-        iterations,
-    );
-    println!();
-    print_stats(
-        "rs-clob-client-v2-style HTTP",
-        calc_stats(&official_style_raw_times),
-        official_style_raw_times.len(),
-        iterations,
-    );
+    run_raw_warmups(&raw_http_variants, &url, delay).await;
+    let raw_samples = run_raw_matrix(&raw_http_variants, &url, iterations, delay).await;
+    for (variant, samples) in raw_http_variants.iter().zip(raw_samples.iter()) {
+        print_stats(variant.name, calc_stats(samples), samples.len(), iterations);
+        println!();
+    }
     println!();
 
     println!("CPU-only parse from cached payload");
