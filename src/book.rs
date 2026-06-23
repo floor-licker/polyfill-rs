@@ -208,11 +208,11 @@ pub struct OrderBook {
     /// Snapshot generation used to retain book levels without rescanning input payloads.
     snapshot_generation: u64,
 
-    /// Last accepted full-book snapshot hash, when the feed provides one.
+    /// Last accepted full-book snapshot hash fingerprint, when the feed provides one.
     ///
     /// This is used as a tie-breaker for same-millisecond snapshots. If the timestamp is equal
-    /// but the hash differs, the snapshot can still represent a newer book state.
-    last_snapshot_hash: Option<String>,
+    /// but the hash fingerprint differs, the snapshot can still represent a newer book state.
+    last_snapshot_hash_fingerprint: Option<u64>,
 
     /// Minimum tick size for this market in ticks (like 10 for $0.001 increments)
     /// Some markets only allow certain price increments
@@ -255,7 +255,7 @@ impl OrderBook {
             bids: BookSide::new(BookSideKind::Bid, max_depth), // Empty to start
             asks: BookSide::new(BookSideKind::Ask, max_depth), // Empty to start
             snapshot_generation: 0,
-            last_snapshot_hash: None,
+            last_snapshot_hash_fingerprint: None,
             tick_size_ticks: None, // We'll set this later when we learn about the market
             max_depth,
         }
@@ -620,7 +620,7 @@ impl OrderBook {
         }
 
         self.last_snapshot_timestamp_ms = update.timestamp;
-        self.last_snapshot_hash = update.hash.clone();
+        self.last_snapshot_hash_fingerprint = update.hash.as_deref().map(snapshot_hash_fingerprint);
         self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(update.timestamp as i64)
             .unwrap_or_else(Utc::now);
         self.begin_snapshot();
@@ -730,7 +730,9 @@ impl OrderBook {
             return false;
         }
 
-        hash.is_some_and(|hash| self.last_snapshot_hash.as_deref() != Some(hash))
+        hash.is_some_and(|hash| {
+            self.last_snapshot_hash_fingerprint != Some(snapshot_hash_fingerprint(hash))
+        })
     }
 
     #[inline]
@@ -769,7 +771,7 @@ impl OrderBook {
         }
 
         self.last_snapshot_timestamp_ms = timestamp;
-        self.last_snapshot_hash = hash.map(str::to_owned);
+        self.last_snapshot_hash_fingerprint = hash.map(snapshot_hash_fingerprint);
         self.timestamp = chrono::DateTime::<Utc>::from_timestamp_millis(timestamp as i64)
             .unwrap_or_else(Utc::now);
         self.begin_snapshot();
@@ -1003,6 +1005,16 @@ pub struct OrderBookManager {
 #[derive(Debug, Default)]
 struct BookShard {
     books: RwLock<HashMap<String, OrderBook>>,
+}
+
+#[inline]
+fn snapshot_hash_fingerprint(hash: &str) -> u64 {
+    let mut fingerprint = 0xcbf2_9ce4_8422_2325u64;
+    for &byte in hash.as_bytes() {
+        fingerprint ^= byte as u64;
+        fingerprint = fingerprint.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    fingerprint
 }
 
 #[inline]

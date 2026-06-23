@@ -182,6 +182,50 @@ fn ws_book_message(
     json.into_bytes()
 }
 
+fn ws_book_message_with_hash(
+    asset_id: &str,
+    timestamp: u64,
+    hash: &str,
+    bid_ticks: &[i64],
+    ask_ticks: &[i64],
+) -> Vec<u8> {
+    let mut json =
+        String::with_capacity(190 + hash.len() + (bid_ticks.len() + ask_ticks.len()) * 40);
+    write!(
+        &mut json,
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":{timestamp},\"hash\":\"{hash}\",\"bids\":["
+    )
+    .unwrap();
+
+    for (idx, price_ticks) in bid_ticks.iter().enumerate() {
+        if idx > 0 {
+            json.push(',');
+        }
+        write!(
+            &mut json,
+            "{{\"price\":\"{}\",\"size\":\"100.0000\"}}",
+            Decimal::new(*price_ticks, 4)
+        )
+        .unwrap();
+    }
+
+    json.push_str("],\"asks\":[");
+    for (idx, price_ticks) in ask_ticks.iter().enumerate() {
+        if idx > 0 {
+            json.push(',');
+        }
+        write!(
+            &mut json,
+            "{{\"price\":\"{}\",\"size\":\"100.0000\"}}",
+            Decimal::new(*price_ticks, 4)
+        )
+        .unwrap();
+    }
+
+    json.push_str("]}");
+    json.into_bytes()
+}
+
 fn contiguous_ticks(start: i64, len: usize, step: i64) -> Vec<i64> {
     (0..len).map(|idx| start + (idx as i64 * step)).collect()
 }
@@ -401,6 +445,30 @@ fn no_alloc_ws_book_update_processor_apply_existing_levels() {
     .into_bytes();
 
     // Warm up allocator-counter TLS access before measuring (defensive).
+    let _ = heap_operation_count();
+
+    let guard = NoHeapTrafficGuard::new();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
+    guard.assert_no_heap_traffic();
+}
+
+#[test]
+fn no_alloc_ws_book_update_processor_same_timestamp_hash_change() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+    seed_book_levels(&manager, asset_id, &[7500], &[7600]);
+
+    let mut processor = WsBookUpdateProcessor::new(4096);
+    let mut warmup_msg = ws_book_message_with_hash(asset_id, 10, "hash_a", &[7500], &[7600]);
+    processor
+        .process_bytes(warmup_msg.as_mut_slice(), &manager)
+        .unwrap();
+
+    let mut msg = ws_book_message_with_hash(asset_id, 10, "hash_b", &[7500], &[7600]);
+
     let _ = heap_operation_count();
 
     let guard = NoHeapTrafficGuard::new();
