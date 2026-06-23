@@ -909,15 +909,9 @@ pub struct BookUpdate {
     pub market: String,
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub timestamp: u64,
-    #[serde(
-        default,
-        deserialize_with = "crate::decode::deserializers::vec_from_null"
-    )]
+    #[serde(deserialize_with = "crate::decode::deserializers::vec_from_null")]
     pub bids: Vec<OrderSummary>,
-    #[serde(
-        default,
-        deserialize_with = "crate::decode::deserializers::vec_from_null"
-    )]
+    #[serde(deserialize_with = "crate::decode::deserializers::vec_from_null")]
     pub asks: Vec<OrderSummary>,
     #[serde(default)]
     pub hash: Option<String>,

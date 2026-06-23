@@ -705,4 +705,17 @@ mod tests {
         let results: Vec<serde_json::Value> = decoder.parse_json_stream(data).unwrap();
         assert_eq!(results.len(), 2);
     }
+
+    #[test]
+    fn stream_book_message_requires_bids_and_asks() {
+        let missing_asks = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1000,"bids":[]}"#;
+        assert!(parse_stream_messages_bytes(missing_asks).is_err());
+
+        let missing_bids = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1000,"asks":[]}"#;
+        assert!(parse_stream_messages_bytes(missing_bids).is_err());
+
+        let empty_sides = br#"{"event_type":"book","asset_id":"test_asset_id","market":"0xabc","timestamp":1000,"bids":[],"asks":[]}"#;
+        let messages = parse_stream_messages_bytes(empty_sides).unwrap();
+        assert_eq!(messages.len(), 1);
+    }
 }

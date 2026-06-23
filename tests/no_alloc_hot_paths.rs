@@ -1,6 +1,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
+use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
@@ -11,28 +12,29 @@ use polyfill_rs::{
 use rust_decimal::Decimal;
 
 thread_local! {
-    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+    static HEAP_OPERATIONS: Cell<usize> = const { Cell::new(0) };
 }
 
 struct CountingAllocator;
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        HEAP_OPERATIONS.with(|count| count.set(count.get() + 1));
         System.alloc(layout)
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        HEAP_OPERATIONS.with(|count| count.set(count.get() + 1));
         System.alloc_zeroed(layout)
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCATIONS.with(|count| count.set(count.get() + 1));
+        HEAP_OPERATIONS.with(|count| count.set(count.get() + 1));
         System.realloc(ptr, layout, new_size)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        HEAP_OPERATIONS.with(|count| count.set(count.get() + 1));
         System.dealloc(ptr, layout)
     }
 }
@@ -40,30 +42,43 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-fn allocation_count() -> usize {
-    ALLOCATIONS.with(|count| count.get())
+fn heap_operation_count() -> usize {
+    HEAP_OPERATIONS.with(|count| count.get())
 }
 
-struct NoAllocGuard {
+struct NoHeapTrafficGuard {
     before: usize,
 }
 
-impl NoAllocGuard {
+impl NoHeapTrafficGuard {
     fn new() -> Self {
         Self {
-            before: allocation_count(),
+            before: heap_operation_count(),
         }
     }
 
-    fn assert_no_allocations(self) {
-        let after = allocation_count();
+    fn assert_no_heap_traffic(self) {
+        let after = heap_operation_count();
         assert_eq!(
             after,
             self.before,
-            "expected no heap allocations, but saw {} allocation(s)",
+            "expected no heap traffic, but saw {} allocator operation(s)",
             after - self.before
         );
     }
+}
+
+#[test]
+fn allocator_counter_tracks_deallocations() {
+    let vec = Vec::<u8>::with_capacity(1024);
+    let before = heap_operation_count();
+    drop(vec);
+    let after = heap_operation_count();
+
+    assert!(
+        after > before,
+        "expected dropping an allocated Vec to count as heap traffic"
+    );
 }
 
 fn token_id_hash(token_id: &str) -> u64 {
@@ -89,6 +104,88 @@ fn mk_delta(
     }
 }
 
+fn seed_book_levels(
+    manager: &OrderBookManager,
+    asset_id: &str,
+    bid_ticks: &[i64],
+    ask_ticks: &[i64],
+) {
+    let mut sequence = 1u64;
+    for &price_ticks in bid_ticks {
+        manager
+            .apply_delta(polyfill_rs::types::OrderDelta {
+                token_id: asset_id.to_string(),
+                timestamp: chrono::Utc::now(),
+                side: Side::BUY,
+                price: Decimal::new(price_ticks, 4),
+                size: Decimal::from_str("100.0").unwrap(),
+                sequence,
+            })
+            .unwrap();
+        sequence += 1;
+    }
+
+    for &price_ticks in ask_ticks {
+        manager
+            .apply_delta(polyfill_rs::types::OrderDelta {
+                token_id: asset_id.to_string(),
+                timestamp: chrono::Utc::now(),
+                side: Side::SELL,
+                price: Decimal::new(price_ticks, 4),
+                size: Decimal::from_str("100.0").unwrap(),
+                sequence,
+            })
+            .unwrap();
+        sequence += 1;
+    }
+}
+
+fn ws_book_message(
+    asset_id: &str,
+    timestamp: u64,
+    bid_ticks: &[i64],
+    ask_ticks: &[i64],
+) -> Vec<u8> {
+    let mut json = String::with_capacity(160 + (bid_ticks.len() + ask_ticks.len()) * 40);
+    write!(
+        &mut json,
+        "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":{timestamp},\"bids\":["
+    )
+    .unwrap();
+
+    for (idx, price_ticks) in bid_ticks.iter().enumerate() {
+        if idx > 0 {
+            json.push(',');
+        }
+        write!(
+            &mut json,
+            "{{\"price\":\"{}\",\"size\":\"100.0000\"}}",
+            Decimal::new(*price_ticks, 4)
+        )
+        .unwrap();
+    }
+
+    json.push_str("],\"asks\":[");
+    for (idx, price_ticks) in ask_ticks.iter().enumerate() {
+        if idx > 0 {
+            json.push(',');
+        }
+        write!(
+            &mut json,
+            "{{\"price\":\"{}\",\"size\":\"100.0000\"}}",
+            Decimal::new(*price_ticks, 4)
+        )
+        .unwrap();
+    }
+
+    json.push_str("]}");
+    json.into_bytes()
+}
+
+fn contiguous_ticks(start: i64, len: usize, step: i64) -> Vec<i64> {
+    (0..len).map(|idx| start + (idx as i64 * step)).collect()
+}
+
 #[test]
 fn no_alloc_mid_and_spread_fast() {
     let token_id = "test_token";
@@ -101,15 +198,15 @@ fn no_alloc_mid_and_spread_fast() {
     book.apply_delta_fast(mk_delta(token_hash, Side::SELL, 7600, 1_000_000, 2))
         .unwrap();
 
-    // Warm up TLS access before measuring (defensive).
-    let _ = allocation_count();
+    // Warm up allocator-counter TLS access before measuring (defensive).
+    let _ = heap_operation_count();
 
-    let guard = NoAllocGuard::new();
+    let guard = NoHeapTrafficGuard::new();
     assert!(book.best_bid_fast().is_some());
     assert!(book.best_ask_fast().is_some());
     assert!(book.spread_fast().is_some());
     assert!(book.mid_price_fast().is_some());
-    guard.assert_no_allocations();
+    guard.assert_no_heap_traffic();
 }
 
 #[test]
@@ -134,9 +231,9 @@ fn no_alloc_book_analysis_fast_paths() {
     let expected_buy_liquidity = Decimal::from_str("200.0").unwrap();
     let expected_sell_liquidity = Decimal::from_str("150.0").unwrap();
 
-    let _ = allocation_count();
+    let _ = heap_operation_count();
 
-    let guard = NoAllocGuard::new();
+    let guard = NoHeapTrafficGuard::new();
     let impact = book
         .calculate_market_impact(Side::BUY, impact_size)
         .unwrap();
@@ -150,7 +247,7 @@ fn no_alloc_book_analysis_fast_paths() {
         expected_sell_liquidity
     );
     assert!(book.is_valid());
-    guard.assert_no_allocations();
+    guard.assert_no_heap_traffic();
 }
 
 #[test]
@@ -163,14 +260,14 @@ fn no_alloc_apply_delta_fast_existing_level_update() {
     book.apply_delta_fast(mk_delta(token_hash, Side::BUY, 7500, 1_000_000, 1))
         .unwrap();
 
-    // Warm up TLS access before measuring (defensive).
-    let _ = allocation_count();
+    // Warm up allocator-counter TLS access before measuring (defensive).
+    let _ = heap_operation_count();
 
-    let guard = NoAllocGuard::new();
-    // Updating an existing level should not require heap allocation.
+    let guard = NoHeapTrafficGuard::new();
+    // Updating an existing level should not touch the heap allocator.
     book.apply_delta_fast(mk_delta(token_hash, Side::BUY, 7500, 2_000_000, 2))
         .unwrap();
-    guard.assert_no_allocations();
+    guard.assert_no_heap_traffic();
 }
 
 #[test]
@@ -200,12 +297,12 @@ fn no_alloc_apply_book_update_existing_levels() {
         hash: None,
     };
 
-    // Warm up TLS access before measuring (defensive).
-    let _ = allocation_count();
+    // Warm up allocator-counter TLS access before measuring (defensive).
+    let _ = heap_operation_count();
 
-    let guard = NoAllocGuard::new();
+    let guard = NoHeapTrafficGuard::new();
     book.apply_book_update(&update).unwrap();
-    guard.assert_no_allocations();
+    guard.assert_no_heap_traffic();
 }
 
 #[test]
@@ -214,7 +311,7 @@ fn no_alloc_book_manager_apply_book_update_existing_levels() {
     let manager = OrderBookManager::new(100);
     manager.get_or_create_book(asset_id).unwrap();
 
-    // Warm up the internal book with initial levels (allocations allowed).
+    // Warm up the internal book with initial levels (allocator traffic allowed).
     manager
         .apply_delta(polyfill_rs::types::OrderDelta {
             token_id: asset_id.to_string(),
@@ -251,12 +348,12 @@ fn no_alloc_book_manager_apply_book_update_existing_levels() {
         hash: None,
     };
 
-    // Warm up TLS access before measuring (defensive).
-    let _ = allocation_count();
+    // Warm up allocator-counter TLS access before measuring (defensive).
+    let _ = heap_operation_count();
 
-    let guard = NoAllocGuard::new();
+    let guard = NoHeapTrafficGuard::new();
     manager.apply_book_update(&update).unwrap();
-    guard.assert_no_allocations();
+    guard.assert_no_heap_traffic();
 }
 
 #[test]
@@ -265,7 +362,7 @@ fn no_alloc_ws_book_update_processor_apply_existing_levels() {
     let manager = OrderBookManager::new(100);
     manager.get_or_create_book(asset_id).unwrap();
 
-    // Warm up the internal book with initial levels (allocations allowed).
+    // Warm up the internal book with initial levels (allocator traffic allowed).
     manager
         .apply_delta(polyfill_rs::types::OrderDelta {
             token_id: asset_id.to_string(),
@@ -303,23 +400,110 @@ fn no_alloc_ws_book_update_processor_apply_existing_levels() {
     )
     .into_bytes();
 
-    // Warm up TLS access before measuring (defensive).
-    let _ = allocation_count();
+    // Warm up allocator-counter TLS access before measuring (defensive).
+    let _ = heap_operation_count();
 
-    let guard = NoAllocGuard::new();
+    let guard = NoHeapTrafficGuard::new();
     processor
         .process_bytes(msg.as_mut_slice(), &manager)
         .unwrap();
-    guard.assert_no_allocations();
+    guard.assert_no_heap_traffic();
 }
 
 #[test]
-fn no_alloc_websocket_book_applier_apply_text_message_existing_levels() {
+fn no_alloc_ws_book_update_processor_one_new_level_with_reserved_capacity() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+    seed_book_levels(&manager, asset_id, &[7500], &[7600]);
+
+    let mut processor = WsBookUpdateProcessor::new(4096);
+    let mut warmup_msg = ws_book_message(asset_id, 10, &[7500], &[7600]);
+    processor
+        .process_bytes(warmup_msg.as_mut_slice(), &manager)
+        .unwrap();
+    let mut parser_capacity_warmup = ws_book_message(asset_id, 10, &[7500, 7400], &[7600]);
+    processor
+        .process_bytes(parser_capacity_warmup.as_mut_slice(), &manager)
+        .unwrap();
+
+    let mut msg = ws_book_message(asset_id, 11, &[7500, 7400], &[7600]);
+
+    let _ = heap_operation_count();
+
+    let guard = NoHeapTrafficGuard::new();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
+    guard.assert_no_heap_traffic();
+}
+
+#[test]
+fn no_alloc_ws_book_update_processor_one_removed_level() {
+    let asset_id = "test_asset_id";
+    let manager = OrderBookManager::new(100);
+    manager.get_or_create_book(asset_id).unwrap();
+    seed_book_levels(&manager, asset_id, &[7500, 7400], &[7600]);
+
+    let mut processor = WsBookUpdateProcessor::new(4096);
+    let mut warmup_msg = ws_book_message(asset_id, 10, &[7500, 7400], &[7600]);
+    processor
+        .process_bytes(warmup_msg.as_mut_slice(), &manager)
+        .unwrap();
+
+    let mut msg = ws_book_message(asset_id, 11, &[7500], &[7600]);
+
+    let _ = heap_operation_count();
+
+    let guard = NoHeapTrafficGuard::new();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
+    guard.assert_no_heap_traffic();
+}
+
+#[test]
+fn ws_book_update_processor_full_churn_64_levels_touches_allocator() {
+    let asset_id = "test_asset_id";
+    let levels_per_side = 64;
+    let manager = OrderBookManager::new(levels_per_side);
+    manager.get_or_create_book(asset_id).unwrap();
+
+    let initial_bids = contiguous_ticks(7500, levels_per_side, -1);
+    let initial_asks = contiguous_ticks(7600, levels_per_side, 1);
+    seed_book_levels(&manager, asset_id, &initial_bids, &initial_asks);
+
+    let mut warmup_msg = ws_book_message(asset_id, 1000, &initial_bids, &initial_asks);
+    let mut processor = WsBookUpdateProcessor::new(warmup_msg.len());
+    processor
+        .process_bytes(warmup_msg.as_mut_slice(), &manager)
+        .unwrap();
+
+    let churn_bids = contiguous_ticks(7300, levels_per_side, -1);
+    let churn_asks = contiguous_ticks(7800, levels_per_side, 1);
+    let mut msg = ws_book_message(asset_id, 1001, &churn_bids, &churn_asks);
+
+    let _ = heap_operation_count();
+
+    let before = heap_operation_count();
+    processor
+        .process_bytes(msg.as_mut_slice(), &manager)
+        .unwrap();
+    let after = heap_operation_count();
+
+    assert!(
+        after > before,
+        "expected 64-level full churn to touch the allocator while old and new levels coexist"
+    );
+}
+
+#[test]
+fn no_alloc_websocket_book_applier_apply_bytes_message_existing_levels() {
     let asset_id = "test_asset_id";
     let manager = OrderBookManager::new(100);
     manager.get_or_create_book(asset_id).unwrap();
 
-    // Warm up the internal book with initial levels (allocations allowed).
+    // Warm up the internal book with initial levels (allocator traffic allowed).
     manager
         .apply_delta(polyfill_rs::types::OrderDelta {
             token_id: asset_id.to_string(),
@@ -346,19 +530,23 @@ fn no_alloc_websocket_book_applier_apply_text_message_existing_levels() {
     let mut applier = stream.into_book_applier(&manager, processor);
 
     // Warm up simd-json buffers/tape outside the guarded section.
-    let warmup_msg = format!(
+    let mut warmup_msg = format!(
         "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":10,\"bids\":[{{\"price\":\"0.75\",\"size\":\"200.0\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"50.0\"}}]}}"
-    );
-    applier.apply_text_message(warmup_msg).unwrap();
+    )
+    .into_bytes();
+    applier
+        .apply_bytes_message(warmup_msg.as_mut_slice())
+        .unwrap();
 
-    let msg = format!(
+    let mut msg = format!(
         "{{\"event_type\":\"book\",\"asset_id\":\"{asset_id}\",\"market\":\"0xabc\",\"timestamp\":11,\"bids\":[{{\"price\":\"0.75\",\"size\":\"150.0\"}}],\"asks\":[{{\"price\":\"0.76\",\"size\":\"75.0\"}}]}}"
-    );
+    )
+    .into_bytes();
 
-    // Warm up TLS access before measuring (defensive).
-    let _ = allocation_count();
+    // Warm up allocator-counter TLS access before measuring (defensive).
+    let _ = heap_operation_count();
 
-    let guard = NoAllocGuard::new();
-    applier.apply_text_message(msg).unwrap();
-    guard.assert_no_allocations();
+    let guard = NoHeapTrafficGuard::new();
+    applier.apply_bytes_message(msg.as_mut_slice()).unwrap();
+    guard.assert_no_heap_traffic();
 }
