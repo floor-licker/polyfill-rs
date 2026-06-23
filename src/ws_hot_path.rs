@@ -385,6 +385,8 @@ mod tests {
 
         let snapshot = books.get_book("test_asset_id").unwrap();
         assert_eq!(snapshot.sequence, 0);
+        assert_eq!(snapshot.last_delta_sequence, 0);
+        assert_eq!(snapshot.last_snapshot_timestamp_ms, 1000);
         assert_eq!(snapshot.timestamp.timestamp_millis(), 1000);
         assert_eq!(snapshot.bids.len(), 1);
         assert_eq!(snapshot.asks.len(), 1);
@@ -423,6 +425,8 @@ mod tests {
 
         let snapshot = books.get_book("test_asset_id").unwrap();
         assert_eq!(snapshot.sequence, 0);
+        assert_eq!(snapshot.last_delta_sequence, 0);
+        assert_eq!(snapshot.last_snapshot_timestamp_ms, 1000);
         assert_eq!(snapshot.timestamp.timestamp_millis(), 1000);
         assert_eq!(snapshot.bids.len(), 1);
         assert_eq!(snapshot.asks.len(), 1);
@@ -450,6 +454,8 @@ mod tests {
 
         let snapshot = books.get_book("test_asset_id").unwrap();
         assert_eq!(snapshot.sequence, 0);
+        assert_eq!(snapshot.last_delta_sequence, 0);
+        assert_eq!(snapshot.last_snapshot_timestamp_ms, 1000);
         assert_eq!(snapshot.timestamp.timestamp_millis(), 1000);
         assert_eq!(snapshot.bids[0].price, dec!(0.51));
         assert_eq!(snapshot.bids[0].size, dec!(11));

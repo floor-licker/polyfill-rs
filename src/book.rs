@@ -460,6 +460,8 @@ impl OrderBook {
             bids: self.bids(None), // Get all bids (up to max_depth)
             asks: self.asks(None), // Get all asks (up to max_depth)
             sequence: self.last_delta_sequence,
+            last_delta_sequence: self.last_delta_sequence,
+            last_snapshot_timestamp_ms: self.last_snapshot_timestamp_ms,
         }
     }
 
@@ -599,9 +601,10 @@ impl OrderBook {
             return Err(PolyfillError::validation("Token ID mismatch"));
         }
 
-        // Use the exchange-provided timestamp as the monotonic snapshot marker.
-        // If the feed emits two snapshots in the same millisecond, a different hash is treated as
-        // a distinct newer state. Equal timestamp without a hash is considered duplicate/stale.
+        // Use the exchange-provided timestamp as the primary snapshot marker. The WS `book`
+        // message does not expose a monotonic server sequence/version, so same-millisecond
+        // snapshots with different hashes are ordered by websocket arrival order. The hash
+        // distinguishes duplicate vs distinct state; it is not a logical ordering key.
         // Snapshot timestamps are intentionally separate from legacy delta sequence numbers.
         if !self.should_apply_snapshot(update.timestamp, update.hash.as_deref()) {
             return Ok(());
@@ -723,6 +726,8 @@ impl OrderBook {
 
     #[inline]
     fn should_apply_snapshot(&self, timestamp: u64, hash: Option<&str>) -> bool {
+        // Without a server sequence/version, equal-timestamp distinct hashes can only be ordered
+        // by arrival. Older timestamps are always stale; exact same timestamp/hash is duplicate.
         if timestamp > self.last_snapshot_timestamp_ms {
             return true;
         }
@@ -1526,6 +1531,11 @@ mod tests {
         assert_eq!(book.last_snapshot_timestamp_ms, 1_000);
         assert_eq!(book.best_bid().unwrap().price, dec!(0.50));
         assert_eq!(book.best_ask().unwrap().price, dec!(0.60));
+
+        let snapshot = book.snapshot();
+        assert_eq!(snapshot.sequence, 10_000);
+        assert_eq!(snapshot.last_delta_sequence, 10_000);
+        assert_eq!(snapshot.last_snapshot_timestamp_ms, 1_000);
     }
 
     #[test]
