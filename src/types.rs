@@ -79,17 +79,51 @@ pub const MAX_QTY: Qty = Qty::MAX / 2; // Leave room for intermediate calculatio
 // and our internal fixed-point representation. They're designed to be fast
 // and handle edge cases gracefully.
 
-/// Convert a Decimal price to fixed-point ticks
+/// Convert a Decimal price to fixed-point ticks exactly.
 ///
-/// This is called when we receive price data from the API or user input.
-/// We quantize the price to the nearest tick to ensure all prices are
-/// aligned to our internal representation.
+/// This rejects values that cannot be represented exactly at our 4-decimal
+/// fixed-point scale. Use this for validation and market-data ingress.
 ///
 /// Examples:
 /// - decimal_to_price(Decimal::from_str("0.6543")) = Ok(6543)
 /// - decimal_to_price(Decimal::from_str("1.0000")) = Ok(10000)
-/// - decimal_to_price(Decimal::from_str("0.00005")) = Ok(1) // Rounds up to min tick
+/// - decimal_to_price(Decimal::from_str("0.00005")) = Err(...)
 pub fn decimal_to_price(decimal: Decimal) -> std::result::Result<Price, &'static str> {
+    decimal_to_price_exact(decimal)
+}
+
+/// Convert a Decimal price to fixed-point ticks exactly.
+///
+/// This rejects fractional ticks instead of rounding and rejects values outside
+/// the valid price range instead of clamping.
+pub fn decimal_to_price_exact(decimal: Decimal) -> std::result::Result<Price, &'static str> {
+    let scaled = decimal * Decimal::from(SCALE_FACTOR);
+
+    let ticks = scaled
+        .to_u32()
+        .ok_or("Price too large, negative, or fractional")?;
+
+    if Decimal::from(ticks) != scaled {
+        return Err("Price is not exactly representable at 4 decimal places");
+    }
+    if ticks < MIN_PRICE_TICKS {
+        return Err("Price below minimum");
+    }
+
+    Ok(ticks)
+}
+
+/// Convert a Decimal price to fixed-point ticks with rounding and clamping.
+///
+/// This is appropriate for UI/ergonomic input paths where quantizing to the
+/// nearest internal tick is desired. Do not use it for validation or market-data
+/// ingress.
+///
+/// Examples:
+/// - decimal_to_price_lossy(Decimal::from_str("0.65434")) = Ok(6543)
+/// - decimal_to_price_lossy(Decimal::from_str("0.65435")) = Ok(6544)
+/// - decimal_to_price_lossy(Decimal::from_str("0.00005")) = Ok(1)
+pub fn decimal_to_price_lossy(decimal: Decimal) -> std::result::Result<Price, &'static str> {
     // Convert to fixed-point by multiplying by scale factor
     let scaled = decimal * Decimal::from(SCALE_FACTOR);
 
@@ -113,7 +147,7 @@ pub fn decimal_to_price(decimal: Decimal) -> std::result::Result<Price, &'static
 /// Convert fixed-point ticks back to Decimal price
 ///
 /// This is called when we need to return price data to the API or display to users.
-/// It's the inverse of decimal_to_price().
+/// It's the inverse of decimal_to_price_exact().
 ///
 /// Examples:
 /// - price_to_decimal(6543) = Decimal::from_str("0.6543")
@@ -163,13 +197,13 @@ pub fn qty_to_decimal(units: Qty) -> Decimal {
 /// converts cleanly to our internal representation.
 pub fn is_price_tick_aligned(decimal: Decimal, tick_size_decimal: Decimal) -> bool {
     // Convert tick size to our internal representation
-    let tick_size_ticks = match decimal_to_price(tick_size_decimal) {
+    let tick_size_ticks = match decimal_to_price_exact(tick_size_decimal) {
         Ok(ticks) => ticks,
         Err(_) => return false,
     };
 
     // Convert the price to ticks
-    let price_ticks = match decimal_to_price(decimal) {
+    let price_ticks = match decimal_to_price_exact(decimal) {
         Ok(ticks) => ticks,
         Err(_) => return false,
     };
@@ -304,7 +338,7 @@ impl FastBookLevel {
     /// Create from external BookLevel (with validation)
     /// This is called when we receive data from the API
     pub fn from_book_level(level: &BookLevel) -> std::result::Result<Self, &'static str> {
-        let price = decimal_to_price(level.price)?;
+        let price = decimal_to_price_exact(level.price)?;
         let size = decimal_to_qty(level.size)?;
         Ok(Self::new(price, size))
     }
@@ -390,7 +424,7 @@ impl FastOrderDelta {
         }
 
         // Convert to fixed-point with validation
-        let price = decimal_to_price(delta.price)?;
+        let price = decimal_to_price_exact(delta.price)?;
         let size = decimal_to_qty(delta.size)?;
 
         // Hash the token_id for fast lookups
@@ -1823,3 +1857,69 @@ pub type Result<T> = std::result::Result<T, crate::errors::PolyfillError>;
 
 // Type aliases for 100% compatibility with baseline implementation
 pub type ApiCreds = ApiCredentials;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn decimal_to_price_exact_accepts_representable_prices() {
+        assert_eq!(
+            decimal_to_price_exact(Decimal::from_str("0.6543").unwrap()).unwrap(),
+            6543
+        );
+        assert_eq!(
+            decimal_to_price_exact(Decimal::from_str("1.0000").unwrap()).unwrap(),
+            10_000
+        );
+        assert_eq!(
+            decimal_to_price(Decimal::from_str("0.0001").unwrap()).unwrap(),
+            MIN_PRICE_TICKS
+        );
+    }
+
+    #[test]
+    fn decimal_to_price_exact_rejects_fractional_or_clamped_prices() {
+        assert!(decimal_to_price_exact(Decimal::from_str("0.00005").unwrap()).is_err());
+        assert!(decimal_to_price_exact(Decimal::from_str("0.00009").unwrap()).is_err());
+        assert!(decimal_to_price_exact(Decimal::ZERO).is_err());
+        assert!(decimal_to_price_exact(Decimal::from_str("-0.01").unwrap()).is_err());
+    }
+
+    #[test]
+    fn decimal_to_price_lossy_preserves_rounding_and_clamping_behavior() {
+        assert_eq!(
+            decimal_to_price_lossy(Decimal::from_str("0.65434").unwrap()).unwrap(),
+            6543
+        );
+        assert_eq!(
+            decimal_to_price_lossy(Decimal::from_str("0.65435").unwrap()).unwrap(),
+            6544
+        );
+        assert_eq!(
+            decimal_to_price_lossy(Decimal::from_str("0.00005").unwrap()).unwrap(),
+            MIN_PRICE_TICKS
+        );
+    }
+
+    #[test]
+    fn price_tick_alignment_uses_exact_conversion() {
+        assert!(is_price_tick_aligned(
+            Decimal::from_str("0.5100").unwrap(),
+            Decimal::from_str("0.0100").unwrap()
+        ));
+        assert!(!is_price_tick_aligned(
+            Decimal::from_str("0.5150").unwrap(),
+            Decimal::from_str("0.0100").unwrap()
+        ));
+        assert!(!is_price_tick_aligned(
+            Decimal::from_str("0.51005").unwrap(),
+            Decimal::from_str("0.0100").unwrap()
+        ));
+        assert!(!is_price_tick_aligned(
+            Decimal::from_str("0.5100").unwrap(),
+            Decimal::from_str("0.00005").unwrap()
+        ));
+    }
+}

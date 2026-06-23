@@ -265,7 +265,7 @@ impl OrderBook {
     /// This tells us the minimum price increment allowed
     /// We store it in ticks for fast validation without conversion overhead
     pub fn set_tick_size(&mut self, tick_size: Decimal) -> Result<()> {
-        let tick_size_ticks = decimal_to_price(tick_size)
+        let tick_size_ticks = decimal_to_price_exact(tick_size)
             .map_err(|_| PolyfillError::validation("Invalid tick size"))?;
         self.tick_size_ticks = Some(tick_size_ticks);
         Ok(())
@@ -655,7 +655,7 @@ impl OrderBook {
     #[allow(dead_code)]
     fn apply_bid_delta(&mut self, price: Decimal, size: Decimal) {
         // Convert to fixed-point (this should be rare since we use fast path)
-        let price_ticks = decimal_to_price(price).unwrap_or(0);
+        let price_ticks = decimal_to_price_lossy(price).unwrap_or(0);
         let size_units = decimal_to_qty(size).unwrap_or(0);
         self.apply_bid_delta_fast(price_ticks, size_units);
     }
@@ -667,7 +667,7 @@ impl OrderBook {
     #[allow(dead_code)]
     fn apply_ask_delta(&mut self, price: Decimal, size: Decimal) {
         // Convert to fixed-point (this should be rare since we use fast path)
-        let price_ticks = decimal_to_price(price).unwrap_or(0);
+        let price_ticks = decimal_to_price_lossy(price).unwrap_or(0);
         let size_units = decimal_to_qty(size).unwrap_or(0);
         self.apply_ask_delta_fast(price_ticks, size_units);
     }
@@ -735,7 +735,7 @@ impl OrderBook {
 
     #[inline]
     fn parse_snapshot_summary(&self, side: Side, level: &OrderSummary) -> Result<ParsedBookLevel> {
-        let price_ticks = decimal_to_price(level.price)
+        let price_ticks = decimal_to_price_exact(level.price)
             .map_err(|_| PolyfillError::validation("Invalid price"))?;
         let size_units =
             decimal_to_qty(level.size).map_err(|_| PolyfillError::validation("Invalid size"))?;
@@ -872,7 +872,7 @@ impl OrderBook {
     /// Tells you how much you can buy/sell at exactly this price
     pub fn liquidity_at_price(&self, price: Decimal, side: Side) -> Decimal {
         // Convert decimal price to our internal fixed-point representation
-        let price_ticks = match decimal_to_price(price) {
+        let price_ticks = match decimal_to_price_exact(price) {
             Ok(ticks) => ticks,
             Err(_) => return Decimal::ZERO, // Invalid price
         };
@@ -908,11 +908,11 @@ impl OrderBook {
         side: Side,
     ) -> Decimal {
         // Convert decimal prices to our internal fixed-point representation
-        let min_price_ticks = match decimal_to_price(min_price) {
+        let min_price_ticks = match decimal_to_price_exact(min_price) {
             Ok(ticks) => ticks,
             Err(_) => return Decimal::ZERO, // Invalid price
         };
-        let max_price_ticks = match decimal_to_price(max_price) {
+        let max_price_ticks = match decimal_to_price_exact(max_price) {
             Ok(ticks) => ticks,
             Err(_) => return Decimal::ZERO, // Invalid price
         };
@@ -1233,6 +1233,19 @@ mod tests {
         assert_eq!(book.token_id, "test_token");
         assert_eq!(book.bids.len(), 0); // Should start empty
         assert_eq!(book.asks.len(), 0); // Should start empty
+    }
+
+    #[test]
+    fn test_set_tick_size_requires_exact_fixed_point_value() {
+        let mut book = OrderBook::new("test_token".to_string(), 10);
+
+        book.set_tick_size(dec!(0.0001)).unwrap();
+
+        let err = book.set_tick_size(dec!(0.00005)).unwrap_err();
+        assert!(err.to_string().contains("Invalid tick size"));
+
+        let err = book.set_tick_size(Decimal::ZERO).unwrap_err();
+        assert!(err.to_string().contains("Invalid tick size"));
     }
 
     #[test]
