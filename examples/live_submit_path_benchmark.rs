@@ -268,23 +268,27 @@ fn polyfill_client(
 
 async fn official_client(
     config: &LiveConfig,
-    api_credentials: &ApiCredentials,
 ) -> BenchResult<(
     OfficialClient<OfficialAuthenticated<Normal>>,
     PrivateKeySigner,
 )> {
     let signer = LocalSigner::from_str(&config.private_key)?.with_chain_id(Some(POLYGON));
-    let api_key = Uuid::parse_str(&api_credentials.api_key)?;
-    let credentials = OfficialCredentials::new(
-        api_key,
-        api_credentials.secret.clone(),
-        api_credentials.passphrase.clone(),
-    );
-
     let client = OfficialClient::new(&config.host, OfficialConfig::default())?;
-    let mut auth = client
-        .authentication_builder(&signer)
-        .credentials(credentials);
+    let mut auth = client.authentication_builder(&signer);
+
+    if !config.derive_api_credentials {
+        let api_credentials = config.api_credentials.as_ref().ok_or_else(|| {
+            "API credentials must be set, or POLYMARKET_BENCH_DERIVE_API_CREDS must be true"
+                .to_string()
+        })?;
+        let api_key = Uuid::parse_str(&api_credentials.api_key)?;
+        let credentials = OfficialCredentials::new(
+            api_key,
+            api_credentials.secret.clone(),
+            api_credentials.passphrase.clone(),
+        );
+        auth = auth.credentials(credentials);
+    }
 
     if let Some(signature_type) = config.signature_type {
         auth = auth.signature_type(match signature_type {
@@ -414,7 +418,7 @@ async fn main() -> BenchResult<()> {
     let config = LiveConfig::from_env()?;
     let api_credentials = resolve_api_credentials(&config).await?;
     let polyfill = polyfill_client(&config, api_credentials.clone())?;
-    let (official, official_signer) = official_client(&config, &api_credentials).await?;
+    let (official, official_signer) = official_client(&config).await?;
 
     println!("Live authenticated Polymarket submit-path benchmark");
     println!("host: {}", config.host);
