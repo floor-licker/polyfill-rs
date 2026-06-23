@@ -976,16 +976,26 @@ pub enum StreamMessage {
 }
 
 /// Orderbook update message (full snapshot or delta).
+///
+/// WebSocket `book` messages expose a millisecond timestamp and optional book hash, but no
+/// monotonic server sequence/version. Same-timestamp messages with different hashes are therefore
+/// ordered by websocket arrival order by the book applier; the hash is a duplicate/state
+/// discriminator, not a logical ordering key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookUpdate {
     pub asset_id: String,
     pub market: String,
+    /// Exchange-provided snapshot timestamp in milliseconds.
     #[serde(deserialize_with = "crate::decode::deserializers::number_from_string")]
     pub timestamp: u64,
     #[serde(deserialize_with = "crate::decode::deserializers::vec_from_null")]
     pub bids: Vec<OrderSummary>,
     #[serde(deserialize_with = "crate::decode::deserializers::vec_from_null")]
     pub asks: Vec<OrderSummary>,
+    /// Exchange-provided snapshot hash.
+    ///
+    /// Used to suppress exact duplicate same-timestamp snapshots and to allow distinct
+    /// same-timestamp states. It does not encode ordering.
     #[serde(default)]
     pub hash: Option<String>,
 }
