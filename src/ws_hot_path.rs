@@ -370,7 +370,8 @@ mod tests {
             .is_err());
 
         let snapshot = books.get_book("test_asset_id").unwrap();
-        assert_eq!(snapshot.sequence, 1000);
+        assert_eq!(snapshot.sequence, 0);
+        assert_eq!(snapshot.timestamp.timestamp_millis(), 1000);
         assert_eq!(snapshot.bids.len(), 1);
         assert_eq!(snapshot.asks.len(), 1);
         assert_eq!(snapshot.bids[0].price, dec!(0.50));
@@ -407,7 +408,8 @@ mod tests {
             .is_err());
 
         let snapshot = books.get_book("test_asset_id").unwrap();
-        assert_eq!(snapshot.sequence, 1000);
+        assert_eq!(snapshot.sequence, 0);
+        assert_eq!(snapshot.timestamp.timestamp_millis(), 1000);
         assert_eq!(snapshot.bids.len(), 1);
         assert_eq!(snapshot.asks.len(), 1);
         assert_eq!(snapshot.bids[0].price, dec!(0.50));
@@ -433,7 +435,8 @@ mod tests {
         assert_eq!(second_stats.book_levels_applied, 2);
 
         let snapshot = books.get_book("test_asset_id").unwrap();
-        assert_eq!(snapshot.sequence, 1000);
+        assert_eq!(snapshot.sequence, 0);
+        assert_eq!(snapshot.timestamp.timestamp_millis(), 1000);
         assert_eq!(snapshot.bids[0].price, dec!(0.51));
         assert_eq!(snapshot.bids[0].size, dec!(11));
         assert_eq!(snapshot.asks[0].price, dec!(0.61));
