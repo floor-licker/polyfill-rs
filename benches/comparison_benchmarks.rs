@@ -133,7 +133,7 @@ fn benchmark_order_submit_payload_auth(c: &mut Criterion) {
         secret: "dGVzdF9zZWNyZXRfa2V5XzEyMzQ1".to_string(),
         passphrase: "benchmark-passphrase".to_string(),
     };
-    let prepared_api_creds = PreparedApiCredentials::new(api_creds.clone());
+    let prepared_api_creds = PreparedApiCredentials::try_new(api_creds.clone()).unwrap();
 
     c.bench_function("order_submit_body_and_l2_headers", |b| {
         b.iter(|| {
