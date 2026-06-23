@@ -460,6 +460,8 @@ impl OrderBook {
             bids: self.bids(None), // Get all bids (up to max_depth)
             asks: self.asks(None), // Get all asks (up to max_depth)
             sequence: self.last_delta_sequence,
+            last_delta_sequence: self.last_delta_sequence,
+            last_snapshot_timestamp_ms: self.last_snapshot_timestamp_ms,
         }
     }
 
@@ -1526,6 +1528,11 @@ mod tests {
         assert_eq!(book.last_snapshot_timestamp_ms, 1_000);
         assert_eq!(book.best_bid().unwrap().price, dec!(0.50));
         assert_eq!(book.best_ask().unwrap().price, dec!(0.60));
+
+        let snapshot = book.snapshot();
+        assert_eq!(snapshot.sequence, 10_000);
+        assert_eq!(snapshot.last_delta_sequence, 10_000);
+        assert_eq!(snapshot.last_snapshot_timestamp_ms, 1_000);
     }
 
     #[test]

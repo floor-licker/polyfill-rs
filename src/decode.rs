@@ -341,6 +341,8 @@ impl Decoder<OrderBook> for RawOrderBookResponse {
             bids,
             asks,
             sequence: 0, // TODO: Get from response if available
+            last_delta_sequence: 0,
+            last_snapshot_timestamp_ms: 0,
         })
     }
 }

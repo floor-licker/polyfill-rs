@@ -358,7 +358,7 @@ impl FastBookLevel {
 }
 
 /// Full order book state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OrderBook {
     /// Token ID
     pub token_id: String,
@@ -368,8 +368,47 @@ pub struct OrderBook {
     pub bids: Vec<BookLevel>,
     /// Ask orders
     pub asks: Vec<BookLevel>,
-    /// Sequence number
+    /// Legacy/incremental delta sequence number.
+    ///
+    /// This is kept for compatibility. For snapshots produced by this client,
+    /// it is equivalent to [`Self::last_delta_sequence`]. WebSocket snapshot
+    /// timestamps are exposed separately in [`Self::last_snapshot_timestamp_ms`].
     pub sequence: u64,
+    /// Last accepted legacy/incremental delta sequence number.
+    pub last_delta_sequence: u64,
+    /// Last accepted full-book snapshot timestamp in milliseconds.
+    pub last_snapshot_timestamp_ms: u64,
+}
+
+impl<'de> Deserialize<'de> for OrderBook {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireOrderBook {
+            token_id: String,
+            timestamp: DateTime<Utc>,
+            bids: Vec<BookLevel>,
+            asks: Vec<BookLevel>,
+            sequence: u64,
+            #[serde(default)]
+            last_delta_sequence: Option<u64>,
+            #[serde(default)]
+            last_snapshot_timestamp_ms: Option<u64>,
+        }
+
+        let wire = WireOrderBook::deserialize(deserializer)?;
+        Ok(Self {
+            token_id: wire.token_id,
+            timestamp: wire.timestamp,
+            bids: wire.bids,
+            asks: wire.asks,
+            sequence: wire.sequence,
+            last_delta_sequence: wire.last_delta_sequence.unwrap_or(wire.sequence),
+            last_snapshot_timestamp_ms: wire.last_snapshot_timestamp_ms.unwrap_or_default(),
+        })
+    }
 }
 
 /// Order book delta for streaming updates - EXTERNAL API VERSION
@@ -1921,5 +1960,21 @@ mod tests {
             Decimal::from_str("0.5100").unwrap(),
             Decimal::from_str("0.00005").unwrap()
         ));
+    }
+
+    #[test]
+    fn order_book_snapshot_clocks_default_for_legacy_payloads() {
+        let json = r#"{
+            "token_id":"test_token",
+            "timestamp":"2026-06-23T00:00:00Z",
+            "bids":[],
+            "asks":[],
+            "sequence":42
+        }"#;
+
+        let book: OrderBook = serde_json::from_str(json).unwrap();
+        assert_eq!(book.sequence, 42);
+        assert_eq!(book.last_delta_sequence, 42);
+        assert_eq!(book.last_snapshot_timestamp_ms, 0);
     }
 }
