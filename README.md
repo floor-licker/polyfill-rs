@@ -54,7 +54,7 @@ Real-world Polymarket API latency broken down by request phase:
 | **Cold Start** | single run | 759.3 ms | **568.0 ms** | - | - |
 | **Warm Connection** | single run | **153.0 ms** | 191.9 ms | - | - |
 | **Steady Typed Total** | p50 / p95 / p99 | **228.2 / 509.9 / 611.2 ms** | 242.3 / 514.2 / 641.3 ms | - | - |
-| **Network-Only Byte Fetch** | p50 / p95 / p99 | 200.0 / **327.3 / 518.6 ms** | **123.3** / 456.9 / 867.2 ms | - | - |
+| **Network-Only Byte Fetch*** | p50 / p95 / p99 | 200.0 / **327.3 / 518.6 ms** | **123.3** / 456.9 / 867.2 ms | - | - |
 | **CPU Parse Only** | p50 / p95 / p99 | **0.5 / 1.1 / 1.3 ms** | 1.3 / 1.6 / 1.7 ms | - | - |
 
 
@@ -63,7 +63,7 @@ Real-world Polymarket API latency broken down by request phase:
 - **32.5% more consistent** 
 - **4.2x faster** than Official Python Client
 
-**Benchmark Methodology:** The `rs-clob-client-v2` comparison separates cold start, warm connection, steady-state typed requests, network-only byte fetches, and CPU-only parsing. The latest local live-network run was on June 22, 2026 against `https://clob.polymarket.com/simplified-markets?next_cursor=MA==`. Steady-state rows use 40 paired iterations with alternating order and 100ms delay after 5 warmups; parse rows use 300 iterations from a cached 480KB payload. The network-only row compares byte fetches through each HTTP stack without typed deserialization. The CPU parse row compares polyfill's SIMD-backed typed parser against the `rs-clob-client-v2` request-helper parse path; direct serde parsing of the SDK response type measured 0.5 / 0.6 / 0.6 ms. Run it with `cargo run --release --example official_client_side_by_side_benchmark --features official-client-benchmark`. See `examples/side_by_side_benchmark.rs` in commit `a63a170`: https://github.com/floor-licker/polyfill-rs/blob/a63a170/examples/side_by_side_benchmark.rs for the original legacy benchmark implementation.
+**Benchmark Methodology:** The `rs-clob-client-v2` comparison separates cold start, warm connection, steady-state typed requests, network-only byte fetches, and CPU-only parsing. The latest local live-network run was on June 22, 2026 against `https://clob.polymarket.com/simplified-markets?next_cursor=MA==`. Steady-state rows use 40 paired iterations with alternating order and 100ms delay after 5 warmups; parse rows use 300 iterations from a cached 480KB payload. The network-only row is a selected raw HTTP diagnostic, not a typed SDK method result: it compares polyfill's actual HTTP client with a reqwest client using the `rs-clob-client-v2` default headers and no typed deserialization. The benchmark now prints a full network-only transport matrix covering default reqwest, `rs-clob-client-v2` headers, polyfill's actual client, and polyfill-tuned header variants. The CPU parse row compares polyfill's SIMD-backed typed parser against the `rs-clob-client-v2` request-helper parse path; direct serde parsing of the SDK response type measured 0.5 / 0.6 / 0.6 ms. Run it with `cargo run --release --example official_client_side_by_side_benchmark --features official-client-benchmark`. See `examples/side_by_side_benchmark.rs` in commit `a63a170`: https://github.com/floor-licker/polyfill-rs/blob/a63a170/examples/side_by_side_benchmark.rs for the original legacy benchmark implementation.
 
 **Computational Performance (pure CPU, no I/O)**
 
