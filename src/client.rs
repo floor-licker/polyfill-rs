@@ -119,8 +119,6 @@ pub struct ClobClient {
     order_builder: Option<crate::orders::OrderBuilder>,
     #[allow(dead_code)]
     connection_manager: Option<std::sync::Arc<crate::connection_manager::ConnectionManager>>,
-    #[allow(dead_code)]
-    buffer_pool: std::sync::Arc<crate::buffer_pool::BufferPool>,
 }
 
 #[derive(Default)]
@@ -158,7 +156,6 @@ impl ClobClient {
                 host.to_string(),
             ),
         ));
-        let buffer_pool = std::sync::Arc::new(crate::buffer_pool::BufferPool::new(512 * 1024, 10));
 
         let order_builder = auth
             .signer
@@ -176,7 +173,6 @@ impl ClobClient {
             builder_code: auth.builder_code,
             order_builder,
             connection_manager,
-            buffer_pool,
         }
     }
 
