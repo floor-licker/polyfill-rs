@@ -114,6 +114,20 @@ fn benchmark_create_order_eip712(c: &mut Criterion) {
             black_box(signed_order)
         })
     });
+
+    c.bench_function("prepared_fixed_create_order_eip712_signature", |b| {
+        b.iter(|| {
+            let signed_order = prepared
+                .create_limit_order_fixed(
+                    black_box(order_args.side),
+                    black_box(7_537),
+                    black_box(1_002_500),
+                    black_box(order_args.expiration),
+                )
+                .unwrap();
+            black_box(signed_order)
+        })
+    });
 }
 
 // Benchmark: Serialize a signed order body and build L2 auth headers for POST /order.
@@ -134,11 +148,79 @@ fn benchmark_order_submit_payload_auth(c: &mut Criterion) {
         passphrase: "benchmark-passphrase".to_string(),
     };
     let prepared_api_creds = PreparedApiCredentials::try_new(api_creds.clone()).unwrap();
+    let order_args = test_order_args();
+    let options = test_order_options();
+    let prepared = builder
+        .prepare_order_path(
+            CHAIN_ID,
+            order_args.token_id.clone(),
+            options.tick_size.unwrap(),
+            options.neg_risk.unwrap(),
+            order_args.builder_code.as_deref(),
+            order_args.metadata.as_deref(),
+        )
+        .unwrap();
 
     c.bench_function("order_submit_body_and_l2_headers", |b| {
         b.iter(|| {
             let body = PostOrder::new(
                 black_box(signed_order.clone()),
+                black_box(api_creds.api_key.clone()),
+                black_box(post_options),
+            );
+            let body_bytes = serde_json::to_vec(black_box(&body)).unwrap();
+            let headers = create_l2_headers_with_body_bytes(
+                &signer,
+                &prepared_api_creds,
+                "POST",
+                "/order",
+                Some(&body_bytes),
+            )
+            .unwrap();
+            black_box((body_bytes, headers))
+        })
+    });
+
+    c.bench_function("prepared_decimal_order_body_and_l2_headers", |b| {
+        b.iter(|| {
+            let signed_order = prepared
+                .create_limit_order(
+                    black_box(order_args.side),
+                    black_box(order_args.price),
+                    black_box(order_args.size),
+                    black_box(order_args.expiration),
+                )
+                .unwrap();
+            let body = PostOrder::new(
+                black_box(signed_order),
+                black_box(api_creds.api_key.clone()),
+                black_box(post_options),
+            );
+            let body_bytes = serde_json::to_vec(black_box(&body)).unwrap();
+            let headers = create_l2_headers_with_body_bytes(
+                &signer,
+                &prepared_api_creds,
+                "POST",
+                "/order",
+                Some(&body_bytes),
+            )
+            .unwrap();
+            black_box((body_bytes, headers))
+        })
+    });
+
+    c.bench_function("prepared_fixed_order_body_and_l2_headers", |b| {
+        b.iter(|| {
+            let signed_order = prepared
+                .create_limit_order_fixed(
+                    black_box(order_args.side),
+                    black_box(7_537),
+                    black_box(1_002_500),
+                    black_box(order_args.expiration),
+                )
+                .unwrap();
+            let body = PostOrder::new(
+                black_box(signed_order),
                 black_box(api_creds.api_key.clone()),
                 black_box(post_options),
             );

@@ -8,8 +8,8 @@ use crate::auth::{
 };
 use crate::errors::{PolyfillError, Result};
 use crate::types::{
-    CreateOrderOptions, MarketOrderArgs, OrderArgs, OrderType, Side, SignedOrderRequest,
-    SCALE_FACTOR,
+    CreateOrderOptions, MarketOrderArgs, OrderArgs, OrderType, Price, Qty, Side,
+    SignedOrderRequest, MAX_PRICE_TICKS, MIN_PRICE_TICKS, SCALE_FACTOR,
 };
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
@@ -66,6 +66,7 @@ pub struct PreparedOrderPath {
     builder: OrderBuilder,
     token_id: String,
     token_id_u256: U256,
+    tick_size_ticks: Price,
     round_config: RoundConfig,
     domain: PreparedOrderDomain,
     builder_bytes: B256,
@@ -230,6 +231,20 @@ fn decimal_to_token_units(amt: Decimal) -> Result<U256> {
 }
 
 fn parse_round_config(tick_size: Decimal) -> Result<&'static RoundConfig> {
+    let tick_size_ticks = parse_tick_size_ticks(tick_size)?;
+
+    match tick_size_ticks {
+        1000 => Ok(&ROUND_CONFIG_0_1),
+        100 => Ok(&ROUND_CONFIG_0_01),
+        10 => Ok(&ROUND_CONFIG_0_001),
+        1 => Ok(&ROUND_CONFIG_0_0001),
+        _ => Err(PolyfillError::validation(format!(
+            "Unsupported tick size {tick_size}"
+        ))),
+    }
+}
+
+fn parse_tick_size_ticks(tick_size: Decimal) -> Result<Price> {
     let scaled = tick_size * Decimal::from(SCALE_FACTOR);
     if !scaled.is_integer() {
         return Err(PolyfillError::validation(format!(
@@ -241,15 +256,7 @@ fn parse_round_config(tick_size: Decimal) -> Result<&'static RoundConfig> {
         .try_into()
         .map_err(|_| PolyfillError::validation(format!("Unsupported tick size {tick_size}")))?;
 
-    match tick_size_ticks {
-        1000 => Ok(&ROUND_CONFIG_0_1),
-        100 => Ok(&ROUND_CONFIG_0_01),
-        10 => Ok(&ROUND_CONFIG_0_001),
-        1 => Ok(&ROUND_CONFIG_0_0001),
-        _ => Err(PolyfillError::validation(format!(
-            "Unsupported tick size {tick_size}"
-        ))),
-    }
+    Ok(tick_size_ticks)
 }
 
 pub(crate) fn validate_bytes32_hex(field: &str, value: &str) -> Result<()> {
@@ -382,6 +389,7 @@ impl OrderBuilder {
     ) -> Result<PreparedOrderPath> {
         let token_id = token_id.into();
         let token_id_u256 = parse_token_id(&token_id)?;
+        let tick_size_ticks = parse_tick_size_ticks(tick_size)?;
         let round_config = *parse_round_config(tick_size)?;
         let exchange = exchange_address_for(chain_id, neg_risk)?;
         let domain = PreparedOrderDomain::new(chain_id, exchange);
@@ -392,6 +400,7 @@ impl OrderBuilder {
             builder: self.clone(),
             token_id,
             token_id_u256,
+            tick_size_ticks,
             round_config,
             domain,
             builder_bytes,
@@ -670,6 +679,24 @@ impl PreparedOrderPath {
         self.build_signed_order(side, maker_amount, taker_amount, expiration.unwrap_or(0))
     }
 
+    /// Create and sign a limit order from fixed-point book values.
+    ///
+    /// `price_ticks` use the shared price scale where `7_537` means `0.7537`.
+    /// `size_units` use the shared quantity scale where `1_002_500` means `100.25`.
+    /// The size is truncated to Polymarket's two-decimal lot size, matching the Decimal path.
+    pub fn create_limit_order_fixed(
+        &self,
+        side: Side,
+        price_ticks: Price,
+        size_units: Qty,
+        expiration: Option<u64>,
+    ) -> Result<SignedOrderRequest> {
+        let (maker_amount, taker_amount) =
+            self.get_fixed_order_amounts(side, price_ticks, size_units)?;
+
+        self.build_signed_order(side, maker_amount, taker_amount, expiration.unwrap_or(0))
+    }
+
     /// Create and sign a market order using the cached market/token context.
     pub fn create_market_order(
         &self,
@@ -689,6 +716,52 @@ impl PreparedOrderPath {
                 .get_market_order_amounts(side, amount, price, &self.round_config)?;
 
         self.build_signed_order(side, maker_amount, taker_amount, 0)
+    }
+
+    fn get_fixed_order_amounts(
+        &self,
+        side: Side,
+        price_ticks: Price,
+        size_units: Qty,
+    ) -> Result<(U256, U256)> {
+        if !(MIN_PRICE_TICKS..=MAX_PRICE_TICKS).contains(&price_ticks) {
+            return Err(PolyfillError::validation("Price outside valid range"));
+        }
+        if self.tick_size_ticks > 0 && !price_ticks.is_multiple_of(self.tick_size_ticks) {
+            return Err(PolyfillError::validation("Price not aligned to tick size"));
+        }
+        if size_units <= 0 {
+            return Err(PolyfillError::validation("Size must be positive"));
+        }
+
+        // Polymarket order sizes are rounded toward zero to two decimal places.
+        // Qty uses 1e4 scale, so one lot is 0.01 == 100 units.
+        let lot_size_units = 100i64;
+        let lot_aligned_size = (size_units / lot_size_units) * lot_size_units;
+        if lot_aligned_size <= 0 {
+            return Err(PolyfillError::validation("Size below minimum lot"));
+        }
+
+        let size_token_units = u128::try_from(lot_aligned_size)
+            .map_err(|_| PolyfillError::validation("Invalid size"))?
+            .checked_mul(100)
+            .ok_or_else(|| PolyfillError::validation("Size overflow"))?;
+        let notional_token_units = u128::try_from(lot_aligned_size)
+            .map_err(|_| PolyfillError::validation("Invalid size"))?
+            .checked_mul(price_ticks as u128)
+            .ok_or_else(|| PolyfillError::validation("Order notional overflow"))?
+            / 100;
+
+        match side {
+            Side::BUY => Ok((
+                U256::from(notional_token_units),
+                U256::from(size_token_units),
+            )),
+            Side::SELL => Ok((
+                U256::from(size_token_units),
+                U256::from(notional_token_units),
+            )),
+        }
     }
 
     fn build_signed_order(
@@ -962,6 +1035,76 @@ mod tests {
         assert_eq!(prepared_order.metadata, order.metadata);
         assert_eq!(prepared_order.builder, order.builder);
         assert!(prepared_order.signature.starts_with("0x"));
+    }
+
+    #[test]
+    fn test_prepared_fixed_limit_order_matches_decimal_amounts() {
+        let builder = test_builder();
+        let args = OrderArgs {
+            token_id: "12345678901234567890".to_string(),
+            price: Decimal::from_str("0.7537").unwrap(),
+            size: Decimal::from_str("100.25").unwrap(),
+            side: Side::BUY,
+            expiration: Some(1_900_000_000),
+            builder_code: Some(BYTES32_ZERO.to_string()),
+            metadata: Some(BYTES32_ZERO.to_string()),
+        };
+        let options = CreateOrderOptions {
+            tick_size: Some(Decimal::from_str("0.0001").unwrap()),
+            neg_risk: Some(false),
+        };
+        let prepared = builder
+            .prepare_order_path(
+                137,
+                args.token_id.clone(),
+                options.tick_size.unwrap(),
+                options.neg_risk.unwrap(),
+                args.builder_code.as_deref(),
+                args.metadata.as_deref(),
+            )
+            .unwrap();
+
+        let decimal_buy = prepared
+            .create_limit_order(Side::BUY, args.price, args.size, args.expiration)
+            .unwrap();
+        let fixed_buy = prepared
+            .create_limit_order_fixed(Side::BUY, 7_537, 1_002_500, args.expiration)
+            .unwrap();
+        assert_eq!(fixed_buy.maker_amount, decimal_buy.maker_amount);
+        assert_eq!(fixed_buy.taker_amount, decimal_buy.taker_amount);
+        assert_eq!(fixed_buy.side, decimal_buy.side);
+
+        let decimal_sell = prepared
+            .create_limit_order(Side::SELL, args.price, args.size, args.expiration)
+            .unwrap();
+        let fixed_sell = prepared
+            .create_limit_order_fixed(Side::SELL, 7_537, 1_002_500, args.expiration)
+            .unwrap();
+        assert_eq!(fixed_sell.maker_amount, decimal_sell.maker_amount);
+        assert_eq!(fixed_sell.taker_amount, decimal_sell.taker_amount);
+        assert_eq!(fixed_sell.side, decimal_sell.side);
+    }
+
+    #[test]
+    fn test_prepared_fixed_limit_order_rejects_invalid_inputs() {
+        let builder = test_builder();
+        let prepared = builder
+            .prepare_order_path(
+                137,
+                "12345678901234567890",
+                Decimal::from_str("0.01").unwrap(),
+                false,
+                Some(BYTES32_ZERO),
+                Some(BYTES32_ZERO),
+            )
+            .unwrap();
+
+        assert!(prepared
+            .create_limit_order_fixed(Side::BUY, 7_537, 1_002_500, Some(1_900_000_000))
+            .is_err());
+        assert!(prepared
+            .create_limit_order_fixed(Side::BUY, 7_500, 0, Some(1_900_000_000))
+            .is_err());
     }
 
     #[test]
