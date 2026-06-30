@@ -8,7 +8,7 @@ use crate::types::ApiCredentials;
 use alloy_primitives::{hex::encode_prefixed, Address, B256, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{eip712_domain, sol, Eip712Domain};
+use alloy_sol_types::{eip712_domain, sol, Eip712Domain, SolStruct};
 use base64::engine::Engine;
 use hmac::{Hmac, Mac};
 use serde::Serialize;
@@ -120,7 +120,21 @@ sol! {
         bytes32 metadata;
         bytes32 builder;
     }
+
+    struct TypedDataSign {
+        Order contents;
+        string name;
+        string version;
+        uint256 chainId;
+        address verifyingContract;
+        bytes32 salt;
+    }
 }
+
+const DEPOSIT_WALLET_NAME: &str = "DepositWallet";
+const DEPOSIT_WALLET_VERSION: &str = "1";
+const ERC7739_TYPED_DATA_SIGN_SALT: B256 = B256::ZERO;
+const ORDER_TYPE_STRING: &str = "Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)";
 
 /// V2 order signing payload. The REST body still carries `expiration`, but the EIP-712 payload
 /// follows the V2 exchange struct.
@@ -212,7 +226,69 @@ pub fn sign_order_message_with_domain(
     order: SignedOrderMessage,
     domain: &PreparedOrderDomain,
 ) -> Result<String> {
-    let order = Order {
+    let order = order_sol(order);
+
+    let signature = signer
+        .sign_typed_data_sync(&order, &domain.domain)
+        .map_err(|e| PolyfillError::crypto(format!("Order signature failed: {}", e)))?;
+
+    Ok(encode_prefixed(signature.as_bytes()))
+}
+
+/// Sign a POLY_1271 deposit-wallet order using the ERC-7739 wrapper expected by
+/// Polymarket's V2 deposit wallet verifier.
+///
+/// The order itself must have `maker == signer == deposit_wallet` and
+/// `signatureType == 3`. The EOA key signs a Solady `TypedDataSign(...)`
+/// envelope under the CTF exchange order domain; the wire signature appends the
+/// app-domain separator, order contents hash, order type string, and a uint16
+/// big-endian type-string length.
+pub fn sign_poly1271_order_message_with_domain(
+    signer: &PrivateKeySigner,
+    order: SignedOrderMessage,
+    domain: &PreparedOrderDomain,
+    deposit_wallet: Address,
+    chain_id: u64,
+) -> Result<String> {
+    if order.maker != deposit_wallet || order.signer != deposit_wallet {
+        return Err(PolyfillError::validation(
+            "POLY_1271 orders require maker and signer to equal the deposit wallet",
+        ));
+    }
+
+    let order = order_sol(order);
+    let app_domain_separator = domain.domain.hash_struct();
+    let contents_hash = order.eip712_hash_struct();
+    let envelope = TypedDataSign {
+        contents: order,
+        name: DEPOSIT_WALLET_NAME.to_string(),
+        version: DEPOSIT_WALLET_VERSION.to_string(),
+        chainId: U256::from(chain_id),
+        verifyingContract: deposit_wallet,
+        salt: ERC7739_TYPED_DATA_SIGN_SALT,
+    };
+
+    let inner = signer
+        .sign_typed_data_sync(&envelope, &domain.domain)
+        .map_err(|e| PolyfillError::crypto(format!("POLY_1271 order signature failed: {e}")))?;
+
+    let type_bytes = ORDER_TYPE_STRING.as_bytes();
+    let type_len: u16 = type_bytes
+        .len()
+        .try_into()
+        .map_err(|_| PolyfillError::validation("POLY_1271 order type string too long"))?;
+    let mut wrapped = Vec::with_capacity(65 + 32 + 32 + type_bytes.len() + 2);
+    wrapped.extend_from_slice(&inner.as_bytes());
+    wrapped.extend_from_slice(app_domain_separator.as_slice());
+    wrapped.extend_from_slice(contents_hash.as_slice());
+    wrapped.extend_from_slice(type_bytes);
+    wrapped.extend_from_slice(&type_len.to_be_bytes());
+
+    Ok(encode_prefixed(wrapped))
+}
+
+fn order_sol(order: SignedOrderMessage) -> Order {
+    Order {
         salt: order.salt,
         maker: order.maker,
         signer: order.signer,
@@ -224,13 +300,7 @@ pub fn sign_order_message_with_domain(
         timestamp: order.timestamp,
         metadata: order.metadata,
         builder: order.builder,
-    };
-
-    let signature = signer
-        .sign_typed_data_sync(&order, &domain.domain)
-        .map_err(|e| PolyfillError::crypto(format!("Order signature failed: {}", e)))?;
-
-    Ok(encode_prefixed(signature.as_bytes()))
+    }
 }
 
 /// Build HMAC signature for L2 authentication
@@ -393,6 +463,7 @@ pub fn create_l2_headers_with_body_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_unix_timestamp() {
@@ -563,6 +634,47 @@ mod tests {
         // EIP-712 signatures should be hex strings of specific length
         assert!(signature.starts_with("0x"));
         assert_eq!(signature.len(), 132); // 0x + 130 hex chars = 132 total
+    }
+
+    #[test]
+    fn test_poly1271_wrapped_order_signature_golden() {
+        let signer: PrivateKeySigner =
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+                .parse()
+                .expect("valid private key");
+        let deposit_wallet =
+            Address::from_str("0x000000000000000000000000000000000000d077").unwrap();
+        let exchange = Address::from_str("0xE111180000d2663C0091e4f400237545B87B996B").unwrap();
+        let order = SignedOrderMessage {
+            salt: U256::from(12345),
+            maker: deposit_wallet,
+            signer: deposit_wallet,
+            token_id: U256::from_str_radix(
+                "100000000000000000000000000000000000000000000000000000000000000000000000000000",
+                10,
+            )
+            .unwrap(),
+            maker_amount: U256::from(1_000_000),
+            taker_amount: U256::from(5_000_000),
+            side: 0,
+            signature_type: 3,
+            timestamp: U256::from(1_716_000_000_000_u64),
+            metadata: B256::ZERO,
+            builder: B256::ZERO,
+        };
+
+        let got = sign_poly1271_order_message_with_domain(
+            &signer,
+            order,
+            &PreparedOrderDomain::new(137, exchange),
+            deposit_wallet,
+            137,
+        )
+        .unwrap();
+
+        const WANT: &str = "0xc1c199d3822d7f465b1f213793ebb7bbc3a77810ceefa89b58ecfeb284e708953c5ec946a41c6fa2a6fac373c78b167dd6834fae6f3e37581111ffb06200f1d21b3264e159346253e26a64e00b69032db0e7d32f94628de3e6eecb50304d7af3d26814859c22020105275eba8b46528be2edd6078dea415bec6d90f2076b0c8ac64f726465722875696e743235362073616c742c61646472657373206d616b65722c61646472657373207369676e65722c75696e7432353620746f6b656e49642c75696e74323536206d616b6572416d6f756e742c75696e743235362074616b6572416d6f756e742c75696e743820736964652c75696e7438207369676e6174757265547970652c75696e743235362074696d657374616d702c62797465733332206d657461646174612c62797465733332206275696c6465722900ba";
+        assert_eq!(got, WANT);
+        assert!(got.len() > 600 && got.len() < 700);
     }
 
     #[test]

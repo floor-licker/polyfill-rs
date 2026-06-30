@@ -4,7 +4,8 @@
 //! for the Polymarket CLOB, including EIP-712 signature generation.
 
 use crate::auth::{
-    sign_order_message, sign_order_message_with_domain, PreparedOrderDomain, SignedOrderMessage,
+    sign_order_message, sign_order_message_with_domain, sign_poly1271_order_message_with_domain,
+    PreparedOrderDomain, SignedOrderMessage,
 };
 use crate::errors::{PolyfillError, Result};
 use crate::types::{
@@ -64,6 +65,7 @@ pub struct OrderBuilder {
 #[derive(Clone)]
 pub struct PreparedOrderPath {
     builder: OrderBuilder,
+    chain_id: u64,
     token_id: String,
     token_id_u256: U256,
     round_config: RoundConfig,
@@ -390,6 +392,7 @@ impl OrderBuilder {
 
         Ok(PreparedOrderPath {
             builder: self.clone(),
+            chain_id,
             token_id,
             token_id_u256,
             round_config,
@@ -620,10 +623,12 @@ impl OrderBuilder {
         let (builder_bytes, builder) = parse_optional_bytes32("builder_code", builder_code)?;
         let (metadata_bytes, metadata) = parse_optional_bytes32("metadata", metadata)?;
 
+        let signer_address = self.order_signer_address();
+        let signer_checksum = self.order_signer_checksum();
         let order = SignedOrderMessage {
             salt: U256::from(seed),
             maker: self.funder,
-            signer: self.signer_address,
+            signer: signer_address,
             token_id: u256_token_id,
             maker_amount,
             taker_amount,
@@ -634,12 +639,21 @@ impl OrderBuilder {
             builder: builder_bytes,
         };
 
-        let signature = sign_order_message(&self.signer, order, chain_id, exchange)?;
+        let signature = match self.sig_type {
+            SigType::Poly1271 => sign_poly1271_order_message_with_domain(
+                &self.signer,
+                order,
+                &PreparedOrderDomain::new(chain_id, exchange),
+                self.funder,
+                chain_id,
+            )?,
+            _ => sign_order_message(&self.signer, order, chain_id, exchange)?,
+        };
 
         Ok(SignedOrderRequest {
             salt: seed,
             maker: self.funder_checksum.clone(),
-            signer: self.signer_checksum.clone(),
+            signer: signer_checksum,
             token_id,
             maker_amount: maker_amount.to_string(),
             taker_amount: taker_amount.to_string(),
@@ -651,6 +665,22 @@ impl OrderBuilder {
             builder,
             signature,
         })
+    }
+}
+
+impl OrderBuilder {
+    fn order_signer_address(&self) -> Address {
+        match self.sig_type {
+            SigType::Poly1271 => self.funder,
+            _ => self.signer_address,
+        }
+    }
+
+    fn order_signer_checksum(&self) -> String {
+        match self.sig_type {
+            SigType::Poly1271 => self.funder_checksum.clone(),
+            _ => self.signer_checksum.clone(),
+        }
     }
 }
 
@@ -704,10 +734,12 @@ impl PreparedOrderPath {
             .expect("Time went backwards")
             .as_millis();
 
+        let signer_address = self.builder.order_signer_address();
+        let signer_checksum = self.builder.order_signer_checksum();
         let order = SignedOrderMessage {
             salt: U256::from(seed),
             maker: self.builder.funder,
-            signer: self.builder.signer_address,
+            signer: signer_address,
             token_id: self.token_id_u256,
             maker_amount,
             taker_amount,
@@ -718,12 +750,21 @@ impl PreparedOrderPath {
             builder: self.builder_bytes,
         };
 
-        let signature = sign_order_message_with_domain(&self.builder.signer, order, &self.domain)?;
+        let signature = match self.builder.sig_type {
+            SigType::Poly1271 => sign_poly1271_order_message_with_domain(
+                &self.builder.signer,
+                order,
+                &self.domain,
+                self.builder.funder,
+                self.chain_id,
+            )?,
+            _ => sign_order_message_with_domain(&self.builder.signer, order, &self.domain)?,
+        };
 
         Ok(SignedOrderRequest {
             salt: seed,
             maker: self.builder.funder_checksum.clone(),
-            signer: self.builder.signer_checksum.clone(),
+            signer: signer_checksum,
             token_id: self.token_id.clone(),
             maker_amount: maker_amount.to_string(),
             taker_amount: taker_amount.to_string(),
@@ -917,6 +958,45 @@ mod tests {
         assert!(!object.contains_key("feeRateBps"));
         assert_eq!(order.builder, BYTES32_ZERO);
         assert_eq!(order.metadata, BYTES32_ZERO);
+    }
+
+    #[test]
+    fn test_poly1271_order_uses_deposit_wallet_as_signer_and_wrapped_signature() {
+        let signer: PrivateKeySigner =
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+                .parse()
+                .expect("valid private key");
+        let funder = Address::from_str("0x000000000000000000000000000000000000d077").unwrap();
+        let builder = OrderBuilder::new(signer, Some(SigType::Poly1271), Some(funder));
+
+        let order = builder
+            .create_order(
+                137,
+                &OrderArgs {
+                    token_id: "123456".to_string(),
+                    price: Decimal::from_str("0.50").unwrap(),
+                    size: Decimal::from_str("10").unwrap(),
+                    side: Side::BUY,
+                    expiration: None,
+                    builder_code: Some(BYTES32_ZERO.to_string()),
+                    metadata: Some(BYTES32_ZERO.to_string()),
+                },
+                &CreateOrderOptions {
+                    tick_size: Some(Decimal::from_str("0.01").unwrap()),
+                    neg_risk: Some(false),
+                },
+            )
+            .unwrap();
+
+        let funder_checksum = funder.to_checksum(None);
+        assert_eq!(order.maker, funder_checksum);
+        assert_eq!(order.signer, funder_checksum);
+        assert_eq!(order.signature_type, SigType::Poly1271 as u8);
+        assert!(order.signature.starts_with("0x"));
+        assert!(
+            order.signature.len() > 600,
+            "POLY_1271 signature should be ERC-7739 wrapped"
+        );
     }
 
     #[test]
