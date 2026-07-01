@@ -7,7 +7,7 @@ use crate::errors::{PolyfillError, Result};
 use crate::types::*;
 use crate::ws_hot_path::{WsBookApplyStats, WsBookUpdateProcessor};
 use chrono::Utc;
-use futures::{SinkExt, Stream, StreamExt};
+use futures::{ready, SinkExt, Stream, StreamExt};
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -380,6 +380,36 @@ impl WebSocketStream {
     }
 }
 
+fn poll_send_pong(
+    connection: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    cx: &mut Context<'_>,
+    data: Vec<u8>,
+) -> Poll<Result<()>> {
+    ready!(connection.poll_ready_unpin(cx)).map_err(|e| {
+        PolyfillError::stream(
+            format!("Failed to prepare pong: {}", e),
+            crate::errors::StreamErrorKind::MessageCorrupted,
+        )
+    })?;
+    connection
+        .start_send_unpin(tokio_tungstenite::tungstenite::Message::Pong(data))
+        .map_err(|e| {
+            PolyfillError::stream(
+                format!("Failed to send pong: {}", e),
+                crate::errors::StreamErrorKind::MessageCorrupted,
+            )
+        })?;
+    ready!(connection.poll_flush_unpin(cx)).map_err(|e| {
+        PolyfillError::stream(
+            format!("Failed to flush pong: {}", e),
+            crate::errors::StreamErrorKind::MessageCorrupted,
+        )
+    })?;
+    Poll::Ready(Ok(()))
+}
+
 /// WebSocket stream wrapper that applies `book` updates directly into an [`crate::book::OrderBookManager`].
 ///
 /// This bypasses `StreamMessage` decoding (serde/DOM parsing) for the `book` hot path by using
@@ -484,9 +514,15 @@ impl<'a> Stream for WebSocketBookApplier<'a> {
                         self.stream.connection = None;
                         return Poll::Ready(None);
                     },
-                    tokio_tungstenite::tungstenite::Message::Ping(_) => {
-                        // Best-effort: tokio-tungstenite/tungstenite may handle pings internally.
-                        continue;
+                    tokio_tungstenite::tungstenite::Message::Ping(data) => {
+                        match poll_send_pong(connection, cx, data) {
+                            Poll::Ready(Ok(())) => continue,
+                            Poll::Ready(Err(e)) => {
+                                self.stream.stats.errors += 1;
+                                return Poll::Ready(Some(Err(e)));
+                            },
+                            Poll::Pending => return Poll::Pending,
+                        }
                     },
                     tokio_tungstenite::tungstenite::Message::Pong(_) => continue,
                     tokio_tungstenite::tungstenite::Message::Binary(_) => continue,
@@ -548,9 +584,15 @@ impl Stream for WebSocketStream {
                         self.connection = None;
                         return Poll::Ready(None);
                     },
-                    tokio_tungstenite::tungstenite::Message::Ping(_) => {
-                        // Best-effort: tokio-tungstenite/tungstenite may handle pings internally.
-                        continue;
+                    tokio_tungstenite::tungstenite::Message::Ping(data) => {
+                        match poll_send_pong(connection, cx, data) {
+                            Poll::Ready(Ok(())) => continue,
+                            Poll::Ready(Err(e)) => {
+                                self.stats.errors += 1;
+                                return Poll::Ready(Some(Err(e)));
+                            },
+                            Poll::Pending => return Poll::Pending,
+                        }
                     },
                     tokio_tungstenite::tungstenite::Message::Pong(_) => continue,
                     tokio_tungstenite::tungstenite::Message::Binary(_) => continue,
