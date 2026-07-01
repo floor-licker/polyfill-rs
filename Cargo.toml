@@ -1,6 +1,6 @@
 [package]
 name = "polyfill-rs"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 authors = ["Julius Tranquilli <jtranqs@gmail.com>"]
 description = "The Fastest Polymarket Client On The Market."
@@ -65,7 +65,7 @@ parking_lot = "0.12"
 tokio-tungstenite = { version = "0.21", optional = true, features = ["native-tls"] }
 
 # Optional benchmark-only dependency for comparing against Polymarket's active Rust SDK.
-polymarket_client_sdk_v2 = { git = "https://github.com/Polymarket/rs-clob-client-v2", rev = "8ba5008733c3c03e92041eef8b1cb8495dbed718", features = ["clob"], optional = true }
+polymarket_client_sdk_v2 = { version = "0.6.0-canary.1", git = "https://github.com/Polymarket/rs-clob-client-v2", rev = "8ba5008733c3c03e92041eef8b1cb8495dbed718", features = ["clob"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
